@@ -2253,12 +2253,18 @@ final class CoachingOverviewStore: ObservableObject {
         }
     }
 
-    /// Test hook: waits for the current refresh, including its signature pass, to finish.
-    func settle() async { await refreshTask?.value }
+    /// Test hook: waits until no refresh is running, following any replacement refresh.
+    func settle() async {
+        while let task = refreshTask { await task.value }
+    }
 
-    /// Meetings analysed since this store was created (tests use it to prove cache hits).
+    /// Meetings submitted for analysis since this store was created (tests use it to prove
+    /// cache hits; it can only over-count).
     private(set) var analysedMeetingCount = 0
-    private var metricsTask: Task<TrainingRow?, Never>?
+    /// True only while a large first count (more than one batch) is running, so Home can
+    /// say it is still counting older meetings without flashing after one new recording.
+    @Published private(set) var isBackfilling = false
+    private var cacheSaveSequence = 0
     private var refreshTask: Task<Void, Never>?
     private var refreshGeneration = 0
 
@@ -2309,12 +2315,10 @@ final class CoachingOverviewStore: ObservableObject {
         refreshGeneration += 1
         let generation = refreshGeneration
         refreshTask?.cancel()
-        metricsTask?.cancel()
 
         guard !eligibleIDs.isEmpty else {
             isComputing = false
             refreshTask = nil
-            metricsTask = nil
             return
         }
 
@@ -2344,6 +2348,8 @@ final class CoachingOverviewStore: ObservableObject {
             pending.append((meeting, signature))
         }
         if !pending.isEmpty { isComputing = true }
+        isBackfilling = pending.count > Self.batchSize
+        defer { if generation == refreshGeneration { isBackfilling = false } }
 
         var index = 0
         while index < pending.count {
@@ -2392,17 +2398,24 @@ final class CoachingOverviewStore: ObservableObject {
         for (id, signature) in completedSignatures {
             entries[id] = CoachingRowCache.Entry(signature: signature, row: rowsByMeetingID[id])
         }
-        // Saves run in order, so an older snapshot can never land after a newer one.
+        // Saves run in order, so an older snapshot can never land after a newer one, and a
+        // queued save that a newer one has superseded skips its write.
+        cacheSaveSequence += 1
+        let sequence = cacheSaveSequence
         let previous = cacheSaveTask
-        cacheSaveTask = Task.detached(priority: .utility) {
+        cacheSaveTask = Task.detached(priority: .utility) { [weak self] in
             await previous?.value
+            let isLatest = await MainActor.run { () -> Bool in
+                guard let self else { return true }
+                return self.cacheSaveSequence == sequence
+            }
+            guard isLatest else { return }
             CoachingRowCache.save(entries, to: cacheURL)
         }
     }
 
     private func finishRefresh(generation: Int) {
         guard generation == refreshGeneration else { return }
-        metricsTask = nil
         refreshTask = nil
         isComputing = false
     }
@@ -3045,10 +3058,15 @@ struct TrainingRow: Identifiable, Sendable, Codable {
         )
     }
 
-    static func formatDate(_ date: Date) -> String {
+    /// One formatter for every row (loading a large cache used to build one per meeting).
+    private nonisolated(unsafe) static let dateFormatter: DateFormatter = {
         let formatter = DateFormatter()
         formatter.dateFormat = "yy-MM-dd"
-        return formatter.string(from: date)
+        return formatter
+    }()
+
+    static func formatDate(_ date: Date) -> String {
+        dateFormatter.string(from: date)
     }
 }
 

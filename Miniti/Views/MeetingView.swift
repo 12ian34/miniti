@@ -3873,7 +3873,7 @@ struct HomeStatsPanel: View {
                     .accessibilityLabel("Hide stats")
                     .help("Hide stats. Show them again in Settings, General.")
                 }
-                if store.isComputing && !store.rows.isEmpty {
+                if store.isBackfilling && !store.rows.isEmpty {
                     // First launch after an update counts history in the background.
                     Text("still counting older meetings")
                         .font(.system(size: MinitiDesignSystem.CoachingTypography.size(10), weight: .medium, design: .default))

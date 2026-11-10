@@ -536,10 +536,8 @@ final class TrainingMetricsTests: XCTestCase {
         XCTAssertEqual(relaunched.analysedMeetingCount, 0, "Unchanged meetings are not analysed again")
         XCTAssertFalse(relaunched.isComputing)
 
-        let otherBuild = CoachingOverviewStore(cacheURL: url)
         XCTAssertNotNil(CoachingRowCache.load(from: url))
         XCTAssertNil(CoachingRowCache.load(from: url, build: "different-build"), "A new app build recomputes once")
-        _ = otherBuild
 
         relaunched.refreshIfNeeded(meetings: Array(meetings.prefix(2)))
         try await waitForCacheFile(url) { (CoachingRowCache.load(from: url)?.count ?? 0) == 2 }
