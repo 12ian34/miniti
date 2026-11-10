@@ -1,6 +1,6 @@
 # Meeting ownership across account changes
 
-Status: selected for 3.9.0 by Ian on 2026-11-09, not implemented. Original scope reconciled 2026-10-27; release assignment and integration updated 2026-11-09. [Roadmap](../roadmap.md) owns priority; this file owns completion. One release may include several completed plans. Ordered backend deployments inside a plan are not separate unfinished product releases.
+Status: selected for 3.9.0 by Ian on 2026-11-09, moved to 3.10.0 by Ian on 2026-11-10, not implemented. Original scope reconciled 2026-10-27; release assignment and integration updated 2026-11-09. [Roadmap](../roadmap.md) owns priority; this file owns completion. One release may include several completed plans. Ordered backend deployments inside a plan are not separate unfinished product releases.
 
 ## Deliverable and boundary
 

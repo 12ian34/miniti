@@ -1,6 +1,6 @@
 # Account integration connections and explicit routing
 
-Status: selected for 3.9.0 by Ian on 2026-11-09, not implemented. Original scope reconciled 2026-10-27; release assignment and integration updated 2026-11-09. [Roadmap](../roadmap.md) owns priority; this file owns completion. One release may include several completed plans. Ordered backend deployments inside a plan are not separate unfinished product releases.
+Status: selected for 3.9.0 by Ian on 2026-11-09, moved to 3.10.0 by Ian on 2026-11-10, not implemented. Original scope reconciled 2026-10-27; release assignment and integration updated 2026-11-09. [Roadmap](../roadmap.md) owns priority; this file owns completion. One release may include several completed plans. Ordered backend deployments inside a plan are not separate unfinished product releases.
 
 Scope direction confirmed by Ian, 2026-11-09: CRM and calendar connections belong to the signed-in account. B5 is selected alongside B0–B4 and UI1–UI3 for [3.9.0](../releases/3.9.0.md). Implementation and migration evidence remain pending. B4 is not a prerequisite for B5 backend work; both integrate into the same account-switching review and release acceptance.
 

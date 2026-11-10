@@ -1,5 +1,7 @@
 # Home setup guide, 3.8.0 (SG1)
 
+3.9.0 follow-through (Charlie's feedback, 2026-11-10): collapsing the guide shrinks it towards the Home setup button, which highlights once (ring only with Reduce Motion), and the Mac audio task is one online / on this Mac choice. Mixed Settings choices show as custom; the online backup stays as the person set it. Contract in [UI states](../reference/ui-states.md).
+
 Ian selected this addition on 2026-11-04 after an older-install upgrade showed simultaneous, differently sized email and calendar panels and an unresponsive Add email action.
 
 Status, 2026-11-09: Mac 3.8.0 build 164 was released on 2026-11-09; iOS build 164 is waiting for App Review. Final automated validation and signed-package verification pass. Specialist physical evidence remains unitemised; publication does not turn it into a pass. The [release record](../releases/3.8.0.md) owns delivery and evidence.

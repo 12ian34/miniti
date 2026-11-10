@@ -1,6 +1,6 @@
 # Account ownership: devices, subscriptions, usage and lifecycle
 
-Status: selected for 3.9.0 by Ian on 2026-11-09, not implemented. Original scope reconciled 2026-10-27; release assignment and integration updated 2026-11-09. [Roadmap](../roadmap.md) owns priority; this file owns completion. One release may include several completed plans. Ordered backend deployments inside a plan are not separate unfinished product releases.
+Status: selected for 3.9.0 by Ian on 2026-11-09, moved to 3.10.0 by Ian on 2026-11-10, not implemented. Original scope reconciled 2026-10-27; release assignment and integration updated 2026-11-09. [Roadmap](../roadmap.md) owns priority; this file owns completion. One release may include several completed plans. Ordered backend deployments inside a plan are not separate unfinished product releases.
 
 Planning refresh, 2026-11-09: B0–B3 are selected for the [3.9.0 release](../releases/3.9.0.md), alongside B4, B5 and UI1–UI3. The [initial audit](../releases/3.9.0-planning-audit.md) identifies migration contracts that must be reconciled against shipped 3.8.0 before implementation. The original architecture-stage IDs and unresolved policy decisions below remain authoritative.
 
@@ -8,7 +8,7 @@ Planning refresh, 2026-11-09: B0–B3 are selected for the [3.9.0 release](../re
 
 Deliver B0–B3 together as a coordinated ownership migration: one canonical device record, subscriptions and consumed usage owned by accounts, and source accounts retained when installations move. This is the continuation of enrollment architecture after the 3.4.0 recovery release. B4 meeting provenance, B5 integration connections, purchase-return UX and mandatory email are outside this plan.
 
-B4 and B5 retain their separate meeting/integration plans and are both selected alongside B0–B3 for 3.9.0. Outside this plan does not mean deferred from that release. Connections stay with the source account when an installation moves.
+B4 and B5 retain their separate meeting/integration plans and are both selected alongside B0–B3 for 3.10.0 (moved from 3.9.0 on 2026-11-10). Outside this plan does not mean deferred from that release. Connections stay with the source account when an installation moves.
 
 ## Prerequisites and decisions
 

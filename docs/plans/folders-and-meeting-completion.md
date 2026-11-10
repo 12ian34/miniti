@@ -1,5 +1,7 @@
 # Folders and meeting completion, 3.8.0
 
+3.9.0 follow-through (Charlie's feedback that only 4 of 13 meetings were filed, 2026-11-10): series learning from calendar series and hand moves, summary evidence into existing broad folders only, wider but reviewed keyword lists, and a Mac History page with folder chips and a dismissible organise prompt. Current rules live in [meeting history and import](../reference/meeting-history-and-import.md).
+
 Status, 2026-11-09: Mac 3.8.0 build 164 was released on 2026-11-09; iOS build 164 is waiting for App Review. Final automated validation and signed-package verification pass. Specialist physical evidence remains unitemised; publication does not turn it into a pass. FO1/MC1 are included. See the implementation contract below and the [release record](../releases/3.8.0.md).
 
 ## Original scope and acceptance
