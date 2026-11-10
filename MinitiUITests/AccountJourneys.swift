@@ -802,6 +802,74 @@ final class AccountJourneys: XCTestCase {
         XCTAssertTrue(help.exists)
     }
 
+    func testAccessEmailInheritsInterfaceSize() {
+        assertAccessPresentation(recovery: false, largeText: false, scale: 2)
+    }
+
+    func testAccessRecoveryInheritsInterfaceSize() {
+        assertAccessPresentation(recovery: true, largeText: false, scale: 2)
+    }
+
+    func testAccessEmailAtNormalTextAcrossInterfaceScales() {
+        executionTimeAllowance = 180
+        for scale in 0...2 { assertAccessPresentation(recovery: false, largeText: false, scale: scale) }
+    }
+
+    func testAccessEmailAtLargestTextAcrossInterfaceScales() {
+        executionTimeAllowance = 180
+        for scale in 0...2 { assertAccessPresentation(recovery: false, largeText: true, scale: scale) }
+    }
+
+    func testAccessRecoveryAtNormalTextAcrossInterfaceScales() {
+        executionTimeAllowance = 180
+        for scale in 0...2 { assertAccessPresentation(recovery: true, largeText: false, scale: scale) }
+    }
+
+    func testAccessRecoveryAtLargestTextAcrossInterfaceScales() {
+        executionTimeAllowance = 180
+        for scale in 0...2 { assertAccessPresentation(recovery: true, largeText: true, scale: scale) }
+    }
+
+    private func assertAccessPresentation(recovery: Bool, largeText: Bool, scale: Int) {
+        launch(largeText: largeText, interfaceScale: scale)
+        let signIn = app.buttons["account.signIn"]
+        XCTAssertTrue(signIn.waitForExistence(timeout: 10))
+        for _ in 0..<6 {
+            if signIn.isHittable { break }
+            app.swipeUp(velocity: .slow)
+        }
+        XCTAssertTrue(signIn.isHittable)
+        signIn.tap()
+        let email = app.textFields["Email"]
+        XCTAssertTrue(email.waitForExistence(timeout: 5))
+        if recovery {
+            let useKey = app.buttons["Use a recovery key"]
+            XCTAssertTrue(useKey.waitForExistence(timeout: 5))
+            XCTAssertTrue(useKey.isHittable)
+            useKey.tap()
+            XCTAssertTrue(app.textFields.matching(NSPredicate(format: "placeholderValue BEGINSWITH 'M1-'")).firstMatch.waitForExistence(timeout: 5))
+        }
+        let name = recovery ? "accessRecovery" : "accessEmail"
+        let probe = app.buttons["ui-test.readingScope.\(name)"]
+        XCTAssertTrue(probe.waitForExistence(timeout: 5))
+        XCTAssertEqual(probe.label, "scale \(scale); reading \(largeText ? "largest" : "normal"); controls \(largeText ? "accessibility5" : ["large", "xLarge", "xxLarge"][scale])")
+        probe.tap()
+        XCTAssertTrue(probe.waitForNonExistence(timeout: 5))
+        let submit = app.buttons.matching(NSPredicate(
+            format: "label == %@ AND identifier != %@", recovery ? "Sign in" : "Send link", "account.signIn"
+        )).element
+        XCTAssertTrue(submit.waitForExistence(timeout: 5))
+        XCTAssertFalse(submit.isEnabled, "An empty credential field must not allow submission")
+        captureAppScreen("\(name) \(largeText ? "largest" : "normal") scale \(scale)")
+        let cancel = app.buttons["Cancel"].firstMatch
+        XCTAssertTrue(cancel.waitForExistence(timeout: 5))
+        XCTAssertTrue(cancel.isHittable)
+        cancel.tap()
+        XCTAssertTrue(cancel.waitForNonExistence(timeout: 5))
+        XCTAssertTrue(app.buttons["account.continueAnonymous"].waitForExistence(timeout: 5))
+        app.terminate()
+    }
+
     func testLiveInvestigationInheritsInterfaceSize() {
         assertLiveOrPrepPresentation("liveInvestigation", largeText: false, scale: 2)
     }

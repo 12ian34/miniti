@@ -429,11 +429,14 @@ struct ManagedAccessChoiceCard: View {
         .multilineTextAlignment(.center)
         .frame(maxWidth: MinitiDesignSystem.HomeSetup.actionColumnWidth)
         .padding(.bottom, MinitiDesignSystem.Spacing.page)
-        .sheet(isPresented: $signIn) {
+        .minitiSheet(isPresented: $signIn) {
             VStack {
-                if recovery { RestoreRecoveryKeySheet(onRestored: onContinued) }
-                else {
+                if recovery {
+                    RestoreRecoveryKeySheet(onRestored: onContinued)
+                        .modifier(AccountUITestReadingScopeProbe(name: "accessRecovery", alignment: .topLeading))
+                } else {
                     EmailSignInSheet(onJoined: onContinued)
+                        .modifier(AccountUITestReadingScopeProbe(name: "accessEmail", alignment: .topLeading))
                     Button("Use a recovery key") { recovery = true }
                         .padding(.bottom)
                 }
