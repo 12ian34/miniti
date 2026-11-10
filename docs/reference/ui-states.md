@@ -131,3 +131,5 @@ Copy labels (3.9.0 local): question/docs answers and all six Mac section Copy bu
 Coaching stats (3.9.0 local): the all-history values use readable dim text, matching the recent aggregate column. Calculations, formatting and layout are unchanged.
 
 Coaching filler summaries (3.9.0 local): the live Mac section and shared legacy card use readable dim count/rate text. Their values, formatting, speaker grouping and help/disclosure behaviour are unchanged. Current iPhone and saved-meeting presentation remains unchanged.
+
+Questions and Playbook guidance (3.9.0 local): empty/setup/error instructions, no-match guidance and citation snippets use readable dim text. Pending/no-match icons and the answer disclosure remain visible on the existing surfaces. Retry still invokes the supplied lookup action. Answered-topic toggle code is unchanged, but the isolated native disclosure probe failed and remains GUID1 in the release audit. No lookup policy, billing, wording or geometry change.

@@ -709,7 +709,7 @@ struct QuestionsEmptyState: View {
                     .foregroundStyle(Color(hex: "8B949E"))
                 Text("questions appear once there's enough\nto find gaps and unstated assumptions")
                     .font(.system(size: 10, weight: .regular, design: .default))
-                    .foregroundStyle(Color(hex: "484F58"))
+                    .foregroundStyle(ColorPalette.Text.dim)
                     .multilineTextAlignment(.center)
             case .noQuestions:
                 Text("no questions yet")
@@ -717,7 +717,7 @@ struct QuestionsEmptyState: View {
                     .foregroundStyle(Color(hex: "8B949E"))
                 Text("use update above to generate, or\nrecord a longer conversation")
                     .font(.system(size: 10, weight: .regular, design: .default))
-                    .foregroundStyle(Color(hex: "484F58"))
+                    .foregroundStyle(ColorPalette.Text.dim)
                     .multilineTextAlignment(.center)
             }
         }
@@ -872,7 +872,7 @@ struct DocsEmptyState: View {
                 #endif
                 Text("e.g. https://docs.lightdash.com/mcp")
                     .font(.system(size: 10, weight: .regular, design: .default))
-                    .foregroundStyle(Color(hex: "484F58"))
+                    .foregroundStyle(ColorPalette.Text.dim)
                     .multilineTextAlignment(.center)
             case .idle(let auto):
                 Text("topics will appear as you talk")
@@ -880,7 +880,7 @@ struct DocsEmptyState: View {
                     .foregroundStyle(Color(hex: "8B949E"))
                 Text(auto ? "each one looks itself up in your docs" : "tap a topic to look it up in your docs")
                     .font(.system(size: 10, weight: .regular, design: .default))
-                    .foregroundStyle(Color(hex: "484F58"))
+                    .foregroundStyle(ColorPalette.Text.dim)
                     .multilineTextAlignment(.center)
             case .extracting:
                 ProgressView()
@@ -894,7 +894,7 @@ struct DocsEmptyState: View {
                     .foregroundStyle(Color(hex: "8B949E"))
                 Text(message)
                     .font(.system(size: 10, weight: .regular, design: .default))
-                    .foregroundStyle(Color(hex: "484F58"))
+                    .foregroundStyle(ColorPalette.Text.dim)
                     .multilineTextAlignment(.center)
             }
         }
@@ -1020,7 +1020,7 @@ struct DocsTabContent: View {
 
 /// One topic in the docs tab: shows its lookup state, expands to the grounded
 /// answer when resolved, and is tappable to look up / retry when it isn't.
-private struct DocTopicRow: View {
+struct DocTopicRow: View {
     let topic: DocTopic
     let autoLookup: Bool
     let onLookup: () -> Void
@@ -1046,6 +1046,7 @@ private struct DocTopicRow: View {
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
+            .accessibilityIdentifier("docs.topic.\(topic.id)")
             .disabled(topic.lookupState == .lookingUp)
 
             if topic.lookupState == .answered, let card = topic.card, expanded {
@@ -1071,7 +1072,7 @@ private struct DocTopicRow: View {
             } else if topic.lookupState == .noMatch {
                 Text("no docs match this topic")
                     .font(.system(size: 10, weight: .regular, design: .default))
-                    .foregroundStyle(Color(hex: "484F58"))
+                    .foregroundStyle(ColorPalette.Text.dim)
                     .padding(.leading, 20)
             }
         }
@@ -1097,7 +1098,7 @@ private struct DocTopicRow: View {
         case .pending:
             Image(systemName: "circle")
                 .font(.system(size: 9, weight: .semibold))
-                .foregroundStyle(Color(hex: "484F58"))
+                .foregroundStyle(ColorPalette.Text.meta)
         case .lookingUp:
             ProgressView().controlSize(.small)
         case .answered:
@@ -1107,7 +1108,7 @@ private struct DocTopicRow: View {
         case .noMatch:
             Image(systemName: "minus.circle")
                 .font(.system(size: 9, weight: .semibold))
-                .foregroundStyle(Color(hex: "484F58"))
+                .foregroundStyle(ColorPalette.Text.meta)
         case .busy:
             Image(systemName: "clock.arrow.circlepath")
                 .font(.system(size: 9, weight: .semibold))
@@ -1125,7 +1126,7 @@ private struct DocTopicRow: View {
         case .answered:
             Image(systemName: expanded ? "chevron.up" : "chevron.down")
                 .font(.system(size: 9, weight: .semibold))
-                .foregroundStyle(Color(hex: "52525B"))
+                .foregroundStyle(ColorPalette.Text.dim)
         case .pending:
             chip(autoLookup ? "queued" : "look up")
         case .busy:
@@ -1151,7 +1152,7 @@ private struct DocTopicRow: View {
 
 /// The grounded answer + citations for a resolved topic (no topic header — the
 /// row already shows the label).
-private struct DocAnswerBody: View {
+struct DocAnswerBody: View {
     @Environment(\.readingMetrics) private var readingMetrics
     let card: DocPlaybookCard
     @State private var showCopied = false
@@ -1195,7 +1196,7 @@ private struct DocAnswerBody: View {
                         if let snippet = citation.snippet, !snippet.isEmpty {
                             Text(snippet)
                                 .font(.system(size: 10, weight: .regular, design: .default))
-                                .foregroundStyle(Color(hex: "484F58"))
+                                .foregroundStyle(ColorPalette.Text.dim)
                                 .lineLimit(2)
                         }
                     }

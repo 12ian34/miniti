@@ -752,6 +752,35 @@ final class AccountJourneys: XCTestCase {
         XCTAssertTrue(help.exists)
     }
 
+    func testQuestionAndDocsGuidanceStatesRemainVisible() {
+        for (scenario, expected) in [
+            ("manual", "tap a topic to look it up in your docs"),
+            ("error", "Synthetic lookup failure"),
+            ("questions", "questions appear once there's enough")
+        ] {
+            launch("docsGuidance-" + scenario)
+            let text = app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", expected)).firstMatch
+            XCTAssertTrue(text.waitForExistence(timeout: 5), app.debugDescription)
+            captureAppScreen("Readable guidance: " + scenario)
+        }
+    }
+
+    func testDocsTopicRetryAndAnsweredContentRemainAvailable() {
+        launch("docsGuidance-noMatch")
+        let row = app.buttons["docs.topic.fixture topic"]
+        XCTAssertTrue(row.waitForExistence(timeout: 5), app.debugDescription)
+        XCTAssertTrue(app.staticTexts["no docs match this topic"].exists)
+        row.tap()
+        XCTAssertTrue(app.staticTexts["lookups=1"].waitForExistence(timeout: 2))
+        captureAppScreen("Docs no-match retry dispatch")
+
+        launch("docsGuidance-answered")
+        let snippet = app.staticTexts["A synthetic grounded citation snippet."]
+        XCTAssertTrue(snippet.waitForExistence(timeout: 5), app.debugDescription)
+        XCTAssertTrue(app.buttons["Copy answer"].exists)
+        captureAppScreen("Docs answer with citation snippet")
+    }
+
     func testDocsAnswerCopyRespondsInItsExpandedTarget() {
         launch("docsTargets")
         let copy = app.buttons["Copy answer"]

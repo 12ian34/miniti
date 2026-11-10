@@ -372,6 +372,68 @@ final class ColorPaletteTests: XCTestCase {
     }
 
     @MainActor
+    func testQuestionAndDocsGuidanceUsesReadableText() throws {
+        let states: [(String, AnyView)] = [
+            ("question needs more", AnyView(QuestionsEmptyState(variant: .needsMore))),
+            ("question empty", AnyView(QuestionsEmptyState(variant: .noQuestions))),
+            ("docs setup", AnyView(DocsEmptyState(variant: .needsSetup))),
+            ("docs manual", AnyView(DocsEmptyState(variant: .idle(auto: false)))),
+            ("docs automatic", AnyView(DocsEmptyState(variant: .idle(auto: true)))),
+            ("docs error", AnyView(DocsEmptyState(variant: .error("Synthetic lookup failure"))))
+        ]
+        for (name, state) in states {
+            let renderer = ImageRenderer(content: state.frame(width: 420)
+                .background(ColorPalette.Background.primary))
+            renderer.scale = 2
+            let raster = try XCTUnwrap(renderer.cgImage)
+            // Crop the last 14pt for setup to exclude antialiased Settings chrome.
+            // The other states have no surrounding dim text or control chrome.
+            let guidance = name == "docs setup"
+                ? try XCTUnwrap(raster.cropping(to: CGRect(x: 0, y: raster.height - 28, width: raster.width, height: 28)))
+                : raster
+            XCTAssertGreaterThan(try pixelCount(ColorPalette.Text.dim, in: guidance), 10, name)
+        }
+    }
+
+    @MainActor
+    func testDocsTopicStatesUseReadableStatusAndDisclosure() throws {
+        for state in [DocTopic.LookupState.pending, .noMatch, .answered] {
+            let card = state == .answered ? DocPlaybookCard(topic: "", answer: "Answer", citations: []) : nil
+            let row = DocTopicRow(topic: DocTopic(label: "", lookupState: state, card: card),
+                                  autoLookup: false, onLookup: {})
+            let renderer = ImageRenderer(content: row.frame(width: 420)
+                .background(ColorPalette.Background.primary))
+            renderer.scale = 2
+            let raster = try XCTUnwrap(renderer.cgImage)
+            if state == .answered {
+                // Top 30pt includes the header, excluding the answer/Copy body.
+                let header = try XCTUnwrap(raster.cropping(to: CGRect(x: 0, y: 0, width: raster.width, height: 60)))
+                XCTAssertGreaterThan(try pixelCount(ColorPalette.Text.dim, in: header), 3, "disclosure")
+            } else {
+                XCTAssertGreaterThan(try pixelCount(ColorPalette.Text.meta, in: raster), 3, "\(state) indicator")
+                if state == .noMatch {
+                    XCTAssertGreaterThan(try pixelCount(ColorPalette.Text.dim, in: raster), 10, "no-match guidance")
+                }
+            }
+        }
+    }
+
+    @MainActor
+    func testDocsCitationSnippetUsesReadableText() throws {
+        let card = DocPlaybookCard(topic: "Topic", answer: "Answer", citations: [
+            DocCitation(title: "Reference", url: nil, snippet: "A synthetic grounded citation snippet.")
+        ])
+        let renderer = ImageRenderer(content: DocAnswerBody(card: card).frame(width: 420)
+            .background(ColorPalette.Background.panel))
+        renderer.scale = 2
+        let raster = try XCTUnwrap(renderer.cgImage)
+        // The final 14pt holds the single-line snippet, excluding Copy above it.
+        let snippet = try XCTUnwrap(raster.cropping(to: CGRect(x: 0, y: raster.height - 28, width: raster.width, height: 28)))
+        XCTAssertGreaterThan(try pixelCount(ColorPalette.Text.dim, in: snippet), 10,
+                             "Citation snippet must be readable independently of Copy")
+    }
+
+    @MainActor
     func testCopyLabelUsesNeutralChromeAndSuccessFeedback() throws {
         #if os(macOS)
         let minimum: CGFloat = 24

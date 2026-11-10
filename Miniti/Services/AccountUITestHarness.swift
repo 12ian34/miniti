@@ -241,6 +241,10 @@ struct AccountUITestReady: ViewModifier {
                       ProcessInfo.processInfo.environment["MINITI_UI_TEST_SCENARIO"] == "insightUpdateTargets" {
                 InsightUpdateUITestFixture()
             } else if AccountUITestHarness.isActive,
+                      let scenario = ProcessInfo.processInfo.environment["MINITI_UI_TEST_SCENARIO"],
+                      scenario.hasPrefix("docsGuidance-") {
+                DocsGuidanceUITestFixture(scenario: scenario)
+            } else if AccountUITestHarness.isActive,
                       ProcessInfo.processInfo.environment["MINITI_UI_TEST_SCENARIO"] == "docsTargets" {
                 DocsTabContent(
                     topics: [DocTopic(label: "Fixture topic", lookupState: .answered,
@@ -285,6 +289,49 @@ struct AccountUITestReady: ViewModifier {
 }
 
 #if MINITI_TEST_HOST
+private struct DocsGuidanceUITestFixture: View {
+    let scenario: String
+    @State private var lookupCount = 0
+
+    private var topics: [DocTopic] {
+        switch scenario {
+        case "docsGuidance-noMatch":
+            return [DocTopic(label: "Fixture topic", lookupState: .noMatch)]
+        case "docsGuidance-pending":
+            return [DocTopic(label: "Fixture topic", lookupState: .pending)]
+        case "docsGuidance-answered":
+            return [DocTopic(label: "Fixture topic", lookupState: .answered,
+                card: DocPlaybookCard(topic: "Fixture topic", answer: "A synthetic answer.", citations: [
+                    DocCitation(title: "Fixture reference", snippet: "A synthetic grounded citation snippet.")
+                ]))]
+        default:
+            return []
+        }
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            if scenario == "docsGuidance-questions" {
+                QuestionsEmptyState(variant: .needsMore)
+            } else {
+                DocsTabContent(topics: topics, isExtracting: false,
+                               hasMCPURL: scenario != "docsGuidance-setup",
+                               autoLookup: scenario == "docsGuidance-auto",
+                               errorMessage: scenario == "docsGuidance-error" ? "Synthetic lookup failure" : nil,
+                               onRefresh: {}, onLookup: { _ in lookupCount += 1 })
+            }
+            Text("lookups=\(lookupCount)")
+                .font(.caption)
+                .foregroundStyle(ColorPalette.Text.muted)
+                .accessibilityIdentifier("docs.fixture.lookupCount")
+        }
+        .frame(maxWidth: 500)
+        .padding(20)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+        .background(ColorPalette.Background.primary)
+    }
+}
+
 private struct InsightUpdateUITestFixture: View {
     @State private var updateCount = 0
     @State private var regenerateCount = 0
