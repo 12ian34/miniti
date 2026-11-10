@@ -308,7 +308,28 @@ struct MinitiFadingDivider: View {
     }
 }
 
+/// Preserve the already-resolved control category across a native Bool sheet.
+/// This forwards a value; it must never apply the InterfaceScale shift again.
+private struct MinitiSheetPresentation<SheetContent: View>: ViewModifier {
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    @Binding var isPresented: Bool
+    let sheetContent: () -> SheetContent
+
+    func body(content: Content) -> some View {
+        content.sheet(isPresented: $isPresented) {
+            sheetContent().dynamicTypeSize(dynamicTypeSize)
+        }
+    }
+}
+
 extension View {
+    func minitiSheet<SheetContent: View>(
+        isPresented: Binding<Bool>,
+        @ViewBuilder content: @escaping () -> SheetContent
+    ) -> some View {
+        modifier(MinitiSheetPresentation(isPresented: isPresented, sheetContent: content))
+    }
+
     /// Allocate target space in normal layout. Parents must allow this minimum:
     /// a smaller outer frame can still make SwiftUI content overflow its slot.
     /// Audit constrained containers; this helper is not a clipping boundary.

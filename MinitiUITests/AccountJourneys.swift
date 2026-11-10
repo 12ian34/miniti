@@ -1433,6 +1433,67 @@ final class AccountJourneys: XCTestCase {
         XCTAssertEqual(scope.label, "scale 2; reading largest; controls accessibility5")
     }
 
+    func testConsentSheetInheritsInterfaceSize() {
+        launch("consentSheet", interfaceScale: 2)
+        let scope = app.buttons["ui-test.readingScope.consent"]
+        XCTAssertTrue(scope.waitForExistence(timeout: 5))
+        XCTAssertEqual(scope.label, "scale 2; reading normal; controls xxLarge")
+    }
+
+    func testConsentSheetActionsMeetMinimumTargets() {
+        launch("consentSheet", largeText: true, interfaceScale: 2)
+        let scope = app.buttons["ui-test.readingScope.consent"]
+        XCTAssertTrue(scope.waitForExistence(timeout: 5))
+        scope.tap()
+        XCTAssertTrue(scope.waitForNonExistence(timeout: 5))
+        assertConsentSheetActions()
+    }
+
+    func testConsentSheetAtNormalTextAcrossInterfaceScales() {
+        assertConsentSheetAcrossInterfaceScales(largeText: false)
+    }
+
+    func testConsentSheetAtLargestTextAcrossInterfaceScales() {
+        assertConsentSheetAcrossInterfaceScales(largeText: true)
+    }
+
+    private func assertConsentSheetAcrossInterfaceScales(largeText: Bool) {
+        executionTimeAllowance = 180
+        for scale in 0...2 {
+            app?.terminate()
+            launch("consentSheet", largeText: largeText, interfaceScale: scale)
+            let category = largeText ? "largest" : "normal"
+            let scope = app.buttons["ui-test.readingScope.consent"]
+            XCTAssertTrue(scope.waitForExistence(timeout: 5))
+            XCTAssertEqual(scope.label, "scale \(scale); reading \(category); controls \(largeText ? "accessibility5" : ["large", "xLarge", "xxLarge"][scale])")
+            scope.tap()
+            XCTAssertTrue(scope.waitForNonExistence(timeout: 5))
+            assertConsentSheetActions("Consent \(category) text, scale \(scale)")
+        }
+    }
+
+    private func assertConsentSheetActions(_ name: String = "Consent sheet action bounds") {
+        let allow = app.buttons["consent.allow"]
+        let cancel = app.buttons["consent.decline"]
+        XCTAssertTrue(allow.waitForExistence(timeout: 5))
+        XCTAssertTrue(cancel.exists)
+        captureAppScreen(name)
+        let frames = XCTAttachment(string: "Allow: \(allow.frame)\nCancel: \(cancel.frame)")
+        frames.name = name + " frames"; frames.lifetime = .keepAlways; add(frames)
+        for button in [allow, cancel] {
+            XCTAssertTrue(button.isHittable)
+            XCTAssertGreaterThanOrEqual(button.frame.height, 44 - 0.001)
+            XCTAssertGreaterThanOrEqual(button.frame.width, 44 - 0.001)
+        }
+        XCTAssertFalse(allow.frame.intersects(cancel.frame))
+        app.scrollViews.firstMatch.swipeUp()
+        XCTAssertTrue(allow.isHittable)
+        XCTAssertTrue(cancel.isHittable)
+        cancel.tap()
+        XCTAssertTrue(cancel.waitForNonExistence(timeout: 5))
+        XCTAssertTrue(app.buttons["Settings"].waitForExistence(timeout: 5))
+    }
+
     func testSettingsLabelsAtLargestText() {
         launch("first", largeText: true, interfaceScale: 2)
         app.buttons["Settings"].tap()
@@ -1465,8 +1526,8 @@ final class AccountJourneys: XCTestCase {
             for _ in 0..<6 where !caption.isHittable { app.collectionViews.firstMatch.swipeUp() }
             XCTAssertTrue(caption.isHittable)
         }
-        let oneLine = captions[2].frame.height
-        for caption in captions { XCTAssertLessThanOrEqual(caption.frame.height, oneLine + 1) }
+        // The single-word value uses a larger body font, independently bounding each caption.
+        for caption in captions { XCTAssertLessThanOrEqual(caption.frame.height, value.frame.height + 1) }
         captureAppScreen("Interface scale captions at largest text without probe")
     }
 

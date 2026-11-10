@@ -82,6 +82,10 @@ enum AccountUITestHarness {
         state.appMode = scenario == "onboardingBYOK" ? .byok : .managed
         state.hasAcceptedTerms = scenario != "setupUpgrade"
         state.hasCompletedOnboarding = !scenario.hasPrefix("onboarding")
+        if scenario == "consentSheet" {
+            state.setThirdPartyAIConsent(false)
+            state.showThirdPartyAIConsent = true
+        }
         state.clientAuthManager = manager
         state.minitiAPIService = MinitiAPIService(session: session, auth: manager)
         state.insightsService = nil
@@ -237,6 +241,7 @@ enum AccountUITestHarness {
 /// Inspect a presented surface without replacing its production content.
 struct AccountUITestReadingScopeProbe: ViewModifier {
     let name: String
+    var alignment: Alignment = .bottomLeading
     #if MINITI_TEST_HOST
     @Environment(\.interfaceScale) private var scale
     @Environment(\.systemReadingSize) private var readingSize
@@ -252,7 +257,7 @@ struct AccountUITestReadingScopeProbe: ViewModifier {
 
     func body(content: Content) -> some View {
         #if MINITI_TEST_HOST
-        content.overlay(alignment: .bottomLeading) {
+        content.overlay(alignment: alignment) {
             if AccountUITestHarness.isActive, !probeHidden,
                ProcessInfo.processInfo.environment["MINITI_UI_TEST_READING_MATRIX"] == "1" {
                 Button { probeHidden = true } label: {

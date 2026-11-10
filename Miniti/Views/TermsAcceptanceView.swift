@@ -157,6 +157,7 @@ struct TermsAcceptanceView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(ColorPalette.Background.primary)
+        .modifier(AccountUITestReadingScopeProbe(name: "consent", alignment: .topLeading))
         .opacity(appeared || reduceMotion ? 1 : 0)
         .onAppear {
             if reduceMotion {
@@ -201,8 +202,10 @@ struct TermsAcceptanceView: View {
                     RoundedRectangle(cornerRadius: MinitiDesignSystem.Radius.card)
                         .stroke(ColorPalette.Text.dim.opacity(0.4), lineWidth: 1)
                 )
+                .minitiMinimumControlTarget()
         }
         .buttonStyle(.plain)
+        .accessibilityIdentifier("consent.decline")
         .modifier(SheetEscapeShortcut(enabled: presentation == .sheet))
         .accessibilityLabel(presentation == .firstScreen
             ? "not now: open miniti without sending anything to Deepgram or OpenAI"
@@ -226,8 +229,10 @@ struct TermsAcceptanceView: View {
                     RoundedRectangle(cornerRadius: MinitiDesignSystem.Radius.card)
                         .stroke(accent.opacity(0.4), lineWidth: 1)
                 )
+                .minitiMinimumControlTarget()
         }
         .buttonStyle(.plain)
+        .accessibilityIdentifier("consent.allow")
         .keyboardShortcut(.defaultAction)
         .accessibilityLabel("allow sending meeting audio and text to Deepgram and OpenAI")
         .onHover { h in hoveringAllow = h }

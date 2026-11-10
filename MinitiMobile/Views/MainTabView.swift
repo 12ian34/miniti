@@ -9,7 +9,6 @@ struct MainTabView: View {
     @EnvironmentObject var appState: AppState
     @Environment(\.modelContext) private var modelContext
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
-    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @Query(sort: \Meeting.startTime, order: .reverse) private var meetings: [Meeting]
     @State private var selectedTab: MobileTab = {
         switch ScreenshotMode.current {
@@ -58,9 +57,8 @@ struct MainTabView: View {
             .onReceive(NotificationCenter.default.publisher(for: .minitiOpenActiveMeeting)) { _ in
                 selectedTab = .record
             }
-            .sheet(isPresented: $appState.showSettings) {
+            .minitiSheet(isPresented: $appState.showSettings) {
                 SettingsView_iOS()
-                    .dynamicTypeSize(dynamicTypeSize)
                     .preferredColorScheme(.dark)
             }
             .alert("OpenAI model access", isPresented: $appState.showBYOKModelAccessError) {
@@ -68,7 +66,7 @@ struct MainTabView: View {
         } message: {
             Text(InsightsError.lunaAccessRequired.localizedDescription)
         }
-        .sheet(isPresented: $appState.showThirdPartyAIConsent) {
+        .minitiSheet(isPresented: $appState.showThirdPartyAIConsent) {
                 TermsAcceptanceView(presentation: .sheet)
                     .preferredColorScheme(.dark)
             }

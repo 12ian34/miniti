@@ -11,6 +11,7 @@
 - improvement: (macOS and iOS) matching Copy and Update buttons in live and saved meetings
 - improvement: (iOS) matching transcript, insights and notes tabs in live and saved meetings
 - improvement: (iOS) larger tap areas for Coaching tabs, history sorting and insight Update controls
+- improvement: (iOS) larger tap areas for permission choices
 - improvement: (macOS and iOS) clearer accessibility labels and larger click and tap areas for Copy and Coaching help
 - improvement: (macOS and iOS) clearer question context, Copy text and Coaching statistics
 - improvement: (macOS and iOS) clearer speaker labels and rename guidance
