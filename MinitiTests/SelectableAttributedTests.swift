@@ -738,6 +738,60 @@ final class SelectableAttributedTests: XCTestCase {
 
     #if os(macOS)
     @MainActor
+    func testAlternatingMeasurementWidthsStayFreshAcrossTextAndAttributeChanges() {
+        let original = SelectableAttributed.body(String(repeating: "A long sentence wraps across the measured text column. ", count: 80), fontSize: 13)
+        let container = _SelectableTextContainer(attributed: original, mutation: nil,
+                                                  onSelectionChange: nil, onDeleteSelection: nil)
+        func check(_ expected: NSAttributedString) {
+            // More than four widths exercises eviction as well as repeated proposals.
+            for width: CGFloat in [420, 540, 300, 420, 540, 620, 700, 300, 420] {
+                let fresh = _SelectableTextContainer(attributed: expected, mutation: nil,
+                                                      onSelectionChange: nil, onDeleteSelection: nil)
+                XCTAssertEqual(container.measuredHeight(for: width), fresh.measuredHeight(for: width), accuracy: 1)
+            }
+        }
+        check(original)
+        let resized = SelectableAttributed.body(original.string, fontSize: 18)
+        container.apply(resized, mutation: nil, onSelectionChange: nil, onDeleteSelection: nil)
+        check(resized)
+        let suffix = SelectableAttributed.body(String(repeating: "Additional text at the tail. ", count: 40), fontSize: 18)
+        let appended = NSMutableAttributedString(attributedString: resized)
+        appended.append(suffix)
+        container.apply(appended, mutation: SelectableTextMutation(revision: 1,
+                        range: NSRange(location: resized.length, length: 0), replacement: suffix),
+                        onSelectionChange: nil, onDeleteSelection: nil)
+        check(appended)
+        let replacement = SelectableAttributed.body("Short replacement.", fontSize: 13)
+        container.apply(replacement, mutation: nil, onSelectionChange: nil, onDeleteSelection: nil)
+        check(replacement)
+    }
+
+    @MainActor
+    func testAttributeOnlyNativeRefreshPreservesSelectionWithAndWithoutMutation() throws {
+        let original = SelectableAttributed.body("First paragraph. Selected words stay here.", fontSize: 13)
+        let resized = SelectableAttributed.body(original.string, fontSize: 15)
+        let selection = (original.string as NSString).range(of: "Selected words")
+        for usesMutation in [false, true] {
+            let container = _SelectableTextContainer(attributed: original, mutation: nil,
+                onSelectionChange: nil, onDeleteSelection: nil)
+            let view = try XCTUnwrap(container.subviews.compactMap { $0 as? NSTextView }.first)
+            view.setSelectedRange(selection)
+            container.apply(resized,
+                mutation: usesMutation ? SelectableTextMutation(revision: 1,
+                    range: NSRange(location: 0, length: original.length), replacement: resized) : nil,
+                onSelectionChange: nil, onDeleteSelection: nil)
+            XCTAssertEqual(view.selectedRange(), selection)
+            XCTAssertEqual(view.string, original.string)
+            XCTAssertEqual((view.attributedString().attribute(.font, at: selection.location, effectiveRange: nil) as? NSFont)?.pointSize, 15)
+            let shorter = SelectableAttributed.body("Changed", fontSize: 15)
+            container.apply(shorter, mutation: nil, onSelectionChange: nil, onDeleteSelection: nil)
+            XCTAssertEqual(view.string, "Changed")
+            XCTAssertLessThanOrEqual(NSMaxRange(view.selectedRange()), shorter.length,
+                                     "Do not restore an obsolete range when characters change")
+        }
+    }
+
+    @MainActor
     func testTranscriptMeasurementRejectsTransientNarrowerProposal() {
         let container = _SelectableTextContainer(
             attributed: NSAttributedString(string: "Transcript"),
@@ -1382,5 +1436,139 @@ private typealias ReadingNativeTextView = UITextView
 private typealias ReadingNativeFont = UIFont
 private extension UIHostingController {
     var viewForReadingTest: UIView { view }
+}
+#endif
+
+#if os(macOS)
+import SwiftData
+/// Common harness also compiled against the isolated public 3.8.0 sources.
+/// Measures native saved-screen layout and viewport rasterization, not input-to-photon latency.
+final class SavedInsightScreenPerformanceTests: XCTestCase {
+    @MainActor
+    func testLargeSavedMeetingLayoutAcrossInterfaceSizesAndWidths() async throws {
+        try await exerciseSavedScreen(checkSelection: false)
+    }
+
+    @MainActor
+    func testSavedMeetingKeepsSelectionAcrossInterfaceSizes() async throws {
+        try await exerciseSavedScreen(checkSelection: true)
+    }
+
+    @MainActor
+    private func exerciseSavedScreen(checkSelection: Bool) async throws {
+        let container = try TestSupport.makeInMemoryContainer()
+        let state = AppState()
+        let oldCollapsed = UserDefaults.standard.object(forKey: "mainWindow.insightsCollapsed")
+        state.isLiveInsightsCollapsed = false
+        defer {
+            if let oldCollapsed { UserDefaults.standard.set(oldCollapsed, forKey: "mainWindow.insightsCollapsed") }
+            else { UserDefaults.standard.removeObject(forKey: "mainWindow.insightsCollapsed") }
+        }
+        XCTAssertEqual(state.insightsMode, .standard)
+        let discussion = (1...60).map { index in
+            "Discussion \(index). " + String(repeating: "The team reviewed delivery milestones and agreed clear ownership for the next customer validation. ", count: 3)
+        }
+        let actions = (1...40).map { index in
+            "Action \(index). " + String(repeating: "Prepare the implementation checklist and confirm each dependency with the project owner. ", count: 2)
+        }
+        let transcript = (1...100).map { index in
+            TranscriptSegment(text: "Transcript anchor \(index). The team reviewed the customer feedback and agreed the next delivery milestone with a named owner.", speaker: index % 2, timestamp: Double(index * 30), isFinal: true)
+        }
+        let meeting = Meeting(title: "Synthetic large review", startTime: Date(timeIntervalSince1970: 1_700_000_000),
+                              endTime: Date(timeIntervalSince1970: 1_700_003_000), segments: transcript,
+                              summaryText: String(repeating: "The team agreed the plan and recorded the remaining dependencies. ", count: 30),
+                              actionItems: actions, topics: ["delivery", "customer feedback"], discussionFlow: discussion)
+        container.mainContext.insert(meeting)
+        let root = SavedInsightScreenBenchmarkRoot(meeting: meeting, state: state, container: container, scale: .standard)
+        let host = NSHostingView(rootView: root)
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1000, height: 740),
+                              styleMask: [.borderless], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        window.contentView = host; window.orderFront(nil)
+        defer { window.orderOut(nil); window.close() }
+        let steps: [(String, InterfaceScale, CGFloat)] = [
+            ("initial", .standard, 1000), ("large", .large, 1000),
+            ("narrow", .large, 860), ("wide", .large, 1200),
+            ("compact", .compact, 1200), ("restore", .standard, 1000)
+        ]
+        var selectedText = ""
+        var selection = NSRange(location: 0, length: 0)
+        var previousTranscript: NSTextView?
+        for (name, scale, width) in steps {
+            let start = ProcessInfo.processInfo.systemUptime
+            window.setContentSize(NSSize(width: width, height: 740))
+            host.rootView = SavedInsightScreenBenchmarkRoot(meeting: meeting, state: state, container: container, scale: scale)
+            host.layoutSubtreeIfNeeded()
+            // TranscriptTrimView deliberately coalesces reading-size changes for 75ms.
+            // Include that delay and the polling resolution in the end-to-end interval.
+            try await TestSupport.waitUntil {
+                host.layoutSubtreeIfNeeded()
+                guard let view = Self.descendants(host).compactMap({ $0 as? NSTextView }).first(where: { $0.string.contains("Transcript anchor 1.") }) else { return false }
+                let text = view.attributedString()
+                let range = (text.string as NSString).range(of: "Transcript anchor 1.")
+                return (text.attribute(.font, at: range.location, effectiveRange: nil) as? NSFont)?.pointSize == scale.transcriptBodySize
+            }
+            let scrolls = Self.descendants(host).compactMap { $0 as? NSScrollView }
+            let insights = try XCTUnwrap(scrolls.filter { $0.documentView != nil }.max {
+                $0.convert($0.bounds, to: host).midX < $1.convert($1.bounds, to: host).midX
+            })
+            let document = try XCTUnwrap(insights.documentView)
+            XCTAssertGreaterThan(document.frame.height, 1000, "Large insight content must actually lay out")
+            document.scroll(NSPoint(x: 0, y: max(0, document.frame.height - insights.contentView.bounds.height)))
+            insights.reflectScrolledClipView(insights.contentView)
+            host.layoutSubtreeIfNeeded()
+            let bitmap = try XCTUnwrap(host.bitmapImageRepForCachingDisplay(in: host.bounds))
+            host.cacheDisplay(in: host.bounds, to: bitmap)
+            let elapsed = ProcessInfo.processInfo.systemUptime - start
+            let nativeTranscript = try XCTUnwrap(Self.descendants(host).compactMap { $0 as? NSTextView }.first { $0.string.contains("Transcript anchor 1.") })
+            let text = nativeTranscript.attributedString()
+            let anchor = (text.string as NSString).range(of: "Transcript anchor 1.")
+            let font = try XCTUnwrap(text.attribute(.font, at: anchor.location, effectiveRange: nil) as? NSFont)
+            XCTAssertEqual(font.pointSize, scale.transcriptBodySize, accuracy: 0.01)
+            XCTAssertTrue(text.string.contains("Transcript anchor 100."))
+            if let previousTranscript {
+                XCTAssertTrue(nativeTranscript === previousTranscript, "Keep the native document while size changes")
+                if checkSelection { XCTAssertEqual(nativeTranscript.selectedRange(), selection) }
+                XCTAssertEqual((text.string as NSString).substring(with: selection), selectedText)
+            } else {
+                selection = anchor
+                nativeTranscript.setSelectedRange(selection)
+                selectedText = (text.string as NSString).substring(with: selection)
+                previousTranscript = nativeTranscript
+            }
+            XCTAssertEqual(meeting.discussionFlow, discussion)
+            XCTAssertEqual(meeting.actionItems, actions)
+            XCTAssertEqual(meeting.segments.count, 100)
+            let selectionKept = nativeTranscript.selectedRange() == selection
+            // Reestablish the same starting selection for the next measured transition.
+            // The strict regression above keeps the assertion; timing records the known
+            // public-baseline selection defect instead of treating it as valid behavior.
+            if !checkSelection { nativeTranscript.setSelectedRange(selection) }
+            print("SAVED_SCREEN selectionKept=\(selectionKept) step=\(name) seconds=\(elapsed) width=\(width) insightHeight=\(document.frame.height) transcriptChars=\(text.length) pixels=\(bitmap.pixelsWide * bitmap.pixelsHigh)")
+            if name == "initial" || name == "narrow" {
+                let attachment = XCTAttachment(image: NSImage(cgImage: try XCTUnwrap(bitmap.cgImage), size: host.bounds.size))
+                attachment.name = "Large saved meeting \(name)"; attachment.lifetime = .keepAlways; add(attachment)
+            }
+        }
+    }
+
+    @MainActor
+    private static func descendants(_ view: NSView) -> [NSView] {
+        [view] + view.subviews.flatMap { descendants($0) }
+    }
+}
+
+private struct SavedInsightScreenBenchmarkRoot: View {
+    let meeting: Meeting
+    let state: AppState
+    let container: ModelContainer
+    let scale: InterfaceScale
+    var body: some View {
+        MeetingDetailView(meeting: meeting)
+            .environmentObject(state).modelContainer(container)
+            .environment(\.interfaceScale, scale)
+            .dynamicTypeSize(scale.dynamicTypeSize(from: .large))
+            .preferredColorScheme(.dark)
+    }
 }
 #endif

@@ -827,7 +827,10 @@ final class AccountJourneys: XCTestCase {
         assertSearch("Search inactive")
         // Exercise reactivation after the sidebar's initial 1.5s focus guard.
         // This does not model a process whose first activation is delayed.
-        XCUIApplication(bundleIdentifier: "com.apple.systempreferences").activate()
+        let settings = XCUIApplication(bundleIdentifier: "com.apple.systempreferences")
+        let settingsWasRunning = settings.state != .notRunning
+        defer { if !settingsWasRunning { settings.terminate() } }
+        settings.activate()
         XCTAssertTrue(app.wait(for: .runningBackground, timeout: 5))
         let elapsed = expectation(description: "Beyond initial sidebar focus guard")
         DispatchQueue.main.asyncAfter(deadline: .now() + 2) { elapsed.fulfill() }
@@ -835,6 +838,10 @@ final class AccountJourneys: XCTestCase {
         app.activate()
         XCTAssertTrue(app.wait(for: .runningForeground, timeout: 5))
         assertSearch("Search inactive")
+        let lateFocus = XCTNSPredicateExpectation(predicate: NSPredicate(format: "value == %@", "Search active"), object: state)
+        lateFocus.isInverted = true
+        XCTAssertEqual(XCTWaiter.wait(for: [lateFocus], timeout: 2), .completed,
+                       "Search must remain inactive while delayed focus callbacks settle")
         captureAppScreen("Home after delayed reactivation, \(navigation)")
         app.typeKey("/", modifierFlags: [])
         assertSearch("Search active")

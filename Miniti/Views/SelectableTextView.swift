@@ -124,6 +124,9 @@ final class _SelectableTextContainer: NSView, NSTextViewDelegate {
     private var measurementContainer: NSTextContainer
     private var lastMeasuredWidth: CGFloat = -1
     private var lastMeasuredHeight: CGFloat = 0
+    // SwiftUI can alternate a few width proposals during one layout pass.
+    // Cache heights only; the active TextKit stack keeps its own width/state.
+    private var measuredHeights: [(width: CGFloat, height: CGFloat)] = []
     private var measurementMutationCount = 0
     private var measurementNeedsReset = false
     private var measurementContentChanged = true
@@ -199,6 +202,8 @@ final class _SelectableTextContainer: NSView, NSTextViewDelegate {
         self.onSelectionChange = onSelectionChange
         textView.onDeleteSelection = onDeleteSelection
         guard let displayStorage = textView.textStorage else { return }
+        let previousSelection = textView.selectedRange()
+        var preservesSelection = false
 
         let appliedIncrementally: Bool
         if let mutation,
@@ -224,6 +229,13 @@ final class _SelectableTextContainer: NSView, NSTextViewDelegate {
                 pendingMeasurementMutations.removeAll(keepingCapacity: true)
             }
 
+            // A reading-size rebuild replaces the full attributed document without
+            // changing its characters. TextKit otherwise moves selection to the end.
+            // Tail edits do not compare the whole document.
+            preservesSelection = mutation.range.location == 0
+                && mutation.range.length == displayStorage.length
+                && mutation.replacement.length == displayStorage.length
+                && mutation.replacement.string == displayStorage.string
             displayStorage.replaceCharacters(in: mutation.range, with: mutation.replacement)
             measurementStorage.replaceCharacters(in: mutation.range, with: mutation.replacement)
             let invalidatedRange = NSRange(
@@ -253,12 +265,17 @@ final class _SelectableTextContainer: NSView, NSTextViewDelegate {
             guard attributed !== lastAttributedInput else { return }
             lastAttributedInput = attributed
             guard displayStorage.isEqual(to: attributed) == false else { return }
+            preservesSelection = attributed.string == displayStorage.string
             displayStorage.setAttributedString(attributed)
             measurementStorage.setAttributedString(attributed)
             measurementNeedsReset = true
             measurementContentChanged = true
             pendingMeasurementMutations.removeAll(keepingCapacity: true)
             if let mutation { lastAppliedRevision = mutation.revision }
+        }
+        measuredHeights.removeAll(keepingCapacity: true)
+        if preservesSelection {
+            textView.setSelectedRange(previousSelection)
         }
         // Do NOT call invalidateIntrinsicContentSize() or needsLayout = true here.
         // updateNSView can run inside an in-progress SwiftUI/AppKit layout pass,
@@ -310,6 +327,9 @@ final class _SelectableTextContainer: NSView, NSTextViewDelegate {
     }
 
     func measuredHeight(for width: CGFloat) -> CGFloat {
+        if let cached = measuredHeights.first(where: { $0.width == width }) {
+            return cached.height
+        }
         let widthChanged = abs(width - lastMeasuredWidth) >= 0.5
         if !widthChanged,
            !measurementNeedsReset,
@@ -363,6 +383,8 @@ final class _SelectableTextContainer: NSView, NSTextViewDelegate {
         lastMeasuredHeight = measuredHeight
         measurementContentChanged = false
         pendingMeasurementMutations.removeAll(keepingCapacity: true)
+        if measuredHeights.count == 4 { measuredHeights.removeFirst() }
+        measuredHeights.append((width, lastMeasuredHeight))
         return lastMeasuredHeight
     }
 

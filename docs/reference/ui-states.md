@@ -179,3 +179,7 @@ Recovery-key save/display: heading, guidance, saved toggle, hint and displayed k
 Home setup presents the recovery-key save sheet with an optional item containing the explicitly selected key and a random presentation ID. It clears that item on dismissal/account change and refuses an empty key; no identifier contains the key. This keeps content and presentation in one state instead of a separate key string and Boolean.
 
 Account device details and Rename/Sign out/Remove stack at iPhone accessibility sizes. The normal iPhone and Mac arrangements remain horizontal; each iPhone action label reserves the shared minimum target. This changes presentation only, not which devices can be renamed or removed, signing requirements or confirmation callbacks.
+
+### Saved Mac selection during text-size changes
+
+Changing InterfaceScale rebuilds attributed transcript text. When the characters are unchanged, the native macOS renderer preserves its selected range through that rebuild, including full-document mutation and ordinary attributed-input paths. Character edits retain the existing TextKit/trim selection policy. The native measurement layer retains at most four width/height results for unchanged attributed text and invalidates them on every applied edit or style change. See the [saved-screen evidence](../releases/3.9.0.md#saved-mac-screen-performance-and-selection); programmatic resizing and scrolling do not close physical pointer, Settings or whole-screen accessibility gates.
