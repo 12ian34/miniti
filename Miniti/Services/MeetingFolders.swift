@@ -250,16 +250,16 @@ enum FolderMatcher {
         private var phrases: [String] {
             switch self {
             case .team: ["standup", "standups", "stand up", "team sync", "team meeting", "team catch up", "all hands", "one to one", "one on one", "1 1", "1on1",
-                         "retro", "retrospective", "offsite", "town hall"]
+                         "offsite", "town hall"]
             case .customers: ["customer", "customers", "client", "clients", "prospect", "prospects", "sales", "demo", "discovery",
-                              "onboarding", "renewal", "account review", "pitch", "pilot", "proposal"]
+                              "renewal", "account review", "pilot"]
             case .product: ["product", "engineering", "design", "sprint", "roadmap", "bug triage",
-                            "spec", "architecture", "release", "launch", "feature", "features", "ux", "user research", "analytics", "data", "dev", "backlog"]
+                            "spec", "architecture", "ux", "user research", "backlog"]
             case .hiring: ["interview", "interviews", "recruiting", "recruitment", "hiring", "candidate", "candidates", "screening"]
             case .planning: ["strategy", "planning", "budget", "finance", "operations", "leadership", "board",
-                             "okr", "okrs", "forecast", "investor", "investors", "fundraising", "quarterly"]
+                             "okr", "okrs", "forecast", "investor", "investors", "fundraising"]
             case .partnerships: ["partner", "partners", "partnership", "partnerships", "vendor", "vendors", "supplier", "suppliers", "agency", "procurement"]
-            case .learning: ["training", "workshop", "webinar", "learning", "lunch and learn", "course", "conference", "meetup"]
+            case .learning: ["training", "workshop", "webinar", "learning", "lunch and learn", "meetup"]
             }
         }
         func id(owner: String, localOnly: Bool) -> UUID {
@@ -277,16 +277,21 @@ enum FolderMatcher {
             let specific = matches.filter { $0 != .planning }
             return specific.count == 1 ? specific[0] : (specific.isEmpty && matches.contains(.planning) ? .planning : nil)
         }
-        /// Summary evidence for a broad group: at least two different phrases of exactly
-        /// one category. Callers use this only for folders that already exist, so stray
-        /// summary vocabulary can never create a folder.
+        /// Summary evidence for a broad group: at least three different terms of one
+        /// category (singular and plural count once), two clear of any other category.
+        /// Callers use this only for folders that already exist, so summary vocabulary
+        /// can never create a folder.
         static func matching(summary: String?) -> Self? {
             guard let summary, !summary.isEmpty else { return nil }
             let normalized = " " + String(summary.prefix(4000)).lowercased().split { !$0.isLetter && !$0.isNumber }.joined(separator: " ") + " "
-            let strong = allCases.filter { category in
-                category.phrases.filter { normalized.contains(" " + $0 + " ") }.count >= 2
-            }
-            return strong.count == 1 ? strong[0] : nil
+            let scores = allCases.map { category -> (Self, Int) in
+                let stems = Set(category.phrases.filter { normalized.contains(" " + $0 + " ") }.map { phrase in
+                    phrase.hasSuffix("s") && phrase.count > 3 ? String(phrase.dropLast()) : phrase
+                })
+                return (category, stems.count)
+            }.sorted { $0.1 > $1.1 }
+            guard let best = scores.first, best.1 >= 3, best.1 >= (scores.dropFirst().first?.1 ?? 0) + 2 else { return nil }
+            return best.0
         }
         static func identifying(_ folder: MeetingFolder, owner: String) -> Self? {
             allCases.first { $0.id(owner: owner, localOnly: folder.localOnly) == folder.id }
@@ -350,7 +355,9 @@ enum FolderMatcher {
                                    "january", "february", "march", "april", "june", "july", "august", "september", "october", "november", "december"]
         let tokens = title.lowercased().split { !$0.isLetter && !$0.isNumber }.map(String.init)
             .filter { token in !token.allSatisfy(\.isNumber) && !months.contains(token) }
-        let generic: Set<String> = ["meeting", "call", "untitled", "new", "recording", "notes", "chat"]
+        let generic: Set<String> = ["meeting", "meetings", "call", "untitled", "new", "recording", "notes", "chat", "watch",
+                                    "intro", "demo", "catch", "interview", "weekly", "monthly", "daily", "sync", "standup",
+                                    "check", "quick", "follow", "the", "and", "with", "team", "review", "update", "discussion"]
         if tokens.contains(where: { $0.count >= 3 && !generic.contains($0) }) {
             keys.append("title:" + tokens.joined(separator: " "))
         }

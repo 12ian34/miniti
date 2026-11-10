@@ -272,23 +272,68 @@ final class MeetingFolderTests: XCTestCase {
         XCTAssertEqual(next.folderID, folder.id, "The next occurrence of a calendar series joins its folder")
     }
 
-    func testManualMoveTeachesLaterMeetingsWithTheSameTitle() throws {
+    func testManualMoveTeachesLaterMeetingsWithTheSameTitleButAutomaticFilingDoesNot() throws {
         let container = try TestSupport.makeInMemoryContainer()
         let state = AppState(); state.modelContext = container.mainContext
         state.automaticFolderCreation = false; state.automaticFolderFiling = true
-        let customers = FolderMatcher.Category.customers.folder(owner: state.meetingFolders.owner, localOnly: false)
-        let partner = MeetingFolder(id: UUID(), name: "Northwind")
-        XCTAssertTrue(state.meetingFolders.edit(customers)); XCTAssertTrue(state.meetingFolders.edit(partner))
-        let moved = Meeting(title: "Northwind demo 3 Nov", startTime: Date().addingTimeInterval(-86400), endTime: Date().addingTimeInterval(-85000))
-        container.mainContext.insert(moved); try container.mainContext.save()
-        _ = state.moveMeeting(moved, to: partner)
-        let later = Meeting(title: "Northwind demo 10 Nov", endTime: Date())
-        container.mainContext.insert(later); try container.mainContext.save()
+        // Neither folder name appears in the titles, so only series learning can file them.
+        let chosen = MeetingFolder(id: UUID(), name: "Lightdash")
+        let other = MeetingFolder(id: UUID(), name: "Archive")
+        XCTAssertTrue(state.meetingFolders.edit(chosen)); XCTAssertTrue(state.meetingFolders.edit(other))
+        let moved = Meeting(title: "Ian / Charlie 3 Nov", startTime: Date().addingTimeInterval(-2 * 86400), endTime: Date().addingTimeInterval(-2 * 86400 + 1800))
+        let automatic = Meeting(title: "Weekly Sam chat", startTime: Date().addingTimeInterval(-86400), endTime: Date().addingTimeInterval(-85000))
+        automatic.folderID = other.id; automatic.folderManual = false
+        [moved, automatic].forEach { container.mainContext.insert($0) }
+        try container.mainContext.save()
+        _ = state.moveMeeting(moved, to: chosen)
+        let later = Meeting(title: "Ian / Charlie 10 Nov", endTime: Date())
+        let laterAutomatic = Meeting(title: "Weekly Sam chat", endTime: Date())
+        [later, laterAutomatic].forEach { container.mainContext.insert($0) }
+        try container.mainContext.save()
         state.automaticallyFileMeeting(later)
-        XCTAssertEqual(later.folderID, partner.id, "A hand-chosen folder outranks the demo keyword for the same series")
-        XCTAssertEqual(FolderMatcher.seriesKeys(calendarEventID: nil, title: "Northwind demo 3 Nov"),
-                       FolderMatcher.seriesKeys(calendarEventID: nil, title: "Northwind demo 10 Nov"))
-        XCTAssertTrue(FolderMatcher.seriesKeys(calendarEventID: nil, title: "untitled").isEmpty)
+        state.automaticallyFileMeeting(laterAutomatic)
+        XCTAssertEqual(later.folderID, chosen.id, "A hand move teaches later meetings with the same title")
+        XCTAssertNil(laterAutomatic.folderID, "A title series never learns from automatic filing")
+        XCTAssertEqual(FolderMatcher.seriesKeys(calendarEventID: nil, title: "Ian / Charlie 3 Nov"),
+                       FolderMatcher.seriesKeys(calendarEventID: nil, title: "Ian / Charlie 10 Nov"))
+        for generic in ["untitled", "Weekly sync", "Demo", "Intro call", "Interview", "Watch recording"] {
+            XCTAssertTrue(FolderMatcher.seriesKeys(calendarEventID: nil, title: generic).isEmpty, generic)
+        }
+    }
+
+    func testHandMoveOutranksACustomFolderNameMatch() throws {
+        let container = try TestSupport.makeInMemoryContainer()
+        let state = AppState(); state.modelContext = container.mainContext
+        state.automaticFolderCreation = false; state.automaticFolderFiling = true
+        let acme = MeetingFolder(id: UUID(), name: "Acme")
+        let archive = MeetingFolder(id: UUID(), name: "Archive")
+        XCTAssertTrue(state.meetingFolders.edit(acme)); XCTAssertTrue(state.meetingFolders.edit(archive))
+        let earlier = Meeting(title: "Acme weekly", startTime: Date().addingTimeInterval(-7 * 86400), endTime: Date().addingTimeInterval(-7 * 86400 + 1800))
+        container.mainContext.insert(earlier); try container.mainContext.save()
+        _ = state.moveMeeting(earlier, to: archive)
+        let next = Meeting(title: "Acme weekly", endTime: Date())
+        container.mainContext.insert(next); try container.mainContext.save()
+        state.automaticallyFileMeeting(next)
+        XCTAssertEqual(next.folderID, archive.id, "Moving a series out of a matching folder by hand sticks")
+    }
+
+    func testSeriesFiledMeetingIsNotMovedAgainOnALaterPass() throws {
+        let container = try TestSupport.makeInMemoryContainer()
+        let state = AppState(); state.modelContext = container.mainContext
+        state.automaticFolderCreation = false; state.automaticFolderFiling = true
+        let product = FolderMatcher.Category.product.folder(owner: state.meetingFolders.owner, localOnly: false)
+        let series = MeetingFolder(id: UUID(), name: "Northwind")
+        XCTAssertTrue(state.meetingFolders.edit(product)); XCTAssertTrue(state.meetingFolders.edit(series))
+        let earlier = Meeting(title: "Roadmap with N", startTime: Date().addingTimeInterval(-7 * 86400), endTime: Date().addingTimeInterval(-7 * 86400 + 1800))
+        earlier.calendarEventId = "nw_20261103T100000Z"; earlier.folderID = series.id; earlier.folderManual = false
+        let next = Meeting(title: "Roadmap with N", endTime: Date())
+        next.calendarEventId = "nw_20261110T100000Z"
+        [earlier, next].forEach { container.mainContext.insert($0) }
+        try container.mainContext.save()
+        state.automaticallyFileMeeting(next)
+        XCTAssertEqual(next.folderID, series.id)
+        XCTAssertTrue(state.folderProposals(meetings: [earlier, next]).isEmpty,
+                      "Preview keeps series-learned meetings instead of moving them to the roadmap keyword folder")
     }
 
     func testSummaryEvidenceFilesOnlyIntoAnExistingBroadFolder() throws {
@@ -302,8 +347,12 @@ final class MeetingFolderTests: XCTestCase {
         XCTAssertEqual(state.folderProposals(meetings: [lone]).first?.folder.id, product.id)
         let weak = Meeting(title: "Thursday with Sam", endTime: Date(), summaryText: "A quick product question.")
         XCTAssertTrue(state.folderProposals(meetings: [weak]).isEmpty, "One incidental phrase is not enough")
-        XCTAssertEqual(FolderMatcher.Category.matching(title: "Weekly retro"), .team)
+        XCTAssertEqual(FolderMatcher.Category.matching(title: "Team offsite"), .team)
         XCTAssertEqual(FolderMatcher.Category.matching(title: "Q4 OKRs"), .planning)
+        XCTAssertEqual(FolderMatcher.Category.matching(title: "Dev standup"), .team)
+        XCTAssertNil(FolderMatcher.Category.matching(title: "Ian / Dev"))
+        XCTAssertNil(FolderMatcher.Category.matching(summary: "The customer asked about customers, product and features."),
+                     "Singular and plural count once, and a near tie stays unfiled")
     }
 
     func testAutomaticFilingOnlyChangesNewMeetingUntilHistoryPreviewIsApplied() throws {

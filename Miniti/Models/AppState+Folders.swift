@@ -104,25 +104,48 @@ extension AppState {
         }
     }
 
-    /// The folder each recurring series already uses, newest first, with folders chosen
-    /// by hand outranking automatic ones. Only existing, active folders count.
-    private func seriesPrecedents(in candidates: [Meeting]) -> [String: (folder: MeetingFolder, manual: Bool, meetingID: UUID)] {
-        var result: [String: (folder: MeetingFolder, manual: Bool, meetingID: UUID)] = [:]
-        for meeting in candidates.sorted(by: { $0.startTime > $1.startTime }) {
+    struct SeriesPrecedent {
+        let folder: MeetingFolder
+        let manual: Bool
+        let meetingID: UUID
+    }
+
+    /// The folders recurring series already use, hand-chosen first, then newest. Calendar
+    /// series learn from any filed meeting; title series only from hand moves, because
+    /// generic titles can collide. Only existing, active folders count.
+    private func seriesPrecedents(in candidates: [Meeting]) -> [String: [SeriesPrecedent]] {
+        var result: [String: [SeriesPrecedent]] = [:]
+        let ordered = candidates.sorted {
+            let a = $0.folderManual == true, b = $1.folderManual == true
+            return a != b ? a : $0.startTime > $1.startTime
+        }
+        for meeting in ordered {
             guard let folder = meetingFolders.folder(meeting.folderID) else { continue }
             let manual = meeting.folderManual == true
-            for key in FolderMatcher.seriesKeys(calendarEventID: meeting.calendarEventId, title: meeting.calendarEventTitle ?? meeting.title) {
-                if let existing = result[key], existing.manual || !manual { continue }
-                result[key] = (folder, manual, meeting.id)
+            for key in FolderMatcher.seriesKeys(calendarEventID: meeting.calendarEventId, title: meeting.calendarEventTitle ?? meeting.title)
+                where manual || key.hasPrefix("event:") {
+                // Two entries are enough to find one that is not the meeting being filed.
+                if result[key, default: []].count < 2 {
+                    result[key, default: []].append(.init(folder: folder, manual: manual, meetingID: meeting.id))
+                }
             }
         }
         return result
     }
 
+    private func seriesPrecedent(for meeting: Meeting, title: String, in precedents: [String: [SeriesPrecedent]]) -> SeriesPrecedent? {
+        let found = FolderMatcher.seriesKeys(calendarEventID: meeting.calendarEventId, title: title)
+            .compactMap { key in precedents[key]?.first { $0.meetingID != meeting.id } }
+        return found.first { $0.manual } ?? found.first
+    }
+
     private func matchingFolder(for meeting: Meeting, custom: [MeetingFolder], prepared: FolderMatcher.Prepared,
                                 broad: [FolderMatcher.Category: MeetingFolder],
-                                precedents: [String: (folder: MeetingFolder, manual: Bool, meetingID: UUID)] = [:]) -> MeetingFolder? {
+                                precedents: [String: [SeriesPrecedent]] = [:]) -> MeetingFolder? {
         let title = meeting.calendarEventTitle ?? meeting.title
+        let precedent = seriesPrecedent(for: meeting, title: title, in: precedents)
+        // A hand-chosen folder for the same series is the strongest signal there is.
+        if let precedent, precedent.manual { return precedent.folder }
         switch prepared.resolve(title: title, summary: meeting.summaryText) {
         case .folder(let id):
             return custom.first { $0.id == id }
@@ -131,12 +154,10 @@ extension AppState {
         case .none:
             break
         }
-        // An unfiled meeting follows earlier meetings in the same series, so recurring
-        // meetings and meetings moved by hand teach later ones where they belong.
-        if meetingFolders.folder(meeting.folderID) == nil {
-            for key in FolderMatcher.seriesKeys(calendarEventID: meeting.calendarEventId, title: title) {
-                if let precedent = precedents[key], precedent.meetingID != meeting.id { return precedent.folder }
-            }
+        // An automatic series folder files an unfiled meeting and keeps a meeting that
+        // already sits there from being moved again on a later pass.
+        if let precedent, meetingFolders.folder(meeting.folderID) == nil || meeting.folderID == precedent.folder.id {
+            return precedent.folder
         }
         if let category = FolderMatcher.Category.matching(title: title), let folder = broad[category] { return folder }
         // Strong summary evidence may file into a broad folder that already exists, never a new one.
