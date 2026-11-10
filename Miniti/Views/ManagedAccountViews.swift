@@ -826,6 +826,8 @@ struct HomeSetupButton: View {
     @EnvironmentObject private var appState: AppState
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.scenePhase) private var scenePhase
+    @State private var isHighlighted = false
+    @State private var highlightTask: Task<Void, Never>?
     var body: some View {
         HomeSetupStateObserver(state: appState.homeSetupState) {
             Group {
@@ -835,9 +837,18 @@ struct HomeSetupButton: View {
                         if reduceMotion { update() }
                         else { withAnimation(.easeInOut(duration: MinitiDesignSystem.Motion.disclosureDuration), update) }
                     } label: {
-                        MinitiHomeActionLabel(icon: "checklist", label: "set up miniti \(appState.homeSetupProgress)", isEmphasized: appState.isHomeSetupExpanded, fillsFooterCell: fillsFooterCell)
+                        MinitiHomeActionLabel(icon: "checklist", label: "set up miniti \(appState.homeSetupProgress)", isEmphasized: appState.isHomeSetupExpanded || isHighlighted, fillsFooterCell: fillsFooterCell)
+                            .overlay {
+                                RoundedRectangle(cornerRadius: MinitiDesignSystem.Radius.control)
+                                    .stroke(ColorPalette.Accent.green, lineWidth: 2)
+                                    .opacity(isHighlighted ? 1 : 0)
+                                    .allowsHitTesting(false)
+                            }
+                            .scaleEffect(isHighlighted && !reduceMotion ? 1.06 : 1)
                     }
                     .buttonStyle(.plain)
+                    .onChange(of: appState.homeSetupState.reopenHighlight) { _, _ in highlightOnce() }
+                    .onDisappear { highlightTask?.cancel() }
                     .accessibilityIdentifier("setup.reopen")
                     .accessibilityLabel("Set up miniti")
                     .accessibilityValue("\(appState.homeSetupItems.filter { $0.status == .complete }.count) of \(appState.homeSetupItems.count) tasks configured")
@@ -849,6 +860,24 @@ struct HomeSetupButton: View {
                     if phase == .active { appState.refreshHomeSetupMicrophonePermission() }
                 }
                 .onChange(of: appState.captureMicrophone) { _, _ in appState.refreshHomeSetupMicrophonePermission() }
+        }
+    }
+
+    /// One highlight after the guide collapses: a ring, plus a small pulse unless Reduce Motion is on.
+    private func highlightOnce() {
+        highlightTask?.cancel()
+        let change = { (on: Bool) in
+            if reduceMotion { isHighlighted = on }
+            else { withAnimation(.easeInOut(duration: 0.35)) { isHighlighted = on } }
+        }
+        highlightTask = Task { @MainActor in
+            // Let the guide finish shrinking towards the button first.
+            try? await Task.sleep(nanoseconds: reduceMotion ? 0 : 250_000_000)
+            guard !Task.isCancelled else { return }
+            change(true)
+            try? await Task.sleep(nanoseconds: 1_600_000_000)
+            guard !Task.isCancelled else { return }
+            change(false)
         }
     }
 }
@@ -992,7 +1021,10 @@ struct HomeSetupGuide: View {
                     HStack {
                         Text("make it yours").font(.headline)
                         Spacer()
-                        Button("collapse guide") { setHidden(true) }
+                        Button("collapse guide") {
+                            setHidden(true)
+                            appState.homeSetupState.reopenHighlight += 1
+                        }
                             .font(.caption)
                             .accessibilityIdentifier("setup.collapse")
                             .help("Keep the setup button on Home so you can reopen the guide.")
@@ -1020,7 +1052,10 @@ struct HomeSetupGuide: View {
                         .font(.caption).foregroundStyle(ColorPalette.Text.muted)
                 }
                 .frame(maxWidth: MinitiDesignSystem.HomeSetup.maximumWidth, alignment: .leading)
-                .transition(.opacity)
+                // Collapsing shrinks the guide towards the setup button at the bottom of Home.
+                .transition(reduceMotion ? .opacity : .asymmetric(
+                    insertion: .opacity,
+                    removal: .scale(scale: 0.15, anchor: .bottomLeading).combined(with: .opacity)))
                 .sheet(isPresented: $emailPresented) {
                     HomeSetupEmailSheet().environmentObject(appState).dynamicTypeSize(dynamicTypeSize)
                 }
@@ -1160,7 +1195,11 @@ struct HomeSetupGuide: View {
         case .folders:
             return "Find past conversations faster with folders that group related meetings."
         case .transcription:
-            return "Transcription: \(appState.onDeviceTranscriptionEnabled ? "This Mac" : "Deepgram"). Speaker separation: \(appState.onDeviceSpeakerSeparationEnabled ? "This Mac" : "Deepgram")."
+            switch HomeSetupAudioChoice(appState: appState) {
+            case .online: return "Online. Fast, with the most languages."
+            case .onThisMac: return "On this Mac. Audio stays on your Mac."
+            case .custom: return "Custom. Each part is chosen in Settings, Transcription."
+            }
         }
     }
 
@@ -1214,63 +1253,58 @@ struct HomeSetupGuide: View {
             }
         case .transcription:
             #if os(macOS) && arch(arm64)
+            // One plain choice (Charlie's 3.8.0 feedback). Provider names and the
+            // separate transcription and speaker pickers stay in Settings, Transcription.
             VStack(alignment: .leading, spacing: MinitiDesignSystem.Spacing.comfortable) {
-                HStack { Text("transcription").font(.callout.weight(.semibold)); MinitiDocumentationLink(topic: .transcription) }
-                AudioProcessingComparison(options: AudioProcessingChoiceCopy.transcription)
-                if OnDeviceTranscriptionSupport.tier(forCode: appState.meetingLanguage) != .tested {
-                    Text("Deepgram is recommended for your selected language.")
-                        .font(.caption).foregroundStyle(ColorPalette.Text.secondary)
-                }
-                Picker("transcription", selection: Binding(
-                    get: { appState.onDeviceTranscriptionEnabled },
-                    set: { local in
+                HStack { Text("where audio is processed").font(.callout.weight(.semibold)); MinitiDocumentationLink(topic: .transcription) }
+                Picker("where audio is processed", selection: Binding(
+                    get: { HomeSetupAudioChoice(appState: appState) },
+                    set: { choice in
+                        guard choice != .custom else { return }
+                        let local = choice == .onThisMac
                         appState.onDeviceTranscriptionEnabled = local
+                        appState.onDeviceSpeakerSeparationEnabled = local
+                        if local { appState.onDeviceTranscriptionCloudFallback = true }
                         selected = .transcription
                         appState.refreshOnDeviceTranscriptionAvailability()
+                        appState.refreshOnDeviceDiarizationAvailability()
                     }
                 )) {
-                    Text("Deepgram").tag(false)
-                    Text("This Mac").tag(true)
+                    Text("online").tag(HomeSetupAudioChoice.online)
+                    Text("on this Mac").tag(HomeSetupAudioChoice.onThisMac)
+                    if HomeSetupAudioChoice(appState: appState) == .custom {
+                        Text("custom").tag(HomeSetupAudioChoice.custom)
+                    }
                 }
                 .pickerStyle(.segmented)
                 .labelsHidden()
-                .disabled(appState.privateModeEnabled || !OnDeviceTranscriptionService.isHardwareSupported)
-                .accessibilityIdentifier("setup.transcription.choice")
-                if appState.onDeviceTranscriptionEnabled {
+                .disabled(appState.privateModeEnabled
+                          || !OnDeviceTranscriptionService.isHardwareSupported
+                          || !OnDeviceDiarizationService.isHardwareSupported)
+                .accessibilityIdentifier("setup.audio.choice")
+                switch HomeSetupAudioChoice(appState: appState) {
+                case .online:
+                    Text("Recommended. Fast, with the most languages, and light on your Mac.")
+                        .font(.caption).foregroundStyle(ColorPalette.Text.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                case .onThisMac:
+                    Text("Audio stays on your Mac. The first recording downloads about 600 MB. If the model is not ready, miniti uses online processing.")
+                        .font(.caption).foregroundStyle(ColorPalette.Text.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
                     if OnDeviceTranscriptionSupport.tier(forCode: appState.meetingLanguage) == .cloudOnly {
-                        Text("Your selected language uses Deepgram. Choose a supported language to transcribe locally.")
+                        Text("Your selected language is processed online. Choose a supported language to keep it on your Mac.")
                             .font(.caption).foregroundStyle(ColorPalette.Text.secondary)
                     } else {
                         HomeSetupTranscriptionStatus(service: appState.onDeviceTranscription)
                     }
-                    Toggle("use Deepgram if the model is not ready", isOn: $appState.onDeviceTranscriptionCloudFallback)
-                        .disabled(appState.privateModeEnabled)
-                }
-            }
-            MinitiFadingDivider(accent: ColorPalette.Border.subtle)
-                .padding(.vertical, MinitiDesignSystem.Spacing.small)
-            VStack(alignment: .leading, spacing: MinitiDesignSystem.Spacing.comfortable) {
-                HStack { Text("speaker separation").font(.callout.weight(.semibold)); MinitiDocumentationLink(topic: .speakers) }
-                AudioProcessingComparison(options: AudioProcessingChoiceCopy.speakers)
-                Picker("speaker separation", selection: Binding(
-                    get: { appState.onDeviceSpeakerSeparationEnabled },
-                    set: { appState.onDeviceSpeakerSeparationEnabled = $0; selected = .transcription; appState.refreshOnDeviceDiarizationAvailability() }
-                )) {
-                    Text("Deepgram").tag(false)
-                    Text("This Mac").tag(true)
-                }
-                .pickerStyle(.segmented)
-                .labelsHidden()
-                .disabled(appState.privateModeEnabled || !OnDeviceDiarizationService.isHardwareSupported)
-                .accessibilityIdentifier("setup.speakers.choice")
-                if appState.onDeviceSpeakerSeparationEnabled {
                     HomeSetupSpeakerStatus(service: appState.onDeviceDiarization)
-                } else if appState.onDeviceTranscriptionEnabled {
-                    Text("For speaker labels with local transcription, choose This Mac here too.")
+                case .custom:
+                    Text("You chose each part separately. Pick one option to use it for both, or keep your choice in Settings, Transcription.")
                         .font(.caption).foregroundStyle(ColorPalette.Text.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
             }
-            Text(appState.privateModeEnabled ? "Private mode uses This Mac. Change private mode under Privacy." : "For your next recording. AI insights are separate.")
+            Text(appState.privateModeEnabled ? "Private mode keeps audio on this Mac. Change private mode under Privacy." : "For your next recording. AI insights are separate.")
                 .font(.caption).foregroundStyle(ColorPalette.Text.muted)
             if !appState.homeSetupAudioReviewed {
                 Button("confirm audio choices") {
@@ -2715,3 +2749,18 @@ struct LocalModelsStatusButton: View {
     }
 }
 #endif
+
+
+/// The single Home setup choice for where audio is processed. Mixed Settings
+/// choices show as custom instead of being overwritten.
+enum HomeSetupAudioChoice: Hashable {
+    case online, onThisMac, custom
+
+    @MainActor init(appState: AppState) {
+        switch (appState.onDeviceTranscriptionEnabled, appState.onDeviceSpeakerSeparationEnabled) {
+        case (false, false): self = .online
+        case (true, true): self = .onThisMac
+        default: self = .custom
+        }
+    }
+}

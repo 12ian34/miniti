@@ -26,6 +26,9 @@ final class HomeSetupState: ObservableObject {
     @AppStorage("homeSetup.audioReviewed.v1") var audioReviewed = false
     @AppStorage("homeSetup.foldersReviewed.v1") var foldersReviewed = false
     @Published var revision = 0
+    /// Bumped when the guide collapses into the Home setup button, so the button can
+    /// draw attention once and people can find the guide again.
+    @Published var reopenHighlight = 0
     @Published var microphonePermission: AVAuthorizationStatus?
     @Published private(set) var permissionCheckUnavailable = false
     private(set) var refreshTask: Task<Void, Never>?
