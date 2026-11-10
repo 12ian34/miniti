@@ -574,8 +574,10 @@ struct ReadyStateView: View {
 
                     HomeSetupOrCalendar { EmptyView() }
 
-                    // Fills Home's empty middle once the setup guide is collapsed.
-                    if let coachingStore, !appState.isRecording {
+                    // Fills Home's empty middle once the setup guide is collapsed. Not while a
+                    // meeting is starting or counting down, when the guide hides for other reasons.
+                    if let coachingStore, !appState.isRecording, !appState.isStartingMeeting,
+                       appState.pendingAutoStartEvent == nil {
                         HomeSetupStateObserver(state: appState.homeSetupState) {
                             if !appState.isHomeSetupExpanded {
                                 HomeStatsPanel(meetings: meetings, store: coachingStore)
@@ -3848,8 +3850,11 @@ struct HomeStatsPanel: View {
     @ObservedObject var store: CoachingOverviewStore
 
     var body: some View {
-        let stats = HomeStats.compute(meetings: meetings, rows: store.rows)
-        if stats.meetingCount > 0 {
+        let totals = HomeStats.meetingTotals(meetings)
+        if totals.count > 0 {
+            // Filler numbers wait for Coaching to finish counting, so they never show
+            // "none yet" and then jump, and Home does no work per published row.
+            let fillers: HomeStats.FillerStats? = store.isComputing ? nil : HomeStats.fillerStats(store.rows)
             VStack(alignment: .leading, spacing: MinitiDesignSystem.Spacing.comfortable) {
                 Text("your miniti so far")
                     .font(.system(size: MinitiDesignSystem.CoachingTypography.size(13), weight: .bold, design: .default))
@@ -3858,16 +3863,16 @@ struct HomeStatsPanel: View {
                 // Grid rows share one height so paired tiles line up.
                 Grid(horizontalSpacing: MinitiDesignSystem.Spacing.standard, verticalSpacing: MinitiDesignSystem.Spacing.standard) {
                     GridRow {
-                        tile(icon: "calendar", value: "\(stats.meetingCount)",
-                             label: stats.meetingCount == 1 ? "meeting" : "meetings", accent: ColorPalette.Text.primary)
-                        tile(icon: "clock", value: HomeStats.formatMinutes(stats.recordedMinutes),
-                             label: "recorded", accent: ColorPalette.Coaching.pace)
+                        tile(icon: "calendar", value: "\(totals.count)",
+                             label: totals.count == 1 ? "meeting" : "meetings", accent: ColorPalette.Text.primary)
+                        tile(icon: "clock", value: HomeStats.formatMinutes(totals.minutes),
+                             spoken: HomeStats.spokenMinutes(totals.minutes),
+                             label: "recorded", accent: ColorPalette.Accent.blue)
                     }
                     GridRow {
-                        tile(icon: "quote.opening", value: stats.topFiller.map { "\u{201C}\($0)\u{201D}" } ?? "none yet",
-                             label: stats.topFiller == nil ? "top filler word" : "top filler in \(stats.topFillerMeetings) meeting\(stats.topFillerMeetings == 1 ? "" : "s")",
-                             accent: ColorPalette.Coaching.fillers)
-                        tile(icon: "waveform", value: stats.fillersPerMeeting.map { "\($0)" } ?? "none yet",
+                        tile(icon: "quote.opening", value: fillerWord(fillers),
+                             label: fillerWordLabel(fillers), accent: ColorPalette.Coaching.fillers, wraps: true)
+                        tile(icon: "waveform", value: fillers.map { $0.perMeeting.map { "\($0)" } ?? "none yet" } ?? "counting",
                              label: "fillers per meeting", accent: ColorPalette.Coaching.fillers)
                     }
                 }
@@ -3876,7 +3881,17 @@ struct HomeStatsPanel: View {
         }
     }
 
-    private func tile(icon: String, value: String, label: String, accent: Color) -> some View {
+    private func fillerWord(_ fillers: HomeStats.FillerStats?) -> String {
+        guard let fillers else { return "counting" }
+        return fillers.topFiller.map { "\u{201C}\($0)\u{201D}" } ?? "none yet"
+    }
+
+    private func fillerWordLabel(_ fillers: HomeStats.FillerStats?) -> String {
+        guard let fillers, fillers.topFiller != nil else { return "top filler word" }
+        return "top filler in \(fillers.topFillerMeetings) meeting\(fillers.topFillerMeetings == 1 ? "" : "s")"
+    }
+
+    private func tile(icon: String, value: String, spoken: String? = nil, label: String, accent: Color, wraps: Bool = false) -> some View {
         MinitiCardSurface(style: .inset, contentPadding: MinitiDesignSystem.Spacing.comfortable) {
             VStack(alignment: .leading, spacing: MinitiDesignSystem.Spacing.small) {
                 Image(systemName: icon)
@@ -3887,8 +3902,10 @@ struct HomeStatsPanel: View {
                     .font(.system(size: MinitiDesignSystem.CoachingTypography.size(18), weight: .semibold, design: .default))
                     .monospacedDigit()
                     .foregroundStyle(ColorPalette.Text.primary)
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.7)
+                    // A long custom filler phrase wraps instead of being cut off.
+                    .lineLimit(wraps ? 3 : 1)
+                    .minimumScaleFactor(wraps ? 1 : 0.7)
+                    .fixedSize(horizontal: false, vertical: wraps)
                 Text(label)
                     .font(.system(size: MinitiDesignSystem.CoachingTypography.size(10), weight: .medium, design: .default))
                     .foregroundStyle(ColorPalette.Text.dim)
@@ -3896,6 +3913,7 @@ struct HomeStatsPanel: View {
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         }
-        .accessibilityElement(children: .combine)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("\(spoken ?? value), \(label)")
     }
 }

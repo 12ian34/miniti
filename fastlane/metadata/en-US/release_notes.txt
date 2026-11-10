@@ -1,6 +1,6 @@
 IMPROVED
 - Folders learn from recurring meetings and the meetings you move by hand.
-- Folders recognise more kinds of meetings.
+- Folders recognize more kinds of meetings.
 - Collapsing the setup guide shows where to reopen it.
 - Text follows your text size in meetings, setup, sign-in and Settings.
 - Bigger tap areas for buttons, tabs and links.

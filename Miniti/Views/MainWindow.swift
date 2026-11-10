@@ -1293,7 +1293,7 @@ struct TerminalSidebar: View {
                                     .font(.system(size: 10, weight: .medium, design: .default))
                                     .foregroundStyle(Theme.textDim)
                                     // Room for the separate list toggle laid over the row.
-                                    .padding(.trailing, 22)
+                                    .padding(.trailing, showHistory && selectedMeetingID == nil && !isSearchActive ? 0 : 22)
                             )
                         }
                     ) {
@@ -1305,7 +1305,7 @@ struct TerminalSidebar: View {
                     .overlay(alignment: .trailing) {
                         // The History page already shows every meeting, so the sidebar
                         // list toggle goes away there instead of doing nothing.
-                        if !(showHistory && selectedMeetingID == nil) {
+                        if !(showHistory && selectedMeetingID == nil && !isSearchActive) {
                         Button {
                             withAnimation(.easeInOut(duration: 0.16)) {
                                 historyCollapsed.toggle()

@@ -2841,8 +2841,9 @@ private struct TrainingColumnInfoCard: View {
 }
 #endif
 
-/// All-time totals for the Mac Home stats panel: finished meetings, recorded time, the
-/// filler word that most often tops a meeting, and the average filler count per meeting.
+/// All-time totals for the Mac Home stats panel: meetings recorded with miniti, their
+/// time, the filler word that most often tops a meeting, and fillers per meeting.
+/// Imports (for example Granola) are left out: miniti did not record them.
 struct HomeStats: Equatable {
     let meetingCount: Int
     let recordedMinutes: Int
@@ -2850,14 +2851,21 @@ struct HomeStats: Equatable {
     let topFillerMeetings: Int
     let fillersPerMeeting: Int?
 
-    static func compute(meetings: [Meeting], rows: [TrainingRow]) -> HomeStats {
+    struct MeetingTotals: Equatable { let count: Int; let minutes: Int }
+    struct FillerStats: Equatable { let topFiller: String?; let topFillerMeetings: Int; let perMeeting: Int? }
+
+    static func meetingTotals(_ meetings: [Meeting]) -> MeetingTotals {
         var count = 0
         var seconds: TimeInterval = 0
-        for meeting in meetings {
+        for meeting in meetings where meeting.externalSource == nil {
             guard let duration = meeting.duration, duration > 0 else { continue }
             count += 1
             seconds += duration
         }
+        return MeetingTotals(count: count, minutes: Int((seconds / 60).rounded()))
+    }
+
+    static func fillerStats(_ rows: [TrainingRow]) -> FillerStats {
         var tally: [String: Int] = [:]
         var fillerTotal = 0.0
         var fillerMeetings = 0
@@ -2871,17 +2879,30 @@ struct HomeStats: Equatable {
             }
         }
         let top = tally.max { a, b in a.value != b.value ? a.value < b.value : a.key > b.key }
-        return HomeStats(
-            meetingCount: count,
-            recordedMinutes: Int((seconds / 60).rounded()),
-            topFiller: top?.key,
-            topFillerMeetings: top?.value ?? 0,
-            fillersPerMeeting: fillerMeetings > 0 ? Int((fillerTotal / Double(fillerMeetings)).rounded()) : nil
-        )
+        return FillerStats(topFiller: top?.key, topFillerMeetings: top?.value ?? 0,
+                           perMeeting: fillerMeetings > 0 ? Int((fillerTotal / Double(fillerMeetings)).rounded()) : nil)
+    }
+
+    static func compute(meetings: [Meeting], rows: [TrainingRow]) -> HomeStats {
+        let totals = meetingTotals(meetings)
+        let fillers = fillerStats(rows)
+        return HomeStats(meetingCount: totals.count, recordedMinutes: totals.minutes, topFiller: fillers.topFiller,
+                         topFillerMeetings: fillers.topFillerMeetings, fillersPerMeeting: fillers.perMeeting)
     }
 
     static func formatMinutes(_ minutes: Int) -> String {
-        minutes < 60 ? "\(minutes) min" : "\(minutes / 60) h \(minutes % 60) min"
+        if minutes < 1 { return "under 1 min" }
+        if minutes < 60 { return "\(minutes) min" }
+        return minutes % 60 == 0 ? "\(minutes / 60) h" : "\(minutes / 60) h \(minutes % 60) min"
+    }
+
+    /// The same duration in words, for VoiceOver.
+    static func spokenMinutes(_ minutes: Int) -> String {
+        if minutes < 1 { return "under 1 minute" }
+        let hours = minutes / 60, rest = minutes % 60
+        let h = hours == 0 ? "" : "\(hours) hour\(hours == 1 ? "" : "s")"
+        let m = rest == 0 ? "" : "\(rest) minute\(rest == 1 ? "" : "s")"
+        return [h, m].filter { !$0.isEmpty }.joined(separator: " ")
     }
 }
 
