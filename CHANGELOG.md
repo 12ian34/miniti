@@ -1,6 +1,6 @@
 # Changelog
 
-### Unreleased - v3.9.0
+### 2026-11-10 - v3.9.0
 
 - new: (macOS) history opens as its own page, with search, folder counts and meetings grouped by date
 - new: (macOS) drag the sidebar edge to make it wider. Double-click to reset
@@ -21,7 +21,8 @@
 - improvement: (iOS) History folder controls stay readable with larger text
 - improvement: (iOS) email editing, recovery key and device controls stay readable with larger text and have larger tap areas
 - improvement: (macOS and iOS) Deepgram and OpenAI permission text follows your text size
-- improvement: (macOS and iOS) saved discussion and actions use selectable lists, along with decisions on iOS
+- improvement: (macOS and iOS) saved discussion and actions use selectable lists
+- improvement: (iOS) saved decisions use a selectable list too
 - improvement: (macOS and iOS) consistent spacing and wrapped text in insight lists
 - improvement: (macOS and iOS) matching section names, colours and heading styles in live and saved insights
 - improvement: (macOS and iOS) matching Copy and Update buttons in live and saved meetings
