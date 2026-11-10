@@ -715,7 +715,7 @@
       "path": "Miniti/Views/MainWindow.swift",
       "rule": "small-fixed-font",
       "signature": "system ( size : 8 , weight : . semibold )",
-      "count": 4
+      "count": 3
     },
     {
       "path": "Miniti/Views/MainWindow.swift",

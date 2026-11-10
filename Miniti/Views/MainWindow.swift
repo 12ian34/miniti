@@ -125,6 +125,7 @@ struct MainWindow: View {
     @AppStorage("mainWindow.historyCollapsed") private var historyCollapsed = true
     @AppStorage("mainWindow.sidebarWidth") private var storedSidebarWidth = Double(MinitiDesignSystem.Sidebar.defaultExpandedWidth)
     @State private var sidebarDragStartWidth: CGFloat?
+    @State private var isHoveringSidebarHandle = false
     @State private var didInitialize = false
     @State private var searchText = ""
     @State private var debouncedSearchText = ""
@@ -136,6 +137,7 @@ struct MainWindow: View {
     @State private var showHistory = false
     @State private var coachingOriginMeetingID: UUID?
     @State private var historyOriginMeetingID: UUID?
+    @State private var historyPageSearchFocusRequest = 0
     @State private var searchDebounceTask: Task<Void, Never>?
     @State private var navigationHistory = MainNavigationHistory(current: .home)
     @State private var isApplyingNavigationHistory = false
@@ -211,6 +213,8 @@ struct MainWindow: View {
         GeometryReader { geometry in
             let usesCompactSidebar = geometry.size.width < Self.expandedSidebarMinimumWindowWidth
             let sidebarIsEffectivelyCollapsed = usesCompactSidebar || sidebarCollapsed
+            let sidebarMaximum = maximumSidebarWidth(windowWidth: geometry.size.width)
+            let expandedSidebarWidth = clampedSidebarWidth(maximum: sidebarMaximum)
 
             ZStack {
                 HStack(spacing: 0) {
@@ -250,7 +254,7 @@ struct MainWindow: View {
                     }
                     .overlay {
                         if !sidebarIsEffectivelyCollapsed {
-                            sidebarResizeHandle
+                            sidebarResizeHandle(width: expandedSidebarWidth, maximum: sidebarMaximum)
                         }
                     }
                     .zIndex(1)
@@ -281,7 +285,8 @@ struct MainWindow: View {
                                 appState.commit(.pin, in: modelContext, mutate: { meeting.isPinned.toggle() }, revert: { meeting.isPinned.toggle() })
                                 refreshMeetings()
                             },
-                            onDelete: { meeting in deleteMeeting(meeting) }
+                            onDelete: { meeting in deleteMeeting(meeting) },
+                            searchFocusRequest: historyPageSearchFocusRequest
                         )
                     } else {
                         MeetingView(meetings: meetings)
@@ -475,43 +480,57 @@ struct MainWindow: View {
         }
     }
 
-    private var expandedSidebarWidth: CGFloat {
-        min(max(CGFloat(storedSidebarWidth), MinitiDesignSystem.Sidebar.minimumExpandedWidth),
-            MinitiDesignSystem.Sidebar.maximumExpandedWidth)
+    /// Saved meetings need 680pt (transcript plus insights), so the sidebar never
+    /// takes more than the window can spare, whatever width was stored.
+    private static let mainContentMinimumWidth: CGFloat = 680
+
+    private func maximumSidebarWidth(windowWidth: CGFloat) -> CGFloat {
+        max(MinitiDesignSystem.Sidebar.minimumExpandedWidth,
+            min(MinitiDesignSystem.Sidebar.maximumExpandedWidth, windowWidth - Self.mainContentMinimumWidth - 1))
     }
 
-    private func setSidebarWidth(_ width: CGFloat) {
-        storedSidebarWidth = Double(min(max(width, MinitiDesignSystem.Sidebar.minimumExpandedWidth),
-                                        MinitiDesignSystem.Sidebar.maximumExpandedWidth).rounded())
+    private func clampedSidebarWidth(maximum: CGFloat) -> CGFloat {
+        min(max(CGFloat(storedSidebarWidth), MinitiDesignSystem.Sidebar.minimumExpandedWidth), maximum)
+    }
+
+    private func setSidebarWidth(_ width: CGFloat, maximum: CGFloat = MinitiDesignSystem.Sidebar.maximumExpandedWidth) {
+        storedSidebarWidth = Double(min(max(width, MinitiDesignSystem.Sidebar.minimumExpandedWidth), maximum).rounded())
     }
 
     /// A wider invisible target over the 1pt divider: drag to resize, double-click to reset.
-    private var sidebarResizeHandle: some View {
+    private func sidebarResizeHandle(width: CGFloat, maximum: CGFloat) -> some View {
         Color.clear
             .frame(width: MinitiDesignSystem.Sidebar.resizeHandleWidth)
             .contentShape(Rectangle())
             .onHover { inside in
+                guard inside != isHoveringSidebarHandle else { return }
+                isHoveringSidebarHandle = inside
                 if inside { NSCursor.resizeLeftRight.push() } else { NSCursor.pop() }
+            }
+            .onDisappear {
+                // Recording can collapse the sidebar while the pointer rests on the handle.
+                if isHoveringSidebarHandle { NSCursor.pop(); isHoveringSidebarHandle = false }
+                sidebarDragStartWidth = nil
             }
             .gesture(
                 DragGesture(minimumDistance: 1, coordinateSpace: .global)
                     .onChanged { value in
-                        let start = sidebarDragStartWidth ?? expandedSidebarWidth
+                        let start = sidebarDragStartWidth ?? width
                         if sidebarDragStartWidth == nil { sidebarDragStartWidth = start }
-                        setSidebarWidth(start + value.translation.width)
+                        setSidebarWidth(start + value.translation.width, maximum: maximum)
                     }
                     .onEnded { _ in sidebarDragStartWidth = nil }
             )
             .onTapGesture(count: 2) {
-                setSidebarWidth(MinitiDesignSystem.Sidebar.defaultExpandedWidth)
+                setSidebarWidth(MinitiDesignSystem.Sidebar.defaultExpandedWidth, maximum: maximum)
             }
             .accessibilityElement()
             .accessibilityLabel("Sidebar width")
-            .accessibilityValue("\(Int(expandedSidebarWidth)) points")
+            .accessibilityValue("\(Int(width)) points")
             .accessibilityAdjustableAction { direction in
                 switch direction {
-                case .increment: setSidebarWidth(expandedSidebarWidth + 20)
-                case .decrement: setSidebarWidth(expandedSidebarWidth - 20)
+                case .increment: setSidebarWidth(width + 20, maximum: maximum)
+                case .decrement: setSidebarWidth(width - 20, maximum: maximum)
                 @unknown default: break
                 }
             }
@@ -606,6 +625,11 @@ struct MainWindow: View {
         }
 
         keyboardService.onFocusSearch = { [self] in
+            // On the History page "/" goes to the page's own search field.
+            if showHistory && selectedMeetingID == nil {
+                historyPageSearchFocusRequest += 1
+                return
+            }
             if isCompactSidebarMode {
                 isCompactSidebarPresented = true
             } else {
@@ -1278,7 +1302,7 @@ struct TerminalSidebar: View {
 
             // History list. The full History page already shows it, so the sidebar
             // copy steps aside there unless sidebar search is in use.
-            if !historicalMeetings.isEmpty && !historyCollapsed && (!showHistory || isSearchActive) {
+            if !historicalMeetings.isEmpty && !historyCollapsed && (!showHistory || selectedMeetingID != nil || isSearchActive) {
                 VStack(alignment: .leading, spacing: 8) {
                     HStack {
                         Spacer()
@@ -4492,17 +4516,17 @@ struct HistoryPageView: View {
     let onOpen: (UUID) -> Void
     let onTogglePin: (Meeting) -> Void
     let onDelete: (Meeting) -> Void
+    var searchFocusRequest = 0
     @State private var query = ""
     @State private var debouncedQuery = ""
+    /// Computed once per settled query, not on every render: the search reads transcripts.
+    @State private var results: [MeetingSearchResult] = []
     @State private var managingFolders = false
+    @State private var previewingOrganisation = false
+    @AppStorage("history.organisePromptDismissedAtUnfiled") private var organisePromptDismissedAt = 0
     @FocusState private var searchFocused: Bool
 
     private static let maximumWidth: CGFloat = 820
-
-    private var results: [MeetingSearchResult] {
-        guard !debouncedQuery.isEmpty else { return [] }
-        return MeetingSearchResult.search(query: debouncedQuery, in: meetings)
-    }
 
     private var searching: Bool { !debouncedQuery.isEmpty }
 
@@ -4515,8 +4539,8 @@ struct HistoryPageView: View {
         meetings.lazy.filter { appState.meetingFolders.folder($0.folderID) == nil && $0.endTime != nil }.count
     }
 
-    private func count(in folder: MeetingFolder) -> Int {
-        meetings.lazy.filter { $0.folderID == folder.id }.count
+    private func refreshResults() {
+        results = debouncedQuery.isEmpty ? [] : MeetingSearchResult.search(query: debouncedQuery, in: meetings)
     }
 
     private var sections: [(title: String, meetings: [Meeting])] {
@@ -4550,13 +4574,15 @@ struct HistoryPageView: View {
     }
 
     var body: some View {
+        let unfiled = unfiledCount
         ScrollView {
             VStack(alignment: .leading, spacing: 20) {
                 header
                 searchField
-                folderChips
-                if appState.automaticFolderFiling, unfiledCount >= 3, !searching {
-                    organiseNudge
+                folderChips(unfiled: unfiled)
+                // Reappears only once three more meetings are unfiled after "not now".
+                if appState.automaticFolderFiling, unfiled >= 3, unfiled >= organisePromptDismissedAt + 3, !searching {
+                    organiseNudge(unfiled: unfiled)
                 }
                 list
             }
@@ -4571,9 +4597,17 @@ struct HistoryPageView: View {
             if !trimmed.isEmpty { try? await Task.sleep(nanoseconds: 200_000_000) }
             guard !Task.isCancelled else { return }
             debouncedQuery = trimmed
+            refreshResults()
         }
+        .onChange(of: meetings.map(\.id)) { _, _ in if !debouncedQuery.isEmpty { refreshResults() } }
+        .onChange(of: searchFocusRequest) { _, _ in searchFocused = true }
         .sheet(isPresented: $managingFolders) {
             MeetingFolderManager(meetings: meetings)
+                .environmentObject(appState)
+                .dynamicTypeSize(dynamicTypeSize)
+        }
+        .sheet(isPresented: $previewingOrganisation) {
+            MeetingFolderManager(meetings: meetings, startsInPreview: true)
                 .environmentObject(appState)
                 .dynamicTypeSize(dynamicTypeSize)
         }
@@ -4593,21 +4627,21 @@ struct HistoryPageView: View {
     private var searchField: some View {
         HStack(spacing: 8) {
             Image(systemName: "magnifyingglass")
-                .font(.system(size: 12, weight: .medium))
+                .font(.callout.weight(.medium))
                 .foregroundStyle(searchFocused ? Theme.accent : Theme.textDim)
             TextField("search meetings, with: a name, on: a date", text: $query)
-                .font(.system(size: 13, weight: .medium, design: .default))
+                .font(.body.weight(.medium))
                 .foregroundStyle(Theme.text)
                 .textFieldStyle(.plain)
                 .focused($searchFocused)
                 .accessibilityLabel("Search meetings")
             if !query.isEmpty {
                 Text("\(visibleMeetings.count)")
-                    .font(.system(size: 11, weight: .medium, design: .default))
+                    .font(.callout.weight(.medium))
                     .foregroundStyle(Theme.textDim)
                 Button { query = "" } label: {
                     Image(systemName: "xmark.circle.fill")
-                        .font(.system(size: 12))
+                        .font(.callout)
                         .foregroundStyle(Theme.textDim)
                 }
                 .buttonStyle(.plain)
@@ -4617,23 +4651,24 @@ struct HistoryPageView: View {
         .padding(.horizontal, 12)
         .padding(.vertical, 9)
         .background(
-            RoundedRectangle(cornerRadius: 8)
+            RoundedRectangle(cornerRadius: MinitiDesignSystem.Radius.card)
                 .fill(Theme.bgSecondary)
                 .overlay(
-                    RoundedRectangle(cornerRadius: 8)
+                    RoundedRectangle(cornerRadius: MinitiDesignSystem.Radius.card)
                         .stroke(searchFocused ? Theme.accent.opacity(0.5) : Theme.border.opacity(0.6), lineWidth: 1)
                 )
         )
     }
 
-    private var folderChips: some View {
-        HStack(alignment: .center, spacing: 8) {
+    private func folderChips(unfiled: Int) -> some View {
+        let counts = Dictionary(meetings.compactMap { $0.folderID.map { ($0, 1) } }, uniquingKeysWith: +)
+        return HStack(alignment: .center, spacing: 8) {
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 6) {
                     chip("all meetings", count: meetings.count, id: "all")
-                    chip("unfiled", count: unfiledCount, id: "unfiled")
+                    chip("unfiled", count: unfiled, id: "unfiled")
                     ForEach(appState.meetingFolders.active) { folder in
-                        chip(folder.name, count: count(in: folder), id: folder.id.uuidString)
+                        chip(folder.name, count: counts[folder.id] ?? 0, id: folder.id.uuidString)
                     }
                 }
             }
@@ -4669,22 +4704,27 @@ struct HistoryPageView: View {
         .accessibilityAddTraits(selected ? .isSelected : [])
     }
 
-    private var organiseNudge: some View {
+    private func organiseNudge(unfiled: Int) -> some View {
         HStack(spacing: 10) {
             Image(systemName: "sparkles")
                 .foregroundStyle(ColorPalette.Accent.amber)
-            Text("\(unfiledCount) meetings are unfiled. Preview how miniti would organise them, including recurring meetings and ones you moved by hand.")
-                .font(.system(size: 12, weight: .medium, design: .default))
+                .accessibilityHidden(true)
+            Text("\(unfiled) meetings are unfiled. Preview how miniti would group them. Nothing moves until you apply.")
+                .font(.callout.weight(.medium))
                 .foregroundStyle(ColorPalette.Text.muted)
                 .fixedSize(horizontal: false, vertical: true)
             Spacer(minLength: 8)
-            Button { managingFolders = true } label: {
-                MinitiControlLabel(role: .secondary) { Text("organise") }
+            Button { organisePromptDismissedAt = unfiled } label: {
+                MinitiControlLabel(role: .secondary) { Text("not now") }
+            }
+            .buttonStyle(.plain)
+            Button { previewingOrganisation = true } label: {
+                MinitiControlLabel(role: .primary, isEmphasized: true) { Text("preview") }
             }
             .buttonStyle(.plain)
         }
         .padding(12)
-        .background(RoundedRectangle(cornerRadius: 8).fill(Theme.bgSecondary))
+        .background(RoundedRectangle(cornerRadius: MinitiDesignSystem.Radius.card).fill(Theme.bgSecondary))
     }
 
     @ViewBuilder
@@ -4692,11 +4732,11 @@ struct HistoryPageView: View {
         if visibleMeetings.isEmpty {
             VStack(alignment: .leading, spacing: 6) {
                 Text(searching ? "no meetings match" : "no meetings here yet")
-                    .font(.system(size: 13, weight: .medium, design: .default))
+                    .font(.body.weight(.medium))
                     .foregroundStyle(ColorPalette.Text.muted)
                 if searching {
                     Text("try fewer words, or with: a name and on: a date")
-                        .font(.system(size: 12, weight: .medium, design: .default))
+                        .font(.callout.weight(.medium))
                         .foregroundStyle(ColorPalette.Text.dim)
                 }
             }
@@ -4708,7 +4748,7 @@ struct HistoryPageView: View {
             LazyVStack(alignment: .leading, spacing: 4) {
                 ForEach(sections, id: \.title) { section in
                     Text(section.title)
-                        .font(.system(size: 11, weight: .semibold))
+                        .font(.caption.weight(.semibold))
                         .foregroundStyle(Theme.textDim)
                         .textCase(.uppercase)
                         .padding(.horizontal, 8)

@@ -64,6 +64,9 @@ struct MeetingFolderManager: View {
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     var meetings: [Meeting]? = nil
     var onConfirmSetup: (() -> Void)? = nil
+    /// Opens straight on the organise preview (History's organise prompt).
+    var startsInPreview = false
+    @State private var didApplyInitialScreen = false
 
     private enum Screen: Hashable { case preview, create, manage, edit }
     private enum Field: Hashable { case name, detail, rule }
@@ -101,6 +104,13 @@ struct MeetingFolderManager: View {
                 }
             }
             .id(path.last)
+            .onAppear {
+                guard startsInPreview, !didApplyInitialScreen else { return }
+                didApplyInitialScreen = true
+                regroupManual = false
+                refreshPreview()
+                path = [.preview]
+            }
             .navigationTitle(screenTitle)
             #if os(iOS)
             .navigationBarTitleDisplayMode(.inline)
