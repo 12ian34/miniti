@@ -799,23 +799,85 @@ final class AccountJourneys: XCTestCase {
         }
     }
 
-    func testMacDocsAnswerCopiesUsingKeyboardOnly() throws {
-        launch("docsTargets")
-        // Honour the machine's navigation setting; never change global defaults.
+    private func requireMacKeyboardNavigation() throws {
+        app.activate()
+        XCTAssertTrue(app.wait(for: .runningForeground, timeout: 5))
         let mode = app.staticTexts["ui-test.keyboardNavigation"]
         XCTAssertTrue(mode.waitForExistence(timeout: 5))
-        guard let state = mode.value as? String,
-              ["Keyboard navigation on", "Keyboard navigation off"].contains(state) else {
-            XCTFail("Keyboard navigation badge is unreadable: value=\(String(describing: mode.value)), label=\(mode.label)")
-            return
-        }
+        let state = try XCTUnwrap(mode.value as? String)
+        XCTAssertTrue(["Keyboard navigation on", "Keyboard navigation off"].contains(state),
+                      "Keyboard navigation badge must be readable")
         try XCTSkipUnless(state == "Keyboard navigation on",
-                          "Keyboard navigation is off. Enable it for the Mac keyboard acceptance run.")
+                          "Enable Keyboard Navigation for this acceptance run, then restore its original state.")
+    }
+
+    func testMacSharedUpdateSupportsKeyboardAndSkipsDisabled() throws {
+        launch("insightUpdateTargets")
+        try requireMacKeyboardNavigation()
+        let counts = app.staticTexts["update.fixture.counts"]
+        XCTAssertFalse(app.buttons["update.fixture.disabled"].isEnabled)
+        for step in 0..<8 {
+            app.typeKey(.tab, modifierFlags: [])
+            if step < 2 { captureAppScreen("Update keyboard focus \(step)") }
+            app.typeKey(.space, modifierFlags: [])
+            let value = counts.value as? String ?? counts.label
+            XCTAssertTrue(value.contains("disabled=0"))
+            if !value.contains("update=0") && !value.contains("regenerate=0") { break }
+        }
+        let value = counts.value as? String ?? counts.label
+        XCTAssertFalse(value.contains("update=0") || value.contains("regenerate=0"))
+        XCTAssertTrue(value.contains("disabled=0"))
+        captureAppScreen("Native Update keyboard action counters")
+    }
+
+    func testMacSharedTabsAndMenuSupportKeyboard() throws {
+        launch("controlTargets")
+        try requireMacKeyboardNavigation()
+        let counts = app.staticTexts["target.counts"]
+        let menuCounts = app.staticTexts["target.menuCounts"]
+        for step in 0..<20 {
+            app.typeKey(.tab, modifierFlags: [])
+            if step < 3 { captureAppScreen("Shared controls keyboard focus \(step)") }
+            app.typeKey(.space, modifierFlags: [])
+            if app.menuItems["Choose"].exists {
+                app.typeKey(.downArrow, modifierFlags: [])
+                app.typeKey(.return, modifierFlags: [])
+            }
+            let value = counts.value as? String ?? counts.label
+            let menuValue = menuCounts.value as? String ?? menuCounts.label
+            XCTAssertTrue(menuValue.contains("disabled=0"))
+            if !value.contains("left=0") && !value.contains("right=0") &&
+                !menuValue.contains("menu=0") && app.buttons["target.tab.history"].isSelected { break }
+        }
+        let value = counts.value as? String ?? counts.label
+        let menuValue = menuCounts.value as? String ?? menuCounts.label
+        XCTAssertFalse(value.contains("left=0") || value.contains("right=0"))
+        XCTAssertFalse(menuValue.contains("menu=0"))
+        XCTAssertTrue(menuValue.contains("disabled=0"))
+        XCTAssertTrue(app.buttons["target.tab.history"].isSelected)
+        captureAppScreen("Native shared control keyboard outcomes")
+    }
+
+    func testMacDocsAnswerCopiesUsingKeyboardOnly() throws {
+        let pasteboard = NSPasteboard.general
+        try XCTSkipUnless(pasteboard.types?.isEmpty != false,
+                          "Keyboard Copy requires an empty clipboard; existing content is left untouched.")
+        var copiedChangeCount: Int?
+        defer {
+            if let copiedChangeCount, pasteboard.changeCount == copiedChangeCount {
+                pasteboard.clearContents()
+            }
+        }
+        launch("docsTargets")
+        try requireMacKeyboardNavigation()
         XCTAssertTrue(app.buttons["Copy answer"].waitForExistence(timeout: 5))
         for _ in 0..<12 {
             app.typeKey(.tab, modifierFlags: [])
             app.typeKey(.space, modifierFlags: [])
-            if app.buttons["Answer copied"].exists { break }
+            if app.buttons["Answer copied"].exists {
+                copiedChangeCount = pasteboard.changeCount
+                break
+            }
         }
         XCTAssertTrue(app.buttons["Answer copied"].exists, app.debugDescription)
         let capture = XCTAttachment(screenshot: app.windows["Miniti"].screenshot())

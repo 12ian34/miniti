@@ -332,9 +332,9 @@ private struct MainWindowIdentifierInstaller: NSViewRepresentable {
     /// first control in the key-view loop whenever the window becomes key, which SwiftUI
     /// draws as a highlighted button or field; making one control non-focusable only moved
     /// the highlight to the next one (recurring complaint, last 2026-10-06, when it landed
-    /// on the meeting search field and switched search mode on). Turn the automatic key-view
-    /// loop off and clear the first responder on the first activations; clicking or tabbing
-    /// afterwards focuses normally.
+    /// on the meeting search field and switched search mode on). Keep that pointer-first
+    /// launch policy only when Keyboard Navigation is off. When it is on, leave AppKit's
+    /// initial responder and key-view loop intact so Tab can enter the SwiftUI controls.
     @MainActor
     final class Coordinator {
         private var cancellable: AnyCancellable?
@@ -344,6 +344,7 @@ private struct MainWindowIdentifierInstaller: NSViewRepresentable {
         func install(on window: NSWindow) {
             guard self.window !== window else { return }
             self.window = window
+            if NSApp.isFullKeyboardAccessEnabled { return }
             window.autorecalculatesKeyViewLoop = false
             window.initialFirstResponder = nil
             window.makeFirstResponder(nil)
