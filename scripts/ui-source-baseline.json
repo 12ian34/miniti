@@ -1,0 +1,1963 @@
+{
+  "version": 1,
+  "captured_from": "e177b5bdc9dabd668073f08c4b94967513a35b21",
+  "purpose": "Existing debt and review cues only; additions require scoped review. This is not an accessibility waiver.",
+  "entries": [
+    {
+      "path": "Miniti/MinitiApp.swift",
+      "rule": "small-fixed-font",
+      "signature": "system ( size : 10 )",
+      "count": 4
+    },
+    {
+      "path": "Miniti/MinitiApp.swift",
+      "rule": "small-fixed-font",
+      "signature": "system ( size : 10 , weight : . bold , design : . default )",
+      "count": 2
+    },
+    {
+      "path": "Miniti/MinitiApp.swift",
+      "rule": "small-fixed-font",
+      "signature": "system ( size : 10 , weight : . medium , design : . default )",
+      "count": 1
+    },
+    {
+      "path": "Miniti/MinitiApp.swift",
+      "rule": "small-fixed-font",
+      "signature": "system ( size : 10 , weight : . semibold , design : . default )",
+      "count": 1
+    },
+    {
+      "path": "Miniti/MinitiApp.swift",
+      "rule": "small-fixed-font",
+      "signature": "system ( size : 11 , weight : . medium , design : . default )",
+      "count": 1
+    },
+    {
+      "path": "Miniti/MinitiApp.swift",
+      "rule": "small-fixed-font",
+      "signature": "system ( size : 11 , weight : . semibold )",
+      "count": 2
+    },
+    {
+      "path": "Miniti/MinitiApp.swift",
+      "rule": "small-fixed-font",
+      "signature": "system ( size : 12 , weight : . medium )",
+      "count": 1
+    },
+    {
+      "path": "Miniti/MinitiApp.swift",
+      "rule": "small-fixed-font",
+      "signature": "system ( size : 12 , weight : . semibold )",
+      "count": 1
+    },
+    {
+      "path": "Miniti/MinitiApp.swift",
+      "rule": "small-fixed-font",
+      "signature": "system ( size : 8 , weight : . bold )",
+      "count": 1
+    },
+    {
+      "path": "Miniti/Services/AccountUITestHarness.swift",
+      "rule": "small-fixed-font",
+      "signature": "system ( size : 11 )",
+      "count": 4
+    },
+    {
+      "path": "Miniti/Services/AccountUITestHarness.swift",
+      "rule": "small-fixed-font",
+      "signature": "systemFont ( ofSize : 9 )",
+      "count": 1
+    },
+    {
+      "path": "Miniti/Views/CloudSettingsView.swift",
+      "rule": "small-fixed-font",
+      "signature": "system ( size : 11 , weight : . medium )",
+      "count": 2
+    },
+    {
+      "path": "Miniti/Views/DebugLogView.swift",
+      "rule": "local-chrome",
+      "signature": "cornerRadius ( 4 )",
+      "count": 1
+    },
+    {
+      "path": "Miniti/Views/DebugLogView.swift",
+      "rule": "small-fixed-font",
+      "signature": "system ( size : 10 , weight : . semibold , design : . default )",
+      "count": 2
+    },
+    {
+      "path": "Miniti/Views/DebugLogView.swift",
+      "rule": "small-fixed-font",
+      "signature": "system ( size : 11 , design : . default )",
+      "count": 2
+    },
+    {
+      "path": "Miniti/Views/ForceUpdateView.swift",
+      "rule": "local-chrome",
+      "signature": "RoundedRectangle ( cornerRadius : 8 )",
+      "count": 2
+    },
+    {
+      "path": "Miniti/Views/ForceUpdateView.swift",
+      "rule": "small-fixed-font",
+      "signature": "system ( size : 11 , weight : . regular , design : . default )",
+      "count": 1
+    },
+    {
+      "path": "Miniti/Views/ForceUpdateView.swift",
+      "rule": "small-fixed-font",
+      "signature": "system ( size : 12 , weight : . medium , design : . default )",
+      "count": 1
+    },
+    {
+      "path": "Miniti/Views/InsightsView.swift",
+      "rule": "focus-opt-out",
+      "signature": "focusable ( false )",
+      "count": 1
+    },
+    {
+      "path": "Miniti/Views/InsightsView.swift",
+      "rule": "local-chrome",
+      "signature": "RoundedRectangle ( cornerRadius : 1 )",
+      "count": 2
+    },
+    {
+      "path": "Miniti/Views/InsightsView.swift",
+      "rule": "local-chrome",
+      "signature": "RoundedRectangle ( cornerRadius : 16 , style : . continuous )",
+      "count": 4
+    },
+    {
+      "path": "Miniti/Views/InsightsView.swift",
+      "rule": "local-chrome",
+      "signature": "RoundedRectangle ( cornerRadius : 2 )",
+      "count": 3
+    },
+    {
+      "path": "Miniti/Views/InsightsView.swift",
+      "rule": "local-chrome",
+      "signature": "RoundedRectangle ( cornerRadius : 4 )",
+      "count": 2
+    },
+    {
+      "path": "Miniti/Views/InsightsView.swift",
+      "rule": "local-chrome",
+      "signature": "RoundedRectangle ( cornerRadius : 6 )",
+      "count": 6
+    },
+    {
+      "path": "Miniti/Views/InsightsView.swift",
+      "rule": "local-chrome",
+      "signature": "RoundedRectangle ( cornerRadius : 8 )",
+      "count": 4
+    },
+    {
+      "path": "Miniti/Views/InsightsView.swift",
+      "rule": "local-chrome",
+      "signature": "cornerRadius ( 1 )",
+      "count": 1
+    },
+    {
+      "path": "Miniti/Views/InsightsView.swift",
+      "rule": "local-chrome",
+      "signature": "cornerRadius ( 4 )",
+      "count": 1
+    },
+    {
+      "path": "Miniti/Views/InsightsView.swift",
+      "rule": "local-chrome",
+      "signature": "cornerRadius ( 6 )",
+      "count": 1
+    },
+    {
+      "path": "Miniti/Views/InsightsView.swift",
+      "rule": "raw-color",
+      "signature": "Color ( hex : \"09090B\" )",
+      "count": 1
+    },
+    {
+      "path": "Miniti/Views/InsightsView.swift",
+      "rule": "raw-color",
+      "signature": "Color ( hex : \"0F0F11\" )",
+      "count": 4
+    },
+    {
+      "path": "Miniti/Views/InsightsView.swift",
+      "rule": "raw-color",
+      "signature": "Color ( hex : \"14251A\" )",
+      "count": 1
+    },
+    {
+      "path": "Miniti/Views/InsightsView.swift",
+      "rule": "raw-color",
+      "signature": "Color ( hex : \"18181B\" )",
+      "count": 2
+    },
+    {
+      "path": "Miniti/Views/InsightsView.swift",
+      "rule": "raw-color",
+      "signature": "Color ( hex : \"1C1C1F\" )",
+      "count": 7
+    },
+    {
+      "path": "Miniti/Views/InsightsView.swift",
+      "rule": "raw-color",
+      "signature": "Color ( hex : \"22C55E\" )",
+      "count": 1
+    },
+    {
+      "path": "Miniti/Views/InsightsView.swift",
+      "rule": "raw-color",
+      "signature": "Color ( hex : \"27272A\" )",
+      "count": 2
+    },
+    {
+      "path": "Miniti/Views/InsightsView.swift",
+      "rule": "raw-color",
+      "signature": "Color ( hex : \"30363D\" )",
+      "count": 2
+    },
+    {
+      "path": "Miniti/Views/InsightsView.swift",
+      "rule": "raw-color",
+      "signature": "Color ( hex : \"3F3F46\" )",
+      "count": 2
+    },
+    {
+      "path": "Miniti/Views/InsightsView.swift",
+      "rule": "raw-color",
+      "signature": "Color ( hex : \"3FB950\" )",
+      "count": 3
+    },
+    {
+      "path": "Miniti/Views/InsightsView.swift",
+      "rule": "raw-color",
+      "signature": "Color ( hex : \"484F58\" )",
+      "count": 14
+    },
+    {
+      "path": "Miniti/Views/InsightsView.swift",
+      "rule": "raw-color",
+      "signature": "Color ( hex : \"52525B\" )",
+      "count": 1
+    },
+    {
+      "path": "Miniti/Views/InsightsView.swift",
+      "rule": "raw-color",
+      "signature": "Color ( hex : \"58A6FF\" )",
+      "count": 10
+    },
+    {
+      "path": "Miniti/Views/InsightsView.swift",
+      "rule": "raw-color",
+      "signature": "Color ( hex : \"71717A\" )",
+      "count": 1
+    },
+    {
+      "path": "Miniti/Views/InsightsView.swift",
+      "rule": "raw-color",
+      "signature": "Color ( hex : \"8B949E\" )",
+      "count": 21
+    },
+    {
+      "path": "Miniti/Views/InsightsView.swift",
+      "rule": "raw-color",
+      "signature": "Color ( hex : \"A371F7\" )",
+      "count": 2
+    },
+    {
+      "path": "Miniti/Views/InsightsView.swift",
+      "rule": "raw-color",
+      "signature": "Color ( hex : \"C9D1D9\" )",
+      "count": 1
+    },
+    {
+      "path": "Miniti/Views/InsightsView.swift",
+      "rule": "raw-color",
+      "signature": "Color ( hex : \"D29922\" )",
+      "count": 4
+    },
+    {
+      "path": "Miniti/Views/InsightsView.swift",
+      "rule": "raw-color",
+      "signature": "Color ( hex : \"D4D4D8\" )",
+      "count": 7
+    },
+    {
+      "path": "Miniti/Views/InsightsView.swift",
+      "rule": "raw-color",
+      "signature": "Color ( hex : \"E6EDF3\" )",
+      "count": 8
+    },
+    {
+      "path": "Miniti/Views/InsightsView.swift",
+      "rule": "raw-color",
+      "signature": "Color ( hex : \"F85149\" )",
+      "count": 5
+    },
+    {
+      "path": "Miniti/Views/InsightsView.swift",
+      "rule": "raw-color",
+      "signature": "Color ( hex : Self . typeColors [ q . type ] ? ? \"8B949E\" )",
+      "count": 1
+    },
+    {
+      "path": "Miniti/Views/InsightsView.swift",
+      "rule": "small-fixed-font",
+      "signature": "system ( size : 10 )",
+      "count": 1
+    },
+    {
+      "path": "Miniti/Views/InsightsView.swift",
+      "rule": "small-fixed-font",
+      "signature": "system ( size : 10 , weight : . bold )",
+      "count": 2
+    },
+    {
+      "path": "Miniti/Views/InsightsView.swift",
+      "rule": "small-fixed-font",
+      "signature": "system ( size : 10 , weight : . bold , design : . default )",
+      "count": 1
+    },
+    {
+      "path": "Miniti/Views/InsightsView.swift",
+      "rule": "small-fixed-font",
+      "signature": "system ( size : 10 , weight : . medium , design : . default )",
+      "count": 8
+    },
+    {
+      "path": "Miniti/Views/InsightsView.swift",
+      "rule": "small-fixed-font",
+      "signature": "system ( size : 10 , weight : . medium , design : . rounded )",
+      "count": 2
+    },
+    {
+      "path": "Miniti/Views/InsightsView.swift",
+      "rule": "small-fixed-font",
+      "signature": "system ( size : 10 , weight : . regular , design : . default )",
+      "count": 12
+    },
+    {
+      "path": "Miniti/Views/InsightsView.swift",
+      "rule": "small-fixed-font",
+      "signature": "system ( size : 10 , weight : . semibold , design : . default )",
+      "count": 5
+    },
+    {
+      "path": "Miniti/Views/InsightsView.swift",
+      "rule": "small-fixed-font",
+      "signature": "system ( size : 11 , weight : . medium , design : . default )",
+      "count": 18
+    },
+    {
+      "path": "Miniti/Views/InsightsView.swift",
+      "rule": "small-fixed-font",
+      "signature": "system ( size : 11 , weight : . medium , design : . rounded )",
+      "count": 3
+    },
+    {
+      "path": "Miniti/Views/InsightsView.swift",
+      "rule": "small-fixed-font",
+      "signature": "system ( size : 11 , weight : . regular , design : . rounded )",
+      "count": 1
+    },
+    {
+      "path": "Miniti/Views/InsightsView.swift",
+      "rule": "small-fixed-font",
+      "signature": "system ( size : 11 , weight : . semibold )",
+      "count": 1
+    },
+    {
+      "path": "Miniti/Views/InsightsView.swift",
+      "rule": "small-fixed-font",
+      "signature": "system ( size : 11 , weight : . semibold , design : . default )",
+      "count": 2
+    },
+    {
+      "path": "Miniti/Views/InsightsView.swift",
+      "rule": "small-fixed-font",
+      "signature": "system ( size : 12 )",
+      "count": 1
+    },
+    {
+      "path": "Miniti/Views/InsightsView.swift",
+      "rule": "small-fixed-font",
+      "signature": "system ( size : 12 , weight : . bold , design : . default )",
+      "count": 1
+    },
+    {
+      "path": "Miniti/Views/InsightsView.swift",
+      "rule": "small-fixed-font",
+      "signature": "system ( size : 12 , weight : . medium , design : . default )",
+      "count": 7
+    },
+    {
+      "path": "Miniti/Views/InsightsView.swift",
+      "rule": "small-fixed-font",
+      "signature": "system ( size : 12 , weight : . regular , design : . default )",
+      "count": 2
+    },
+    {
+      "path": "Miniti/Views/InsightsView.swift",
+      "rule": "small-fixed-font",
+      "signature": "system ( size : 12 , weight : . regular , design : . rounded )",
+      "count": 2
+    },
+    {
+      "path": "Miniti/Views/InsightsView.swift",
+      "rule": "small-fixed-font",
+      "signature": "system ( size : 12 , weight : . semibold )",
+      "count": 1
+    },
+    {
+      "path": "Miniti/Views/InsightsView.swift",
+      "rule": "small-fixed-font",
+      "signature": "system ( size : 12 , weight : . semibold , design : . default )",
+      "count": 5
+    },
+    {
+      "path": "Miniti/Views/InsightsView.swift",
+      "rule": "small-fixed-font",
+      "signature": "system ( size : 7 , weight : . bold )",
+      "count": 1
+    },
+    {
+      "path": "Miniti/Views/InsightsView.swift",
+      "rule": "small-fixed-font",
+      "signature": "system ( size : 9 )",
+      "count": 1
+    },
+    {
+      "path": "Miniti/Views/InsightsView.swift",
+      "rule": "small-fixed-font",
+      "signature": "system ( size : 9 , weight : . semibold )",
+      "count": 8
+    },
+    {
+      "path": "Miniti/Views/LimitWarningBanner.swift",
+      "rule": "local-chrome",
+      "signature": "RoundedRectangle ( cornerRadius : 6 )",
+      "count": 2
+    },
+    {
+      "path": "Miniti/Views/LimitWarningBanner.swift",
+      "rule": "raw-color",
+      "signature": "Color ( hex : \"F59E0B\" )",
+      "count": 4
+    },
+    {
+      "path": "Miniti/Views/LimitWarningBanner.swift",
+      "rule": "small-fixed-font",
+      "signature": "system ( size : 10 )",
+      "count": 1
+    },
+    {
+      "path": "Miniti/Views/LimitWarningBanner.swift",
+      "rule": "small-fixed-font",
+      "signature": "system ( size : 10 , weight : . medium , design : . default )",
+      "count": 1
+    },
+    {
+      "path": "Miniti/Views/MainWindow.swift",
+      "rule": "focus-opt-out",
+      "signature": "focusable ( false )",
+      "count": 26
+    },
+    {
+      "path": "Miniti/Views/MainWindow.swift",
+      "rule": "local-chrome",
+      "signature": "RoundedRectangle ( cornerRadius : 18 )",
+      "count": 4
+    },
+    {
+      "path": "Miniti/Views/MainWindow.swift",
+      "rule": "local-chrome",
+      "signature": "RoundedRectangle ( cornerRadius : 3 )",
+      "count": 3
+    },
+    {
+      "path": "Miniti/Views/MainWindow.swift",
+      "rule": "local-chrome",
+      "signature": "RoundedRectangle ( cornerRadius : 4 )",
+      "count": 1
+    },
+    {
+      "path": "Miniti/Views/MainWindow.swift",
+      "rule": "local-chrome",
+      "signature": "RoundedRectangle ( cornerRadius : 5 )",
+      "count": 1
+    },
+    {
+      "path": "Miniti/Views/MainWindow.swift",
+      "rule": "local-chrome",
+      "signature": "RoundedRectangle ( cornerRadius : 6 )",
+      "count": 14
+    },
+    {
+      "path": "Miniti/Views/MainWindow.swift",
+      "rule": "local-chrome",
+      "signature": "RoundedRectangle ( cornerRadius : 7 )",
+      "count": 1
+    },
+    {
+      "path": "Miniti/Views/MainWindow.swift",
+      "rule": "local-chrome",
+      "signature": "RoundedRectangle ( cornerRadius : 8 )",
+      "count": 13
+    },
+    {
+      "path": "Miniti/Views/MainWindow.swift",
+      "rule": "local-chrome",
+      "signature": "cornerRadius ( 4 )",
+      "count": 2
+    },
+    {
+      "path": "Miniti/Views/MainWindow.swift",
+      "rule": "local-chrome",
+      "signature": "cornerRadius ( 6 )",
+      "count": 3
+    },
+    {
+      "path": "Miniti/Views/MainWindow.swift",
+      "rule": "raw-color",
+      "signature": "Color ( hex : \"09090B\" )",
+      "count": 3
+    },
+    {
+      "path": "Miniti/Views/MainWindow.swift",
+      "rule": "raw-color",
+      "signature": "Color ( hex : \"0F0F11\" )",
+      "count": 4
+    },
+    {
+      "path": "Miniti/Views/MainWindow.swift",
+      "rule": "raw-color",
+      "signature": "Color ( hex : \"18181B\" )",
+      "count": 1
+    },
+    {
+      "path": "Miniti/Views/MainWindow.swift",
+      "rule": "raw-color",
+      "signature": "Color ( hex : \"1C1C1F\" )",
+      "count": 5
+    },
+    {
+      "path": "Miniti/Views/MainWindow.swift",
+      "rule": "raw-color",
+      "signature": "Color ( hex : \"3FB950\" )",
+      "count": 1
+    },
+    {
+      "path": "Miniti/Views/MainWindow.swift",
+      "rule": "raw-color",
+      "signature": "Color ( hex : \"58A6FF\" )",
+      "count": 1
+    },
+    {
+      "path": "Miniti/Views/MainWindow.swift",
+      "rule": "raw-color",
+      "signature": "Color ( hex : \"8B949E\" )",
+      "count": 5
+    },
+    {
+      "path": "Miniti/Views/MainWindow.swift",
+      "rule": "raw-color",
+      "signature": "Color ( hex : \"A371F7\" )",
+      "count": 1
+    },
+    {
+      "path": "Miniti/Views/MainWindow.swift",
+      "rule": "raw-color",
+      "signature": "Color ( hex : \"E6EDF3\" )",
+      "count": 4
+    },
+    {
+      "path": "Miniti/Views/MainWindow.swift",
+      "rule": "small-fixed-font",
+      "signature": "system ( size : 10 )",
+      "count": 2
+    },
+    {
+      "path": "Miniti/Views/MainWindow.swift",
+      "rule": "small-fixed-font",
+      "signature": "system ( size : 10 , design : . default )",
+      "count": 1
+    },
+    {
+      "path": "Miniti/Views/MainWindow.swift",
+      "rule": "small-fixed-font",
+      "signature": "system ( size : 10 , weight : . bold )",
+      "count": 1
+    },
+    {
+      "path": "Miniti/Views/MainWindow.swift",
+      "rule": "small-fixed-font",
+      "signature": "system ( size : 10 , weight : . bold , design : . default )",
+      "count": 1
+    },
+    {
+      "path": "Miniti/Views/MainWindow.swift",
+      "rule": "small-fixed-font",
+      "signature": "system ( size : 10 , weight : . medium )",
+      "count": 1
+    },
+    {
+      "path": "Miniti/Views/MainWindow.swift",
+      "rule": "small-fixed-font",
+      "signature": "system ( size : 10 , weight : . medium , design : . default )",
+      "count": 33
+    },
+    {
+      "path": "Miniti/Views/MainWindow.swift",
+      "rule": "small-fixed-font",
+      "signature": "system ( size : 10 , weight : . regular , design : . default )",
+      "count": 19
+    },
+    {
+      "path": "Miniti/Views/MainWindow.swift",
+      "rule": "small-fixed-font",
+      "signature": "system ( size : 10 , weight : . semibold )",
+      "count": 1
+    },
+    {
+      "path": "Miniti/Views/MainWindow.swift",
+      "rule": "small-fixed-font",
+      "signature": "system ( size : 10 , weight : . semibold , design : . default )",
+      "count": 12
+    },
+    {
+      "path": "Miniti/Views/MainWindow.swift",
+      "rule": "small-fixed-font",
+      "signature": "system ( size : 11 )",
+      "count": 2
+    },
+    {
+      "path": "Miniti/Views/MainWindow.swift",
+      "rule": "small-fixed-font",
+      "signature": "system ( size : 11 , design : . default )",
+      "count": 3
+    },
+    {
+      "path": "Miniti/Views/MainWindow.swift",
+      "rule": "small-fixed-font",
+      "signature": "system ( size : 11 , weight : . bold )",
+      "count": 1
+    },
+    {
+      "path": "Miniti/Views/MainWindow.swift",
+      "rule": "small-fixed-font",
+      "signature": "system ( size : 11 , weight : . medium )",
+      "count": 1
+    },
+    {
+      "path": "Miniti/Views/MainWindow.swift",
+      "rule": "small-fixed-font",
+      "signature": "system ( size : 11 , weight : . medium , design : . default )",
+      "count": 16
+    },
+    {
+      "path": "Miniti/Views/MainWindow.swift",
+      "rule": "small-fixed-font",
+      "signature": "system ( size : 11 , weight : . regular , design : . default )",
+      "count": 1
+    },
+    {
+      "path": "Miniti/Views/MainWindow.swift",
+      "rule": "small-fixed-font",
+      "signature": "system ( size : 11 , weight : . semibold )",
+      "count": 1
+    },
+    {
+      "path": "Miniti/Views/MainWindow.swift",
+      "rule": "small-fixed-font",
+      "signature": "system ( size : 11 , weight : . semibold , design : . default )",
+      "count": 9
+    },
+    {
+      "path": "Miniti/Views/MainWindow.swift",
+      "rule": "small-fixed-font",
+      "signature": "system ( size : 11 , weight : isSelected ? . semibold : . medium , design : . default )",
+      "count": 3
+    },
+    {
+      "path": "Miniti/Views/MainWindow.swift",
+      "rule": "small-fixed-font",
+      "signature": "system ( size : 12 , weight : . bold , design : . default )",
+      "count": 1
+    },
+    {
+      "path": "Miniti/Views/MainWindow.swift",
+      "rule": "small-fixed-font",
+      "signature": "system ( size : 12 , weight : . medium )",
+      "count": 1
+    },
+    {
+      "path": "Miniti/Views/MainWindow.swift",
+      "rule": "small-fixed-font",
+      "signature": "system ( size : 12 , weight : . medium , design : . default )",
+      "count": 3
+    },
+    {
+      "path": "Miniti/Views/MainWindow.swift",
+      "rule": "small-fixed-font",
+      "signature": "system ( size : 12 , weight : . regular , design : . default )",
+      "count": 2
+    },
+    {
+      "path": "Miniti/Views/MainWindow.swift",
+      "rule": "small-fixed-font",
+      "signature": "system ( size : 12 , weight : . semibold )",
+      "count": 1
+    },
+    {
+      "path": "Miniti/Views/MainWindow.swift",
+      "rule": "small-fixed-font",
+      "signature": "system ( size : 12 , weight : isSelected ? . semibold : . medium , design : . default )",
+      "count": 1
+    },
+    {
+      "path": "Miniti/Views/MainWindow.swift",
+      "rule": "small-fixed-font",
+      "signature": "system ( size : 8 , weight : . black , design : . rounded )",
+      "count": 1
+    },
+    {
+      "path": "Miniti/Views/MainWindow.swift",
+      "rule": "small-fixed-font",
+      "signature": "system ( size : 8 , weight : . bold )",
+      "count": 2
+    },
+    {
+      "path": "Miniti/Views/MainWindow.swift",
+      "rule": "small-fixed-font",
+      "signature": "system ( size : 8 , weight : . semibold )",
+      "count": 4
+    },
+    {
+      "path": "Miniti/Views/MainWindow.swift",
+      "rule": "small-fixed-font",
+      "signature": "system ( size : 9 , weight : . bold )",
+      "count": 1
+    },
+    {
+      "path": "Miniti/Views/MainWindow.swift",
+      "rule": "small-fixed-font",
+      "signature": "system ( size : 9 , weight : . medium )",
+      "count": 2
+    },
+    {
+      "path": "Miniti/Views/MainWindow.swift",
+      "rule": "small-fixed-font",
+      "signature": "system ( size : 9 , weight : . regular , design : . default )",
+      "count": 1
+    },
+    {
+      "path": "Miniti/Views/MainWindow.swift",
+      "rule": "small-fixed-font",
+      "signature": "system ( size : 9 , weight : . semibold )",
+      "count": 2
+    },
+    {
+      "path": "Miniti/Views/ManagedAccountViews.swift",
+      "rule": "small-fixed-font",
+      "signature": "system ( size : 11 )",
+      "count": 2
+    },
+    {
+      "path": "Miniti/Views/ManagedAccountViews.swift",
+      "rule": "small-fixed-font",
+      "signature": "system ( size : 12 )",
+      "count": 7
+    },
+    {
+      "path": "Miniti/Views/MeetingView.swift",
+      "rule": "focus-opt-out",
+      "signature": "focusable ( false )",
+      "count": 24
+    },
+    {
+      "path": "Miniti/Views/MeetingView.swift",
+      "rule": "local-chrome",
+      "signature": "RoundedRectangle ( cornerRadius : 1 )",
+      "count": 2
+    },
+    {
+      "path": "Miniti/Views/MeetingView.swift",
+      "rule": "local-chrome",
+      "signature": "RoundedRectangle ( cornerRadius : 10 )",
+      "count": 2
+    },
+    {
+      "path": "Miniti/Views/MeetingView.swift",
+      "rule": "local-chrome",
+      "signature": "RoundedRectangle ( cornerRadius : 12 )",
+      "count": 2
+    },
+    {
+      "path": "Miniti/Views/MeetingView.swift",
+      "rule": "local-chrome",
+      "signature": "RoundedRectangle ( cornerRadius : 2 )",
+      "count": 5
+    },
+    {
+      "path": "Miniti/Views/MeetingView.swift",
+      "rule": "local-chrome",
+      "signature": "RoundedRectangle ( cornerRadius : 3 )",
+      "count": 3
+    },
+    {
+      "path": "Miniti/Views/MeetingView.swift",
+      "rule": "local-chrome",
+      "signature": "RoundedRectangle ( cornerRadius : 4 )",
+      "count": 14
+    },
+    {
+      "path": "Miniti/Views/MeetingView.swift",
+      "rule": "local-chrome",
+      "signature": "RoundedRectangle ( cornerRadius : 6 )",
+      "count": 14
+    },
+    {
+      "path": "Miniti/Views/MeetingView.swift",
+      "rule": "local-chrome",
+      "signature": "RoundedRectangle ( cornerRadius : 7 )",
+      "count": 2
+    },
+    {
+      "path": "Miniti/Views/MeetingView.swift",
+      "rule": "local-chrome",
+      "signature": "RoundedRectangle ( cornerRadius : 8 )",
+      "count": 2
+    },
+    {
+      "path": "Miniti/Views/MeetingView.swift",
+      "rule": "local-chrome",
+      "signature": "cornerRadius ( 3 )",
+      "count": 1
+    },
+    {
+      "path": "Miniti/Views/MeetingView.swift",
+      "rule": "raw-color",
+      "signature": "Color ( hex : \"09090B\" )",
+      "count": 4
+    },
+    {
+      "path": "Miniti/Views/MeetingView.swift",
+      "rule": "raw-color",
+      "signature": "Color ( hex : \"0F0F11\" )",
+      "count": 8
+    },
+    {
+      "path": "Miniti/Views/MeetingView.swift",
+      "rule": "raw-color",
+      "signature": "Color ( hex : \"18181B\" )",
+      "count": 2
+    },
+    {
+      "path": "Miniti/Views/MeetingView.swift",
+      "rule": "raw-color",
+      "signature": "Color ( hex : \"1C1C1F\" )",
+      "count": 5
+    },
+    {
+      "path": "Miniti/Views/MeetingView.swift",
+      "rule": "raw-color",
+      "signature": "Color ( hex : \"3F3F46\" )",
+      "count": 9
+    },
+    {
+      "path": "Miniti/Views/MeetingView.swift",
+      "rule": "raw-color",
+      "signature": "Color ( hex : \"3FB950\" )",
+      "count": 18
+    },
+    {
+      "path": "Miniti/Views/MeetingView.swift",
+      "rule": "raw-color",
+      "signature": "Color ( hex : \"484F58\" )",
+      "count": 7
+    },
+    {
+      "path": "Miniti/Views/MeetingView.swift",
+      "rule": "raw-color",
+      "signature": "Color ( hex : \"52525B\" )",
+      "count": 1
+    },
+    {
+      "path": "Miniti/Views/MeetingView.swift",
+      "rule": "raw-color",
+      "signature": "Color ( hex : \"58A6FF\" )",
+      "count": 8
+    },
+    {
+      "path": "Miniti/Views/MeetingView.swift",
+      "rule": "raw-color",
+      "signature": "Color ( hex : \"71717A\" )",
+      "count": 17
+    },
+    {
+      "path": "Miniti/Views/MeetingView.swift",
+      "rule": "raw-color",
+      "signature": "Color ( hex : \"8B949E\" )",
+      "count": 5
+    },
+    {
+      "path": "Miniti/Views/MeetingView.swift",
+      "rule": "raw-color",
+      "signature": "Color ( hex : \"A78BFA\" )",
+      "count": 1
+    },
+    {
+      "path": "Miniti/Views/MeetingView.swift",
+      "rule": "raw-color",
+      "signature": "Color ( hex : \"D29922\" )",
+      "count": 2
+    },
+    {
+      "path": "Miniti/Views/MeetingView.swift",
+      "rule": "raw-color",
+      "signature": "Color ( hex : \"D4D4D8\" )",
+      "count": 5
+    },
+    {
+      "path": "Miniti/Views/MeetingView.swift",
+      "rule": "raw-color",
+      "signature": "Color ( hex : \"E6EDF3\" )",
+      "count": 4
+    },
+    {
+      "path": "Miniti/Views/MeetingView.swift",
+      "rule": "raw-color",
+      "signature": "Color ( hex : \"F59E0B\" )",
+      "count": 1
+    },
+    {
+      "path": "Miniti/Views/MeetingView.swift",
+      "rule": "raw-color",
+      "signature": "Color ( hex : \"F85149\" )",
+      "count": 8
+    },
+    {
+      "path": "Miniti/Views/MeetingView.swift",
+      "rule": "raw-color",
+      "signature": "Color ( hex : \"FFA657\" )",
+      "count": 2
+    },
+    {
+      "path": "Miniti/Views/MeetingView.swift",
+      "rule": "small-fixed-font",
+      "signature": "system ( size : 10 )",
+      "count": 1
+    },
+    {
+      "path": "Miniti/Views/MeetingView.swift",
+      "rule": "small-fixed-font",
+      "signature": "system ( size : 10 , weight : . bold )",
+      "count": 3
+    },
+    {
+      "path": "Miniti/Views/MeetingView.swift",
+      "rule": "small-fixed-font",
+      "signature": "system ( size : 10 , weight : . bold , design : . default )",
+      "count": 2
+    },
+    {
+      "path": "Miniti/Views/MeetingView.swift",
+      "rule": "small-fixed-font",
+      "signature": "system ( size : 10 , weight : . medium , design : . default )",
+      "count": 29
+    },
+    {
+      "path": "Miniti/Views/MeetingView.swift",
+      "rule": "small-fixed-font",
+      "signature": "system ( size : 10 , weight : . regular , design : . default )",
+      "count": 11
+    },
+    {
+      "path": "Miniti/Views/MeetingView.swift",
+      "rule": "small-fixed-font",
+      "signature": "system ( size : 10 , weight : . semibold )",
+      "count": 15
+    },
+    {
+      "path": "Miniti/Views/MeetingView.swift",
+      "rule": "small-fixed-font",
+      "signature": "system ( size : 10 , weight : . semibold , design : . default )",
+      "count": 13
+    },
+    {
+      "path": "Miniti/Views/MeetingView.swift",
+      "rule": "small-fixed-font",
+      "signature": "system ( size : 11 )",
+      "count": 5
+    },
+    {
+      "path": "Miniti/Views/MeetingView.swift",
+      "rule": "small-fixed-font",
+      "signature": "system ( size : 11 , design : . default )",
+      "count": 1
+    },
+    {
+      "path": "Miniti/Views/MeetingView.swift",
+      "rule": "small-fixed-font",
+      "signature": "system ( size : 11 , weight : . bold , design : . default )",
+      "count": 1
+    },
+    {
+      "path": "Miniti/Views/MeetingView.swift",
+      "rule": "small-fixed-font",
+      "signature": "system ( size : 11 , weight : . medium , design : . default )",
+      "count": 22
+    },
+    {
+      "path": "Miniti/Views/MeetingView.swift",
+      "rule": "small-fixed-font",
+      "signature": "system ( size : 11 , weight : . regular , design : . default )",
+      "count": 3
+    },
+    {
+      "path": "Miniti/Views/MeetingView.swift",
+      "rule": "small-fixed-font",
+      "signature": "system ( size : 11 , weight : . regular , design : . monospaced )",
+      "count": 1
+    },
+    {
+      "path": "Miniti/Views/MeetingView.swift",
+      "rule": "small-fixed-font",
+      "signature": "system ( size : 11 , weight : . semibold )",
+      "count": 3
+    },
+    {
+      "path": "Miniti/Views/MeetingView.swift",
+      "rule": "small-fixed-font",
+      "signature": "system ( size : 11 , weight : . semibold , design : . default )",
+      "count": 17
+    },
+    {
+      "path": "Miniti/Views/MeetingView.swift",
+      "rule": "small-fixed-font",
+      "signature": "system ( size : 12 )",
+      "count": 1
+    },
+    {
+      "path": "Miniti/Views/MeetingView.swift",
+      "rule": "small-fixed-font",
+      "signature": "system ( size : 12 , design : . default )",
+      "count": 5
+    },
+    {
+      "path": "Miniti/Views/MeetingView.swift",
+      "rule": "small-fixed-font",
+      "signature": "system ( size : 12 , weight : . medium , design : . default )",
+      "count": 7
+    },
+    {
+      "path": "Miniti/Views/MeetingView.swift",
+      "rule": "small-fixed-font",
+      "signature": "system ( size : 12 , weight : . regular , design : . default )",
+      "count": 4
+    },
+    {
+      "path": "Miniti/Views/MeetingView.swift",
+      "rule": "small-fixed-font",
+      "signature": "system ( size : 12 , weight : . semibold )",
+      "count": 4
+    },
+    {
+      "path": "Miniti/Views/MeetingView.swift",
+      "rule": "small-fixed-font",
+      "signature": "system ( size : 12 , weight : . semibold , design : . default )",
+      "count": 4
+    },
+    {
+      "path": "Miniti/Views/MeetingView.swift",
+      "rule": "small-fixed-font",
+      "signature": "system ( size : 8 )",
+      "count": 1
+    },
+    {
+      "path": "Miniti/Views/MeetingView.swift",
+      "rule": "small-fixed-font",
+      "signature": "system ( size : 8 , weight : . bold )",
+      "count": 2
+    },
+    {
+      "path": "Miniti/Views/MeetingView.swift",
+      "rule": "small-fixed-font",
+      "signature": "system ( size : 8 , weight : . semibold )",
+      "count": 3
+    },
+    {
+      "path": "Miniti/Views/MeetingView.swift",
+      "rule": "small-fixed-font",
+      "signature": "system ( size : 9 )",
+      "count": 1
+    },
+    {
+      "path": "Miniti/Views/MeetingView.swift",
+      "rule": "small-fixed-font",
+      "signature": "system ( size : 9 , weight : . bold )",
+      "count": 1
+    },
+    {
+      "path": "Miniti/Views/MeetingView.swift",
+      "rule": "small-fixed-font",
+      "signature": "system ( size : 9 , weight : . semibold )",
+      "count": 2
+    },
+    {
+      "path": "Miniti/Views/MinitiDesignSystem.swift",
+      "rule": "local-chrome",
+      "signature": "RoundedRectangle ( cornerRadius : 1.5 )",
+      "count": 1
+    },
+    {
+      "path": "Miniti/Views/MinitiDesignSystem.swift",
+      "rule": "small-fixed-font",
+      "signature": "system ( size : 10 , weight : . medium )",
+      "count": 5
+    },
+    {
+      "path": "Miniti/Views/MinitiDesignSystem.swift",
+      "rule": "small-fixed-font",
+      "signature": "system ( size : 10 , weight : . semibold )",
+      "count": 1
+    },
+    {
+      "path": "Miniti/Views/MinitiDesignSystem.swift",
+      "rule": "small-fixed-font",
+      "signature": "system ( size : 11 , weight : . medium )",
+      "count": 1
+    },
+    {
+      "path": "Miniti/Views/MinitiDesignSystem.swift",
+      "rule": "small-fixed-font",
+      "signature": "system ( size : 11 , weight : . semibold )",
+      "count": 1
+    },
+    {
+      "path": "Miniti/Views/MinitiDesignSystem.swift",
+      "rule": "small-fixed-font",
+      "signature": "system ( size : 11 , weight : isSelected ? . semibold : . medium , design : . default )",
+      "count": 1
+    },
+    {
+      "path": "Miniti/Views/MinitiDesignSystem.swift",
+      "rule": "small-fixed-font",
+      "signature": "system ( size : 9 , weight : . medium )",
+      "count": 1
+    },
+    {
+      "path": "Miniti/Views/OnboardingView.swift",
+      "rule": "local-chrome",
+      "signature": "RoundedRectangle ( cornerRadius : 12 )",
+      "count": 4
+    },
+    {
+      "path": "Miniti/Views/PersistenceIssueBanner.swift",
+      "rule": "small-fixed-font",
+      "signature": "system ( size : 12 )",
+      "count": 1
+    },
+    {
+      "path": "Miniti/Views/RecordingIndicatorPanel.swift",
+      "rule": "local-chrome",
+      "signature": "RoundedRectangle ( cornerRadius : 10 )",
+      "count": 2
+    },
+    {
+      "path": "Miniti/Views/RecordingIndicatorPanel.swift",
+      "rule": "local-chrome",
+      "signature": "RoundedRectangle ( cornerRadius : 5 )",
+      "count": 2
+    },
+    {
+      "path": "Miniti/Views/RecordingIndicatorPanel.swift",
+      "rule": "small-fixed-font",
+      "signature": "system ( size : 10 )",
+      "count": 1
+    },
+    {
+      "path": "Miniti/Views/RecordingIndicatorPanel.swift",
+      "rule": "small-fixed-font",
+      "signature": "system ( size : 11 )",
+      "count": 6
+    },
+    {
+      "path": "Miniti/Views/RecordingIndicatorPanel.swift",
+      "rule": "small-fixed-font",
+      "signature": "system ( size : 11 , weight : . semibold , design : . default )",
+      "count": 1
+    },
+    {
+      "path": "Miniti/Views/RecordingIndicatorPanel.swift",
+      "rule": "small-fixed-font",
+      "signature": "system ( size : 11 , weight : . semibold , design : . monospaced )",
+      "count": 1
+    },
+    {
+      "path": "Miniti/Views/RecordingIndicatorPanel.swift",
+      "rule": "small-fixed-font",
+      "signature": "system ( size : 12 , weight : . semibold )",
+      "count": 5
+    },
+    {
+      "path": "Miniti/Views/RecordingIndicatorPanel.swift",
+      "rule": "small-fixed-font",
+      "signature": "system ( size : 9 , weight : . semibold )",
+      "count": 1
+    },
+    {
+      "path": "Miniti/Views/SelectableTextView.swift",
+      "rule": "local-chrome",
+      "signature": "RoundedRectangle ( cornerRadius : 6 )",
+      "count": 2
+    },
+    {
+      "path": "Miniti/Views/SelectableTextView.swift",
+      "rule": "small-fixed-font",
+      "signature": "system ( size : 10 , weight : . regular , design : . default )",
+      "count": 2
+    },
+    {
+      "path": "Miniti/Views/SelectableTextView.swift",
+      "rule": "small-fixed-font",
+      "signature": "system ( size : 10 , weight : . semibold , design : . default )",
+      "count": 3
+    },
+    {
+      "path": "Miniti/Views/SelectableTextView.swift",
+      "rule": "small-fixed-font",
+      "signature": "system ( size : 11 , weight : . semibold )",
+      "count": 1
+    },
+    {
+      "path": "Miniti/Views/SelectableTextView.swift",
+      "rule": "small-fixed-font",
+      "signature": "system ( size : 11 , weight : . semibold , design : . default )",
+      "count": 1
+    },
+    {
+      "path": "Miniti/Views/SettingsView.swift",
+      "rule": "local-chrome",
+      "signature": "RoundedRectangle ( cornerRadius : 7 )",
+      "count": 1
+    },
+    {
+      "path": "Miniti/Views/SettingsView.swift",
+      "rule": "raw-color",
+      "signature": "Color ( hex : \"A78BFA\" )",
+      "count": 1
+    },
+    {
+      "path": "Miniti/Views/SettingsView.swift",
+      "rule": "small-fixed-font",
+      "signature": "system ( size : 11 , design : . default )",
+      "count": 1
+    },
+    {
+      "path": "Miniti/Views/SettingsView.swift",
+      "rule": "small-fixed-font",
+      "signature": "system ( size : 12 )",
+      "count": 2
+    },
+    {
+      "path": "Miniti/Views/SettingsView.swift",
+      "rule": "small-fixed-font",
+      "signature": "system ( size : 12 , design : . default )",
+      "count": 3
+    },
+    {
+      "path": "Miniti/Views/StoreRecoveryView.swift",
+      "rule": "local-chrome",
+      "signature": "RoundedRectangle ( cornerRadius : 8 )",
+      "count": 3
+    },
+    {
+      "path": "Miniti/Views/StoreRecoveryView.swift",
+      "rule": "small-fixed-font",
+      "signature": "system ( size : 10 , weight : . regular , design : . monospaced )",
+      "count": 1
+    },
+    {
+      "path": "Miniti/Views/StoreRecoveryView.swift",
+      "rule": "small-fixed-font",
+      "signature": "system ( size : 11 , weight : . regular , design : . default )",
+      "count": 1
+    },
+    {
+      "path": "Miniti/Views/StoreRecoveryView.swift",
+      "rule": "small-fixed-font",
+      "signature": "system ( size : 12 , weight : . medium , design : . default )",
+      "count": 2
+    },
+    {
+      "path": "Miniti/Views/TermsAcceptanceView.swift",
+      "rule": "small-fixed-font",
+      "signature": "system ( size : 12 )",
+      "count": 2
+    },
+    {
+      "path": "Miniti/Views/TranscriptView.swift",
+      "rule": "focus-opt-out",
+      "signature": "focusable ( false )",
+      "count": 2
+    },
+    {
+      "path": "Miniti/Views/TranscriptView.swift",
+      "rule": "local-chrome",
+      "signature": "RoundedRectangle ( cornerRadius : 4 )",
+      "count": 13
+    },
+    {
+      "path": "Miniti/Views/TranscriptView.swift",
+      "rule": "local-chrome",
+      "signature": "RoundedRectangle ( cornerRadius : 6 )",
+      "count": 2
+    },
+    {
+      "path": "Miniti/Views/TranscriptView.swift",
+      "rule": "local-chrome",
+      "signature": "cornerRadius ( 1.5 )",
+      "count": 1
+    },
+    {
+      "path": "Miniti/Views/TranscriptView.swift",
+      "rule": "local-chrome",
+      "signature": "cornerRadius ( 4 )",
+      "count": 1
+    },
+    {
+      "path": "Miniti/Views/TranscriptView.swift",
+      "rule": "raw-color",
+      "signature": "Color ( hex : \"09090B\" )",
+      "count": 2
+    },
+    {
+      "path": "Miniti/Views/TranscriptView.swift",
+      "rule": "raw-color",
+      "signature": "Color ( hex : \"0F0F11\" )",
+      "count": 2
+    },
+    {
+      "path": "Miniti/Views/TranscriptView.swift",
+      "rule": "raw-color",
+      "signature": "Color ( hex : \"13151A\" )",
+      "count": 4
+    },
+    {
+      "path": "Miniti/Views/TranscriptView.swift",
+      "rule": "raw-color",
+      "signature": "Color ( hex : \"1C1C1F\" )",
+      "count": 7
+    },
+    {
+      "path": "Miniti/Views/TranscriptView.swift",
+      "rule": "raw-color",
+      "signature": "Color ( hex : \"1F3A22\" )",
+      "count": 2
+    },
+    {
+      "path": "Miniti/Views/TranscriptView.swift",
+      "rule": "raw-color",
+      "signature": "Color ( hex : \"3FB950\" )",
+      "count": 3
+    },
+    {
+      "path": "Miniti/Views/TranscriptView.swift",
+      "rule": "raw-color",
+      "signature": "Color ( hex : \"484F58\" )",
+      "count": 7
+    },
+    {
+      "path": "Miniti/Views/TranscriptView.swift",
+      "rule": "raw-color",
+      "signature": "Color ( hex : \"58A6FF\" )",
+      "count": 3
+    },
+    {
+      "path": "Miniti/Views/TranscriptView.swift",
+      "rule": "raw-color",
+      "signature": "Color ( hex : \"79C0FF\" )",
+      "count": 1
+    },
+    {
+      "path": "Miniti/Views/TranscriptView.swift",
+      "rule": "raw-color",
+      "signature": "Color ( hex : \"7EE787\" )",
+      "count": 1
+    },
+    {
+      "path": "Miniti/Views/TranscriptView.swift",
+      "rule": "raw-color",
+      "signature": "Color ( hex : \"8B949E\" )",
+      "count": 1
+    },
+    {
+      "path": "Miniti/Views/TranscriptView.swift",
+      "rule": "raw-color",
+      "signature": "Color ( hex : \"A371F7\" )",
+      "count": 1
+    },
+    {
+      "path": "Miniti/Views/TranscriptView.swift",
+      "rule": "raw-color",
+      "signature": "Color ( hex : \"D29922\" )",
+      "count": 2
+    },
+    {
+      "path": "Miniti/Views/TranscriptView.swift",
+      "rule": "raw-color",
+      "signature": "Color ( hex : \"E6EDF3\" )",
+      "count": 3
+    },
+    {
+      "path": "Miniti/Views/TranscriptView.swift",
+      "rule": "raw-color",
+      "signature": "Color ( hex : \"F778BA\" )",
+      "count": 1
+    },
+    {
+      "path": "Miniti/Views/TranscriptView.swift",
+      "rule": "raw-color",
+      "signature": "Color ( hex : \"F85149\" )",
+      "count": 3
+    },
+    {
+      "path": "Miniti/Views/TranscriptView.swift",
+      "rule": "raw-color",
+      "signature": "Color ( hex : \"FFA657\" )",
+      "count": 1
+    },
+    {
+      "path": "Miniti/Views/TranscriptView.swift",
+      "rule": "small-fixed-font",
+      "signature": "system ( size : 10 , weight : . medium , design : . default )",
+      "count": 6
+    },
+    {
+      "path": "Miniti/Views/TranscriptView.swift",
+      "rule": "small-fixed-font",
+      "signature": "system ( size : 10 , weight : . regular , design : . default )",
+      "count": 5
+    },
+    {
+      "path": "Miniti/Views/TranscriptView.swift",
+      "rule": "small-fixed-font",
+      "signature": "system ( size : 10 , weight : . semibold )",
+      "count": 1
+    },
+    {
+      "path": "Miniti/Views/TranscriptView.swift",
+      "rule": "small-fixed-font",
+      "signature": "system ( size : 10 , weight : . semibold , design : . default )",
+      "count": 7
+    },
+    {
+      "path": "Miniti/Views/TranscriptView.swift",
+      "rule": "small-fixed-font",
+      "signature": "system ( size : 11 )",
+      "count": 3
+    },
+    {
+      "path": "Miniti/Views/TranscriptView.swift",
+      "rule": "small-fixed-font",
+      "signature": "system ( size : 11 , weight : . regular , design : . default )",
+      "count": 2
+    },
+    {
+      "path": "Miniti/Views/TranscriptView.swift",
+      "rule": "small-fixed-font",
+      "signature": "system ( size : 11 , weight : . semibold , design : . default )",
+      "count": 11
+    },
+    {
+      "path": "Miniti/Views/TranscriptView.swift",
+      "rule": "small-fixed-font",
+      "signature": "system ( size : 12 , weight : . medium , design : . default )",
+      "count": 2
+    },
+    {
+      "path": "Miniti/Views/TranscriptView.swift",
+      "rule": "small-fixed-font",
+      "signature": "system ( size : 12 , weight : . regular , design : . default )",
+      "count": 1
+    },
+    {
+      "path": "Miniti/Views/TranscriptView.swift",
+      "rule": "small-fixed-font",
+      "signature": "system ( size : 12 , weight : . semibold , design : . default )",
+      "count": 1
+    },
+    {
+      "path": "Miniti/Views/TranscriptView.swift",
+      "rule": "small-fixed-font",
+      "signature": "system ( size : 9 , weight : . medium , design : . default )",
+      "count": 1
+    },
+    {
+      "path": "Miniti/Views/UsageBanner.swift",
+      "rule": "focus-opt-out",
+      "signature": "focusable ( false )",
+      "count": 1
+    },
+    {
+      "path": "Miniti/Views/UsageBanner.swift",
+      "rule": "local-chrome",
+      "signature": "RoundedRectangle ( cornerRadius : 2 )",
+      "count": 2
+    },
+    {
+      "path": "Miniti/Views/UsageBanner.swift",
+      "rule": "local-chrome",
+      "signature": "RoundedRectangle ( cornerRadius : 3 )",
+      "count": 4
+    },
+    {
+      "path": "Miniti/Views/UsageBanner.swift",
+      "rule": "local-chrome",
+      "signature": "RoundedRectangle ( cornerRadius : 5 )",
+      "count": 2
+    },
+    {
+      "path": "Miniti/Views/UsageBanner.swift",
+      "rule": "raw-color",
+      "signature": "Color ( hex : \"09090B\" )",
+      "count": 1
+    },
+    {
+      "path": "Miniti/Views/UsageBanner.swift",
+      "rule": "raw-color",
+      "signature": "Color ( hex : \"0F0F11\" )",
+      "count": 2
+    },
+    {
+      "path": "Miniti/Views/UsageBanner.swift",
+      "rule": "raw-color",
+      "signature": "Color ( hex : \"1C1C1F\" )",
+      "count": 3
+    },
+    {
+      "path": "Miniti/Views/UsageBanner.swift",
+      "rule": "raw-color",
+      "signature": "Color ( hex : \"3FB950\" )",
+      "count": 4
+    },
+    {
+      "path": "Miniti/Views/UsageBanner.swift",
+      "rule": "raw-color",
+      "signature": "Color ( hex : \"484F58\" )",
+      "count": 1
+    },
+    {
+      "path": "Miniti/Views/UsageBanner.swift",
+      "rule": "raw-color",
+      "signature": "Color ( hex : \"71717A\" )",
+      "count": 7
+    },
+    {
+      "path": "Miniti/Views/UsageBanner.swift",
+      "rule": "raw-color",
+      "signature": "Color ( hex : \"A1A1AA\" )",
+      "count": 2
+    },
+    {
+      "path": "Miniti/Views/UsageBanner.swift",
+      "rule": "raw-color",
+      "signature": "Color ( hex : \"A78BFA\" )",
+      "count": 7
+    },
+    {
+      "path": "Miniti/Views/UsageBanner.swift",
+      "rule": "raw-color",
+      "signature": "Color ( hex : \"E6EDF3\" )",
+      "count": 1
+    },
+    {
+      "path": "Miniti/Views/UsageBanner.swift",
+      "rule": "raw-color",
+      "signature": "Color ( hex : \"F59E0B\" )",
+      "count": 2
+    },
+    {
+      "path": "Miniti/Views/UsageBanner.swift",
+      "rule": "raw-color",
+      "signature": "Color ( hex : \"F85149\" )",
+      "count": 4
+    },
+    {
+      "path": "Miniti/Views/UsageBanner.swift",
+      "rule": "small-fixed-font",
+      "signature": "system ( size : 10 )",
+      "count": 1
+    },
+    {
+      "path": "Miniti/Views/UsageBanner.swift",
+      "rule": "small-fixed-font",
+      "signature": "system ( size : 10 , weight : . medium , design : . default )",
+      "count": 6
+    },
+    {
+      "path": "Miniti/Views/UsageBanner.swift",
+      "rule": "small-fixed-font",
+      "signature": "system ( size : 10 , weight : . regular , design : . default )",
+      "count": 2
+    },
+    {
+      "path": "Miniti/Views/UsageBanner.swift",
+      "rule": "small-fixed-font",
+      "signature": "system ( size : 10 , weight : . semibold , design : . default )",
+      "count": 2
+    },
+    {
+      "path": "Miniti/Views/UsageBanner.swift",
+      "rule": "small-fixed-font",
+      "signature": "system ( size : 11 , weight : . medium , design : . default )",
+      "count": 2
+    },
+    {
+      "path": "Miniti/Views/UsageBanner.swift",
+      "rule": "small-fixed-font",
+      "signature": "system ( size : 11 , weight : . semibold , design : . default )",
+      "count": 1
+    },
+    {
+      "path": "Miniti/Views/UsageBanner.swift",
+      "rule": "small-fixed-font",
+      "signature": "system ( size : 12 , design : . default )",
+      "count": 1
+    },
+    {
+      "path": "MinitiMobile/Views/HistoryView_iOS.swift",
+      "rule": "local-chrome",
+      "signature": "RoundedRectangle ( cornerRadius : 16 , style : . continuous )",
+      "count": 2
+    },
+    {
+      "path": "MinitiMobile/Views/HistoryView_iOS.swift",
+      "rule": "local-chrome",
+      "signature": "RoundedRectangle ( cornerRadius : 8 )",
+      "count": 2
+    },
+    {
+      "path": "MinitiMobile/Views/HistoryView_iOS.swift",
+      "rule": "raw-color",
+      "signature": "Color ( hex : \"09090B\" )",
+      "count": 1
+    },
+    {
+      "path": "MinitiMobile/Views/HistoryView_iOS.swift",
+      "rule": "raw-color",
+      "signature": "Color ( hex : \"1C1C1F\" )",
+      "count": 1
+    },
+    {
+      "path": "MinitiMobile/Views/HistoryView_iOS.swift",
+      "rule": "raw-color",
+      "signature": "Color ( hex : \"27272A\" )",
+      "count": 1
+    },
+    {
+      "path": "MinitiMobile/Views/HistoryView_iOS.swift",
+      "rule": "raw-color",
+      "signature": "Color ( hex : \"8B949E\" )",
+      "count": 1
+    },
+    {
+      "path": "MinitiMobile/Views/HistoryView_iOS.swift",
+      "rule": "raw-color",
+      "signature": "Color ( hex : \"E6EDF3\" )",
+      "count": 1
+    },
+    {
+      "path": "MinitiMobile/Views/HistoryView_iOS.swift",
+      "rule": "small-fixed-font",
+      "signature": "system ( size : 10 , weight : . bold )",
+      "count": 1
+    },
+    {
+      "path": "MinitiMobile/Views/HistoryView_iOS.swift",
+      "rule": "small-fixed-font",
+      "signature": "system ( size : 10 , weight : . regular , design : . default )",
+      "count": 3
+    },
+    {
+      "path": "MinitiMobile/Views/HistoryView_iOS.swift",
+      "rule": "small-fixed-font",
+      "signature": "system ( size : 10 , weight : . semibold , design : . default )",
+      "count": 1
+    },
+    {
+      "path": "MinitiMobile/Views/HistoryView_iOS.swift",
+      "rule": "small-fixed-font",
+      "signature": "system ( size : 11 , design : . default )",
+      "count": 6
+    },
+    {
+      "path": "MinitiMobile/Views/HistoryView_iOS.swift",
+      "rule": "small-fixed-font",
+      "signature": "system ( size : 11 , weight : . medium , design : . default )",
+      "count": 9
+    },
+    {
+      "path": "MinitiMobile/Views/HistoryView_iOS.swift",
+      "rule": "small-fixed-font",
+      "signature": "system ( size : 11 , weight : . medium , design : . rounded )",
+      "count": 1
+    },
+    {
+      "path": "MinitiMobile/Views/HistoryView_iOS.swift",
+      "rule": "small-fixed-font",
+      "signature": "system ( size : 11 , weight : . regular , design : . default )",
+      "count": 1
+    },
+    {
+      "path": "MinitiMobile/Views/HistoryView_iOS.swift",
+      "rule": "small-fixed-font",
+      "signature": "system ( size : 11 , weight : . semibold , design : . default )",
+      "count": 5
+    },
+    {
+      "path": "MinitiMobile/Views/HistoryView_iOS.swift",
+      "rule": "small-fixed-font",
+      "signature": "system ( size : 12 , design : . default )",
+      "count": 1
+    },
+    {
+      "path": "MinitiMobile/Views/HistoryView_iOS.swift",
+      "rule": "small-fixed-font",
+      "signature": "system ( size : 12 , weight : . medium , design : . default )",
+      "count": 1
+    },
+    {
+      "path": "MinitiMobile/Views/HistoryView_iOS.swift",
+      "rule": "small-fixed-font",
+      "signature": "system ( size : 12 , weight : . regular , design : . rounded )",
+      "count": 1
+    },
+    {
+      "path": "MinitiMobile/Views/HistoryView_iOS.swift",
+      "rule": "small-fixed-font",
+      "signature": "system ( size : 12 , weight : . semibold )",
+      "count": 1
+    },
+    {
+      "path": "MinitiMobile/Views/HistoryView_iOS.swift",
+      "rule": "small-fixed-font",
+      "signature": "system ( size : 9 , weight : . bold )",
+      "count": 1
+    },
+    {
+      "path": "MinitiMobile/Views/MeetingView_iOS.swift",
+      "rule": "local-chrome",
+      "signature": "RoundedRectangle ( cornerRadius : 1 )",
+      "count": 1
+    },
+    {
+      "path": "MinitiMobile/Views/MeetingView_iOS.swift",
+      "rule": "local-chrome",
+      "signature": "RoundedRectangle ( cornerRadius : 2 )",
+      "count": 1
+    },
+    {
+      "path": "MinitiMobile/Views/MeetingView_iOS.swift",
+      "rule": "local-chrome",
+      "signature": "RoundedRectangle ( cornerRadius : 3 )",
+      "count": 2
+    },
+    {
+      "path": "MinitiMobile/Views/MeetingView_iOS.swift",
+      "rule": "local-chrome",
+      "signature": "RoundedRectangle ( cornerRadius : 4 )",
+      "count": 10
+    },
+    {
+      "path": "MinitiMobile/Views/MeetingView_iOS.swift",
+      "rule": "local-chrome",
+      "signature": "RoundedRectangle ( cornerRadius : 6 )",
+      "count": 6
+    },
+    {
+      "path": "MinitiMobile/Views/MeetingView_iOS.swift",
+      "rule": "local-chrome",
+      "signature": "RoundedRectangle ( cornerRadius : 8 )",
+      "count": 6
+    },
+    {
+      "path": "MinitiMobile/Views/MeetingView_iOS.swift",
+      "rule": "raw-color",
+      "signature": "Color ( hex : \"3FB950\" )",
+      "count": 2
+    },
+    {
+      "path": "MinitiMobile/Views/MeetingView_iOS.swift",
+      "rule": "raw-color",
+      "signature": "Color ( hex : \"52525B\" )",
+      "count": 2
+    },
+    {
+      "path": "MinitiMobile/Views/MeetingView_iOS.swift",
+      "rule": "raw-color",
+      "signature": "Color ( hex : \"71717A\" )",
+      "count": 1
+    },
+    {
+      "path": "MinitiMobile/Views/MeetingView_iOS.swift",
+      "rule": "raw-color",
+      "signature": "Color ( hex : \"8B949E\" )",
+      "count": 1
+    },
+    {
+      "path": "MinitiMobile/Views/MeetingView_iOS.swift",
+      "rule": "raw-color",
+      "signature": "Color ( hex : \"A78BFA\" )",
+      "count": 1
+    },
+    {
+      "path": "MinitiMobile/Views/MeetingView_iOS.swift",
+      "rule": "raw-color",
+      "signature": "Color ( hex : \"D2A8FF\" )",
+      "count": 1
+    },
+    {
+      "path": "MinitiMobile/Views/MeetingView_iOS.swift",
+      "rule": "raw-color",
+      "signature": "Color ( hex : \"F59E0B\" )",
+      "count": 1
+    },
+    {
+      "path": "MinitiMobile/Views/MeetingView_iOS.swift",
+      "rule": "raw-color",
+      "signature": "Color ( hex : \"F85149\" )",
+      "count": 2
+    },
+    {
+      "path": "MinitiMobile/Views/MeetingView_iOS.swift",
+      "rule": "raw-color",
+      "signature": "Color ( hex : \"FFA657\" )",
+      "count": 2
+    },
+    {
+      "path": "MinitiMobile/Views/MeetingView_iOS.swift",
+      "rule": "small-fixed-font",
+      "signature": "system ( size : 10 , design : . default )",
+      "count": 1
+    },
+    {
+      "path": "MinitiMobile/Views/MeetingView_iOS.swift",
+      "rule": "small-fixed-font",
+      "signature": "system ( size : 10 , weight : . bold )",
+      "count": 1
+    },
+    {
+      "path": "MinitiMobile/Views/MeetingView_iOS.swift",
+      "rule": "small-fixed-font",
+      "signature": "system ( size : 10 , weight : . medium , design : . default )",
+      "count": 11
+    },
+    {
+      "path": "MinitiMobile/Views/MeetingView_iOS.swift",
+      "rule": "small-fixed-font",
+      "signature": "system ( size : 10 , weight : . regular , design : . default )",
+      "count": 1
+    },
+    {
+      "path": "MinitiMobile/Views/MeetingView_iOS.swift",
+      "rule": "small-fixed-font",
+      "signature": "system ( size : 10 , weight : . semibold )",
+      "count": 2
+    },
+    {
+      "path": "MinitiMobile/Views/MeetingView_iOS.swift",
+      "rule": "small-fixed-font",
+      "signature": "system ( size : 10 , weight : . semibold , design : . default )",
+      "count": 5
+    },
+    {
+      "path": "MinitiMobile/Views/MeetingView_iOS.swift",
+      "rule": "small-fixed-font",
+      "signature": "system ( size : 11 , weight : . medium , design : . default )",
+      "count": 5
+    },
+    {
+      "path": "MinitiMobile/Views/MeetingView_iOS.swift",
+      "rule": "small-fixed-font",
+      "signature": "system ( size : 11 , weight : . regular , design : . default )",
+      "count": 1
+    },
+    {
+      "path": "MinitiMobile/Views/MeetingView_iOS.swift",
+      "rule": "small-fixed-font",
+      "signature": "system ( size : 11 , weight : . semibold )",
+      "count": 5
+    },
+    {
+      "path": "MinitiMobile/Views/MeetingView_iOS.swift",
+      "rule": "small-fixed-font",
+      "signature": "system ( size : 11 , weight : . semibold , design : . default )",
+      "count": 2
+    },
+    {
+      "path": "MinitiMobile/Views/MeetingView_iOS.swift",
+      "rule": "small-fixed-font",
+      "signature": "system ( size : 12 )",
+      "count": 1
+    },
+    {
+      "path": "MinitiMobile/Views/MeetingView_iOS.swift",
+      "rule": "small-fixed-font",
+      "signature": "system ( size : 12 , design : . default )",
+      "count": 1
+    },
+    {
+      "path": "MinitiMobile/Views/MeetingView_iOS.swift",
+      "rule": "small-fixed-font",
+      "signature": "system ( size : 12 , weight : . medium , design : . default )",
+      "count": 7
+    },
+    {
+      "path": "MinitiMobile/Views/MeetingView_iOS.swift",
+      "rule": "small-fixed-font",
+      "signature": "system ( size : 12 , weight : . regular , design : . default )",
+      "count": 1
+    },
+    {
+      "path": "MinitiMobile/Views/MeetingView_iOS.swift",
+      "rule": "small-fixed-font",
+      "signature": "system ( size : 12 , weight : . semibold )",
+      "count": 2
+    },
+    {
+      "path": "MinitiMobile/Views/MeetingView_iOS.swift",
+      "rule": "small-fixed-font",
+      "signature": "system ( size : 12 , weight : . semibold , design : . default )",
+      "count": 8
+    },
+    {
+      "path": "MinitiMobile/Views/MeetingView_iOS.swift",
+      "rule": "small-fixed-font",
+      "signature": "system ( size : 8 )",
+      "count": 1
+    },
+    {
+      "path": "MinitiMobile/Views/MeetingView_iOS.swift",
+      "rule": "small-fixed-font",
+      "signature": "system ( size : 9 , weight : . semibold )",
+      "count": 2
+    },
+    {
+      "path": "MinitiMobile/Views/SettingsView_iOS.swift",
+      "rule": "small-fixed-font",
+      "signature": "system ( size : 12 , design : . default )",
+      "count": 3
+    },
+    {
+      "path": "MinitiMobile/Views/WatchImportViews.swift",
+      "rule": "small-fixed-font",
+      "signature": "system ( size : 12 )",
+      "count": 1
+    }
+  ]
+}

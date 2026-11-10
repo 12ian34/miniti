@@ -21,6 +21,10 @@ jobs:
       - uses: actions/checkout@v4
       - run: python3 scripts/check-coverage-runner.py
       - run: python3 scripts/check-test-contracts.py
+      - name: Test UI source guard fixtures
+        run: python3 -m unittest discover -s scripts/tests -p 'test_ui_source.py' -v
+      - name: Check UI source debt and review cues
+        run: python3 scripts/check-ui-source.py
       - run: python3 scripts/check-doc-links.py
       - name: Verify release metadata consistency
         run: python3 scripts/check-release-metadata.py

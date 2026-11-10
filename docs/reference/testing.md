@@ -19,6 +19,10 @@ Ordinary suites skip hardware capture/device switching. An explicit hardware run
 
 `StubURLProtocol.Context` binds scripts/request capture to a session; `ResponseGate` suspends replies for controlled cancellation/order tests. Prefer those gates to time-based race guesses. `scripts/check-coverage-runner.py` proves xcodebuild failures propagate. Canonical synthetic wire fixtures live in `test-contracts/v1`; regenerate Swift only with `scripts/check-test-contracts.py --import-fixtures`. The backend's `scripts/test-wire-exchange.py --apple /path/to/miniti` runs the separate Swift/backend/Swift exchange. Its two I/O cases intentionally skip in ordinary suites and must execute in that lane. See [foundation evidence](../releases/3.7.0.md#local-foundation-evidence) for current counts and limits.
 
+## UI source contracts
+
+The [UI source guard and debt inventory](ui-source-check.md) run with standard-library Python in the runner-contract CI job. Run `python3 -m unittest discover -s scripts/tests -p 'test_ui_source.py' -v` and `python3 scripts/check-ui-source.py`. Positive/negative Swift fixtures cover raw-colour additions, lexical boundaries, review cues and baseline pruning. These checks do not replace hosted/native rendering or accessibility acceptance.
+
 ## Test files
 
 - **MinitiTests/MinitiAPIServiceTests.swift** – UsageInfo (snake/camelCase, string/numeric), SessionResponse (`access_token` / `temp_api_key` fallback, expiry rules), EndSessionResponse, AttioSendResponse, shared Attio/Twenty search-record decoding (including opportunity detail), ManagedInsightsResponse, AppleVerifyResponse, flexible date decoding, AttioMeetingPayload normalization, and explicit CRM task payload/deadline construction

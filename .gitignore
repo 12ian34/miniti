@@ -72,3 +72,6 @@ docs/research/video-recording-costs.private.md
 docs/jev-eval-report-2026-09-21.md
 docs/research/jev-eval-report-2026-09-21.md
 fastlane/metadata/app_review_notes.txt
+
+# Python source-contract test caches
+scripts/**/__pycache__/
