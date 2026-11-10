@@ -33,7 +33,7 @@ enum AccountUITestHarness {
         if isActive && ProcessInfo.processInfo.environment["MINITI_UI_TEST_LARGE_TEXT"] == "1" {
             return .accessibility5
         }
-        if isActive, ProcessInfo.processInfo.environment["MINITI_UI_TEST_SCENARIO"] == "readingMatrix",
+        if isActive, ["readingMatrix", "onboardingReadingMatrix"].contains(ProcessInfo.processInfo.environment["MINITI_UI_TEST_SCENARIO"] ?? ""),
            ProcessInfo.processInfo.environment["MINITI_UI_TEST_NORMAL_TEXT"] == "1" {
             return .large
         }
@@ -292,7 +292,7 @@ struct AccountUITestReady: ViewModifier {
                     Text("Test ready").font(.caption2).foregroundStyle(ColorPalette.Text.muted)
                         .accessibilityIdentifier("ui-test.ready")
                     #if MINITI_TEST_HOST
-                    if ProcessInfo.processInfo.environment["MINITI_UI_TEST_SCENARIO"] == "readingMatrix" {
+                    if ["readingMatrix", "onboardingReadingMatrix"].contains(ProcessInfo.processInfo.environment["MINITI_UI_TEST_SCENARIO"] ?? "") {
                         Text("Reading scale \(readingScale.rawValue), text \(readingCategory)")
                             .font(.caption2).foregroundStyle(ColorPalette.Text.muted)
                             .accessibilityIdentifier("ui-test.readingMetrics")

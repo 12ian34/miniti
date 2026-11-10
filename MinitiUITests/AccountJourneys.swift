@@ -36,7 +36,7 @@ final class AccountJourneys: XCTestCase {
         }
         if largeText {
             app.launchEnvironment["MINITI_UI_TEST_LARGE_TEXT"] = "1"
-        } else if scenario == "readingMatrix" {
+        } else if ["readingMatrix", "onboardingReadingMatrix"].contains(scenario) {
             app.launchEnvironment["MINITI_UI_TEST_NORMAL_TEXT"] = "1"
         }
         app.launchEnvironment["MINITI_UI_TEST_ID"] = testID
@@ -295,6 +295,7 @@ final class AccountJourneys: XCTestCase {
                            "Prove the requested scale reaches the actual scene")
             for section in ["transcript", "insights", "notes"] {
                 let button = app.buttons["meeting.section.\(section)"]
+                XCTAssertTrue(button.waitForExistence(timeout: 5))
                 XCTAssertTrue(button.isHittable)
                 XCTAssertGreaterThanOrEqual(button.frame.minX, app.frame.minX)
                 XCTAssertLessThanOrEqual(button.frame.maxX, app.frame.maxX + 0.5)
@@ -966,17 +967,54 @@ final class AccountJourneys: XCTestCase {
 
     func testOnboardingChoicesRemainUsableAtAccessibilityTextSize() {
         launch("onboarding", largeText: true)
+        assertOnboardingChoicesRemainUsable()
+    }
+
+    func testOnboardingChoicesAtNormalTextAcrossInterfaceScales() {
+        assertOnboardingChoicesAcrossInterfaceScales(largeText: false)
+    }
+
+    func testOnboardingChoicesAtLargestTextAcrossInterfaceScales() {
+        assertOnboardingChoicesAcrossInterfaceScales(largeText: true)
+    }
+
+    private func assertOnboardingChoicesAcrossInterfaceScales(largeText: Bool) {
+        executionTimeAllowance = 180
+        for scale in 0...2 {
+            if scale > 0 {
+                // Each previous case deliberately enrolled its synthetic account.
+                // Reuse the existing fixture cleanup before testing first launch again.
+                app.terminate()
+                app.launchArguments = ["-MinitiUITestCleanup"]
+                app.launch()
+                XCTAssertTrue(app.staticTexts["ui-test.ready"].waitForExistence(timeout: 10))
+            }
+            app?.terminate()
+            launch("onboardingReadingMatrix", largeText: largeText, interfaceScale: scale)
+            let probe = app.staticTexts["ui-test.readingMetrics"]
+            XCTAssertTrue(probe.waitForExistence(timeout: 5))
+            let category = largeText ? "largest" : "normal"
+            XCTAssertEqual(probe.label, "Reading scale \(scale), text \(category)")
+            captureAppScreen("Onboarding \(category) text, interface scale \(scale)")
+            assertOnboardingChoicesRemainUsable()
+        }
+    }
+
+    private func assertOnboardingChoicesRemainUsable() {
         let signIn = app.buttons["account.signIn"]
+        XCTAssertTrue(signIn.waitForExistence(timeout: 5))
         for _ in 0..<4 where !signIn.isHittable { app.swipeUp() }
         XCTAssertTrue(signIn.isHittable, app.debugDescription)
+        XCTAssertGreaterThanOrEqual(signIn.frame.height, 44)
         signIn.tap()
         XCTAssertTrue(app.textFields["Email"].waitForExistence(timeout: 5))
         app.buttons["Cancel"].firstMatch.tap()
         let continueButton = app.buttons["account.continueAnonymous"]
         for _ in 0..<3 where !continueButton.isHittable { app.swipeUp() }
         XCTAssertTrue(continueButton.isHittable, app.debugDescription)
+        XCTAssertGreaterThanOrEqual(continueButton.frame.height, 44)
         let evidence = XCTAttachment(screenshot: app.screenshot())
-        evidence.name = "First launch at accessibility text size"
+        evidence.name = "First launch choices after sign-in cancellation"
         evidence.lifetime = .keepAlways
         self.add(evidence)
         continueButton.tap()
