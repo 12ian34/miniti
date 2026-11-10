@@ -355,6 +355,27 @@ final class MeetingFolderTests: XCTestCase {
                      "Singular and plural count once, and a near tie stays unfiled")
     }
 
+    func testPreviewOverAThousandLongMeetingsStaysQuick() {
+        let state = AppState(); state.automaticFolderCreation = true
+        let folders = (0..<20).map { MeetingFolder(id: UUID(), name: "Client \($0)", description: "Account work for client \($0)") }
+        folders.forEach { XCTAssertTrue(state.meetingFolders.edit($0)) }
+        let product = FolderMatcher.Category.product.folder(owner: state.meetingFolders.owner, localOnly: false)
+        XCTAssertTrue(state.meetingFolders.edit(product))
+        let filler = String(repeating: "We talked through the plan, the numbers and next steps for the quarter. ", count: 60)
+        let meetings = (0..<1000).map { index -> Meeting in
+            let m = Meeting(title: index % 3 == 0 ? "Weekly sync \(index)" : "Roadmap review \(index)",
+                            startTime: Date().addingTimeInterval(TimeInterval(-index * 3600)), endTime: Date(),
+                            summaryText: filler + (index % 2 == 0 ? " product roadmap sprint spec" : ""))
+            m.calendarEventId = "series\(index % 40)_2026110\(index % 9)T100000Z"
+            return m
+        }
+        let start = CFAbsoluteTimeGetCurrent()
+        let proposals = state.folderProposals(meetings: meetings)
+        let elapsed = CFAbsoluteTimeGetCurrent() - start
+        print("FOLDER_PREVIEW_PERF: \(meetings.count) meetings, \(proposals.count) proposals, \(elapsed)s")
+        XCTAssertLessThan(elapsed, 5, "Preview over the 1,000-meeting bound must stay interactive")
+    }
+
     func testAutomaticFilingOnlyChangesNewMeetingUntilHistoryPreviewIsApplied() throws {
         let container = try TestSupport.makeInMemoryContainer()
         let state = AppState(); state.modelContext = container.mainContext

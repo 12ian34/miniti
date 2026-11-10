@@ -283,9 +283,15 @@ enum FolderMatcher {
         /// can never create a folder.
         static func matching(summary: String?) -> Self? {
             guard let summary, !summary.isEmpty else { return nil }
-            let normalized = " " + String(summary.prefix(4000)).lowercased().split { !$0.isLetter && !$0.isNumber }.joined(separator: " ") + " "
+            let tokens = String(summary.prefix(4000)).lowercased().split { !$0.isLetter && !$0.isNumber }.map(String.init)
+            let words = Set(tokens)
+            let normalized = " " + tokens.joined(separator: " ") + " "
+            // Single words are a set lookup; only the few multi-word phrases scan the text.
+            func present(_ phrase: String) -> Bool {
+                phrase.contains(" ") ? normalized.contains(" " + phrase + " ") : words.contains(phrase)
+            }
             let scores = allCases.map { category -> (Self, Int) in
-                let stems = Set(category.phrases.filter { normalized.contains(" " + $0 + " ") }.map { phrase in
+                let stems = Set(category.phrases.filter(present).map { phrase in
                     phrase.hasSuffix("s") && phrase.count > 3 ? String(phrase.dropLast()) : phrase
                 })
                 return (category, stems.count)
@@ -325,11 +331,13 @@ enum FolderMatcher {
             }
         }
         func resolve(title: String, summary: String?) -> Match {
+            guard !entries.isEmpty else { return .none }
             let evidence = FolderMatcher.words(title + " " + String((summary ?? "").prefix(4000)))
+            let titleWords = FolderMatcher.words(title)
             let scores = entries.compactMap { folder -> (UUID, Int)? in
                 if !folder.rule.isEmpty, title.range(of: folder.rule, options: [.caseInsensitive, .literal]) != nil { return (folder.id, 100) }
                 let shared = evidence.intersection(folder.words).count
-                let completeName = !folder.name.isEmpty && folder.name.isSubset(of: FolderMatcher.words(title))
+                let completeName = !folder.name.isEmpty && folder.name.isSubset(of: titleWords)
                 let score = shared >= 2 || completeName ? shared + (completeName ? 3 : 0) : 0
                 return score > 0 ? (folder.id, score) : nil
             }.sorted { $0.1 > $1.1 }
