@@ -1161,6 +1161,7 @@ final class AccountJourneys: XCTestCase {
             : app.buttons[recovery ? "Switch" : "Send link"]
         XCTAssertTrue(submit.waitForExistence(timeout: 5))
         XCTAssertFalse(submit.isEnabled)
+        if recovery { assertRecoveryReadingAndTyping(largeText: largeText) }
         captureAppScreen("\(name) \(largeText ? "largest" : "normal") scale 2")
         let cancel = app.buttons["Cancel"].firstMatch
         XCTAssertTrue(cancel.waitForExistence(timeout: 5))
@@ -1229,6 +1230,7 @@ final class AccountJourneys: XCTestCase {
         )).element
         XCTAssertTrue(submit.waitForExistence(timeout: 5))
         XCTAssertFalse(submit.isEnabled, "An empty credential field must not allow submission")
+        if recovery { assertRecoveryReadingAndTyping(largeText: largeText) }
         captureAppScreen("\(name) \(largeText ? "largest" : "normal") scale \(scale)")
         let cancel = app.buttons["Cancel"].firstMatch
         XCTAssertTrue(cancel.waitForExistence(timeout: 5))
@@ -1237,6 +1239,46 @@ final class AccountJourneys: XCTestCase {
         XCTAssertTrue(cancel.waitForNonExistence(timeout: 5))
         XCTAssertTrue(app.buttons["account.continueAnonymous"].waitForExistence(timeout: 5))
         app.terminate()
+    }
+
+    private func assertRecoveryReadingAndTyping(largeText: Bool) {
+        let heading = app.staticTexts["account.restore.heading"]
+        XCTAssertTrue(heading.waitForExistence(timeout: 5))
+        if largeText {
+            // The fixed 17pt heading previously stayed about 20pt tall.
+            XCTAssertGreaterThanOrEqual(heading.frame.height, 30.5)
+        }
+        captureAppScreen("Recovery sign-in reading before keyboard")
+        let field = app.textFields["account.restore.key"]
+        XCTAssertTrue(field.waitForExistence(timeout: 5))
+        let scroll = app.scrollViews["account.restore.scroll"]
+        for _ in 0..<16 {
+            if field.isHittable { break }
+            XCTAssertTrue(scroll.exists)
+            scroll.swipeUp(velocity: .slow)
+        }
+        XCTAssertTrue(field.isHittable)
+        XCTAssertGreaterThanOrEqual(field.frame.width, 280)
+        if largeText { XCTAssertGreaterThanOrEqual(field.frame.height, 40) }
+        field.tap()
+        let key = "M1-000G-40R4-0M30-E209-185G-R38E-1WET-S870"
+        field.typeText(key)
+        XCTAssertEqual(field.value as? String, key)
+        let keyboard = app.keyboards.firstMatch
+        XCTAssertTrue(keyboard.waitForExistence(timeout: 5))
+        let submit = app.buttons["account.restore.submit"]
+        let cancel = app.buttons["account.restore.cancel"]
+        XCTAssertTrue(submit.isEnabled)
+        for action in [cancel, submit] {
+            XCTAssertTrue(action.isHittable)
+            XCTAssertGreaterThanOrEqual(action.frame.width, 44 - 0.001)
+            XCTAssertGreaterThanOrEqual(action.frame.height, 44 - 0.001)
+            XCTAssertLessThanOrEqual(action.frame.maxY, keyboard.frame.minY)
+        }
+        XCTAssertFalse(cancel.frame.intersects(submit.frame))
+        let frames = XCTAttachment(string: "heading=\(heading.frame); field=\(field.frame); cancel=\(cancel.frame); submit=\(submit.frame); keyboard=\(keyboard.frame)")
+        frames.name = "Recovery sign-in typing frames"; frames.lifetime = .keepAlways; add(frames)
+        // The caller taps Cancel. No return/newline or submit action is sent.
     }
 
     func testLiveInvestigationInheritsInterfaceSize() {

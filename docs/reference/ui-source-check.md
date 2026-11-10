@@ -88,3 +88,5 @@ The selected corrections now have independent scoped review: aggregate/filler va
 Next work is the required platform matrix and candidate validation. Any new concrete rendering defect found there gets a bounded correction and its own regression evidence; an accepted small slice alone does not close UI1/UI2/UI3.
 
 UI3 consent reading (CP2) replaces the two 12pt secondary-font occurrences in TermsAcceptanceView with shared reading metrics. The baseline prune removes only that existing small-fixed-font entry; no raw-colour allowance or review cue is added.
+
+AL3 recovery sign-in reading prunes two small-fixed-font occurrences from ManagedAccountViews (one each at 11pt and 12pt). Heading and monospaced-field migration add no raw-colour allowance. Remaining fixed account/dialog text stays in the open reading inventory.

@@ -123,6 +123,8 @@ struct RestoreRecoveryKeySheet: View {
 
     @EnvironmentObject var appState: AppState
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.readingMetrics) private var readingMetrics
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @State private var input = ""
     @State private var isRestoring = false
     @State private var error: String?
@@ -146,19 +148,51 @@ struct RestoreRecoveryKeySheet: View {
         !isRestoring && ClientAuthCrypto.normalizeRecoveryKey(input) != nil
     }
 
+    private var stacksActions: Bool {
+        #if os(iOS)
+        dynamicTypeSize.isAccessibilitySize
+        #else
+        false
+        #endif
+    }
+
     var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
+        VStack(alignment: .leading, spacing: MinitiDesignSystem.Spacing.section) {
+            #if os(iOS)
+            ScrollView {
+                formContent.frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .accessibilityIdentifier("account.restore.scroll")
+            #else
+            formContent
+            #endif
+            actions
+        }
+        .padding(MinitiDesignSystem.Spacing.page)
+        #if os(macOS)
+        .frame(width: 460)
+        #else
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        #endif
+    }
+
+    private var formContent: some View {
+        VStack(alignment: .leading, spacing: MinitiDesignSystem.Spacing.section) {
             Text(title)
-                .font(.system(size: 17, weight: .semibold))
+                .accessibilityIdentifier("account.restore.heading")
+                .font(.system(size: readingMetrics.dialogHeadingSize, weight: .semibold))
                 .foregroundStyle(ColorPalette.Text.primary)
+                .fixedSize(horizontal: false, vertical: true)
 
             Text(explanation)
-                .font(.system(size: 12))
+                .accessibilityIdentifier("account.restore.explanation")
+                .font(.system(size: readingMetrics.dialogBodySize))
                 .foregroundStyle(ColorPalette.Text.muted)
                 .fixedSize(horizontal: false, vertical: true)
 
             TextField("M1-XXXX-XXXX-XXXX-XXXX-XXXX-XXXX-XXXX-XXXX", text: $input)
-                .font(.system(size: 13, design: .monospaced))
+                .accessibilityIdentifier("account.restore.key")
+                .font(.system(size: readingMetrics.transcriptBodySize, design: .monospaced))
                 .textFieldStyle(.roundedBorder)
                 #if os(iOS)
                 .textInputAutocapitalization(.characters)
@@ -168,23 +202,40 @@ struct RestoreRecoveryKeySheet: View {
 
             if let error {
                 Text(error)
-                    .font(.system(size: 11))
+                    .font(.system(size: readingMetrics.dialogBodySize))
                     .foregroundStyle(ColorPalette.Status.error)
                     .fixedSize(horizontal: false, vertical: true)
             }
-
-            HStack {
-                Button("Cancel") { dismiss() }
-                    .keyboardShortcut(.cancelAction)
-                Spacer()
-                Button(isRestoring ? (mode == .move ? "Switching…" : "Signing in…") : (mode == .move ? "Switch" : "Sign in")) { restore() }
-                    .keyboardShortcut(.defaultAction)
-                    .disabled(!canRestore)
-            }
         }
-        .padding(24)
-        #if os(macOS)
-        .frame(width: 460)
+    }
+
+    private var actions: some View {
+        let layout = stacksActions
+            ? AnyLayout(VStackLayout(alignment: .leading, spacing: MinitiDesignSystem.Spacing.control))
+            : AnyLayout(HStackLayout())
+        return layout {
+            Button { dismiss() } label: { actionLabel("Cancel") }
+                .accessibilityIdentifier("account.restore.cancel")
+                .keyboardShortcut(.cancelAction)
+            if !stacksActions { Spacer() }
+            Button { restore() } label: {
+                actionLabel(isRestoring ? (mode == .move ? "Switching…" : "Signing in…") : (mode == .move ? "Switch" : "Sign in"))
+            }
+            .accessibilityIdentifier("account.restore.submit")
+            .keyboardShortcut(.defaultAction)
+            .disabled(!canRestore)
+        }
+    }
+
+    @ViewBuilder
+    private func actionLabel(_ title: String) -> some View {
+        #if os(iOS)
+        Text(title)
+            .multilineTextAlignment(.leading)
+            .fixedSize(horizontal: false, vertical: true)
+            .minitiMinimumControlTarget()
+        #else
+        Text(title)
         #endif
     }
 

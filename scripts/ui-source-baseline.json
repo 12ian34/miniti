@@ -745,13 +745,13 @@
       "path": "Miniti/Views/ManagedAccountViews.swift",
       "rule": "small-fixed-font",
       "signature": "system ( size : 11 )",
-      "count": 2
+      "count": 1
     },
     {
       "path": "Miniti/Views/ManagedAccountViews.swift",
       "rule": "small-fixed-font",
       "signature": "system ( size : 12 )",
-      "count": 7
+      "count": 6
     },
     {
       "path": "Miniti/Views/MeetingView.swift",
