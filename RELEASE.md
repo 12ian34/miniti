@@ -1,6 +1,6 @@
 # Release Process
 
-Released on Mac, 2026-11-10: 3.9.0 build 165 is public through the verified DMG and Sparkle feed; iOS 3.9.0 is in App Review. iOS build 164 is available in internal TestFlight and submitted as WAITING_FOR_REVIEW with automatic release after approval; 3.7.0 remains the App Store version. Full Mac/iOS suites, all 31 iPhone journeys, remote Apple CI and signed-package checks pass. Ian completed app QA and App Privacy. The backend, Linux 0.7.2, website and public docs are deployed. Unitemised specialist device checks remain evidence limitations, not claimed passes.
+Released on Mac, 2026-11-10: 3.9.0 build 165 is public through the verified DMG and Sparkle feed. iOS 3.9.0 build 165 is submitted for App Review with automatic release; iOS 3.8.0 build 164 is the current App Store version (confirmed 2026-11-10). Full Mac/iOS hosted suites, backend suites and signed-package checks pass; the backend, website, public docs and Linux tracking are deployed. Owner device checks of the new Home, History, sidebar and setup changes remain open. See the [3.9.0 checklist](docs/releases/3.9.0.md).
 
 Authoritative 10-step runbook for shipping Miniti. For repo context, start with [AGENTS.md](AGENTS.md). For distribution detail, see [docs/reference/distribution.md](docs/reference/distribution.md). For per-lane detail, see [fastlane/RUNBOOK.md](fastlane/RUNBOOK.md).
 

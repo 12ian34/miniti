@@ -4,7 +4,7 @@
 
 Ian selected this addition on 2026-11-04 after an older-install upgrade showed simultaneous, differently sized email and calendar panels and an unresponsive Add email action.
 
-Status, 2026-11-09: Mac 3.8.0 build 164 was released on 2026-11-09; iOS build 164 is waiting for App Review. Final automated validation and signed-package verification pass. Specialist physical evidence remains unitemised; publication does not turn it into a pass. The [release record](../releases/3.8.0.md) owns delivery and evidence.
+Status, 2026-11-09: Mac 3.8.0 build 164 was released on 2026-11-09; iOS build 164 was confirmed live on the App Store on 2026-11-10. Final automated validation and signed-package verification pass. Specialist physical evidence remains unitemised; publication does not turn it into a pass. The [release record](../releases/3.8.0.md) owns delivery and evidence.
 
 ## Evidence and chosen experience
 
@@ -199,7 +199,7 @@ Ian selected an optional organise-your-meetings setup task and a focused folder 
 
 The optional setup task starts unreviewed, even when automatic filing is already enabled. Opening or hiding it does not complete it. Confirm folder choices marks it reviewed without changing settings or filing history; review persistence lives in HomeSetupState. The task has the same hide/General restore controls and help popover as the other tasks. Home loads at most 1,000 finished meetings, only when Preview is requested. It does not observe or fetch the whole history for the checklist. The existing History entry point uses its supplied meetings.
 
-Current delivery: these changes are included in Mac 3.8.0 build 164, released on 2026-11-09, and iOS build 164, waiting for App Review. Full hosted suites, all 31 iPhone UI journeys and signed-package verification pass. The [release record](../releases/3.8.0.md) retains specialist physical evidence limitations.
+Current delivery: these changes are included in Mac 3.8.0 build 164, released on 2026-11-09, and iOS build 164, live on the App Store since its 2026-11-10 confirmation. Full hosted suites, all 31 iPhone UI journeys and signed-package verification pass. The [release record](../releases/3.8.0.md) retains specialist physical evidence limitations.
 
 
 ## Bottom recording controls and Mac calendar sidebar, 2026-11-09

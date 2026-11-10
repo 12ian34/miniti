@@ -1,8 +1,8 @@
 # Feature reference
 
-Reconciled 2026-11-10. Mac and iOS 3.8.0 build 164 are public; 3.9.0 is the unreleased candidate. The [3.8.0 release checklist](../releases/3.8.0.md) owns validation and delivery evidence. Specialist physical evidence remains unitemised.
+Reconciled 2026-11-10. Mac 3.9.0 build 165 is public; iOS 3.9.0 is in App Review and iOS 3.8.0 build 164 is the current App Store version. The [3.8.0 release checklist](../releases/3.8.0.md) owns validation and delivery evidence. Specialist physical evidence remains unitemised.
 
-### 3.9.0 additions, unreleased
+### 3.9.0 additions, Mac released and iOS in review
 
 - Mac History is its own page like Home and Coaching: search, folder chips with counts, date groups, a dismissible organise prompt that opens the preview, back to history from a meeting, and J/K that follow the page. The expanded sidebar is draggable between 200 and 400 points. See [UI states](ui-states.md).
 - Automatic folders learn from calendar series and hand moves, can use strong summary evidence for folders that already exist, and recognise more meeting types. See [meeting history and import](meeting-history-and-import.md).

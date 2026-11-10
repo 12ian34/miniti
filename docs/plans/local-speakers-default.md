@@ -1,6 +1,6 @@
 # Mac local speaker reliability and device diagnostics, 3.7.0
 
-Status, 2026-11-09: Mac 3.8.0 build 164 was released on 2026-11-09; iOS build 164 is waiting for App Review. Final automated validation and signed-package verification pass. Specialist physical evidence remains unitemised; publication does not turn it into a pass. Mac mid-session provider speaker restoration is included; existing iOS/Watch and local-only speaker behavior is unchanged. The [3.8.0 record](../releases/3.8.0.md) owns delivery and evidence, and the [roadmap](../roadmap.md) owns priority. Local separation stays off by default; Your voice stays opt-in. Default-on still awaits M1 testing with no version assigned. The dated 3.7.0 evidence below remains historical.
+Status, 2026-11-09: Mac 3.8.0 build 164 was released on 2026-11-09; iOS build 164 was confirmed live on the App Store on 2026-11-10. Final automated validation and signed-package verification pass. Specialist physical evidence remains unitemised; publication does not turn it into a pass. Mac mid-session provider speaker restoration is included; existing iOS/Watch and local-only speaker behavior is unchanged. The [3.8.0 record](../releases/3.8.0.md) owns delivery and evidence, and the [roadmap](../roadmap.md) owns priority. Local separation stays off by default; Your voice stays opt-in. Default-on still awaits M1 testing with no version assigned. The dated 3.7.0 evidence below remains historical.
 
 ## Selected behavior
 

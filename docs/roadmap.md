@@ -1,6 +1,6 @@
 # Roadmap
 
-Released on Mac, 2026-11-09: 3.8.0 build 164 is public through the verified DMG and Sparkle feed. iOS build 164 is available in internal TestFlight and submitted as WAITING_FOR_REVIEW with automatic release after approval; 3.7.0 remains the App Store version. Full Mac/iOS suites, all 31 iPhone journeys, remote Apple CI and signed-package checks pass. Ian completed app QA and App Privacy. The backend, Linux 0.7.2, website and public docs are deployed. Unitemised specialist device checks remain evidence limitations, not claimed passes.
+Released on Mac, 2026-11-10: 3.9.0 build 165 is public through the verified DMG and Sparkle feed. iOS 3.9.0 build 165 is submitted for App Review with automatic release; iOS 3.8.0 build 164 is the current App Store version (confirmed 2026-11-10). Full Mac/iOS hosted suites, backend suites and signed-package checks pass; the backend, website, public docs and Linux tracking are deployed. Owner device checks of the new Home, History, sidebar and setup changes remain open. See the [3.9.0 checklist](releases/3.9.0.md).
 
 The single priority index for miniti Apple apps and shared `miniti-api` work. Reconciled through frozen build 164. The [release checklist](releases/3.8.0.md) owns exact artifact availability, publication and remaining evidence. Each linked plan owns scope; this file owns ordering. Linux keeps its independent release line.
 
@@ -59,7 +59,7 @@ Local speakers remain off by default; Your voice remains opt-in. Default-on stil
 
 ### 3.8.0 delivery
 
-Released on Mac, 2026-11-09: 3.8.0 build 164 is public through the verified DMG and Sparkle feed. iOS build 164 is available in internal TestFlight and submitted as WAITING_FOR_REVIEW with automatic release after approval; 3.7.0 remains the App Store version. Full Mac/iOS suites, all 31 iPhone journeys, remote Apple CI and signed-package checks pass. Ian completed app QA and App Privacy. The backend, Linux 0.7.2, website and public docs are deployed. Unitemised specialist device checks remain evidence limitations, not claimed passes. The [release checklist](releases/3.8.0.md) owns exact rollout evidence.
+Released on Mac, 2026-11-10: 3.9.0 build 165 is public through the verified DMG and Sparkle feed. iOS 3.9.0 build 165 is submitted for App Review with automatic release; iOS 3.8.0 build 164 is the current App Store version (confirmed 2026-11-10). Full Mac/iOS hosted suites, backend suites and signed-package checks pass; the backend, website, public docs and Linux tracking are deployed. Owner device checks of the new Home, History, sidebar and setup changes remain open. See the [3.9.0 checklist](releases/3.9.0.md).
 
 The [release-planning audit](releases/3.8.0-planning-audit.md) records the source-backed regression, compatibility, UX/design, performance and security requirements, plus exact docs/website/changelog/screenshot owners. Apply the [planning workflow](runbooks/release-planning.md) again after material scope changes and at implementation completion. Automated checks, bounded synthetic measurements and iPhone rendered evidence are recorded; physical comparisons, the remaining device matrix and publication gates stay explicit.
 
@@ -84,7 +84,7 @@ Independent review, 2026-11-09: confirmed blanket old-client transition gating b
 
 Execution order: UI1–UI3 establish shared presentation; AO0 ownership design/inventory can proceed independently. B0–B3 establish canonical identity, subscriptions, usage and lifecycle. B4 and B5 follow those prerequisites and integrate into the same transfer flow; neither is deferred from 3.9.0. Their architecture-stage and roadmap identifiers remain unchanged. Registration/registry, transcript checkpoints, broad performance work, video and runtime/Redis upgrades remain later work.
 
-3.6.0 delivered order 1. 3.7.0 delivered orders 1a/1b. 3.8.0 contains orders 1c/1d, 2 and 3 through 3c, released on Mac and pending App Review on iOS. 3.9.0 selects orders 3d and 4–6. Ordering and release assignment do not authorize deployment or establish runtime readiness.
+3.6.0 delivered order 1. 3.7.0 delivered orders 1a/1b. 3.8.0 delivered orders 1c/1d, 2 and 3 through 3c on Mac and iOS. 3.9.0 delivered order 3d plus Charlie's 3.8.0 feedback on Mac (iOS in App Review); orders 4–6 moved to 3.10.0. Ordering and release assignment do not authorize deployment or establish runtime readiness.
 
 | Order | Plan | Why here / dependency | State |
 |---|---|---|---|
@@ -98,7 +98,7 @@ Execution order: UI1–UI3 establish shared presentation; AO0 ownership design/i
 | 3a, 3.8.0 | [Browser detection and association](plans/browser-call-detection.md) | Repair start evidence and manual-session ownership before broader automation. | Implemented locally; synthetic regressions pass, physical matrix pending |
 | 3b, 3.8.0 | [Folders and completion](plans/folders-and-meeting-completion.md) | Add bounded organisation and completion through existing persistence owners. | Implemented locally; folder UI regressions have passing build-162 iPhone evidence. Physical and mixed-version sync QA remain in the release record |
 | 3c, 3.8.0 | [Home setup guide](plans/home-setup-guide.md) | Stage optional setup after explicit account access without changing existing choices. | Implemented locally; automated suites pass, signed upgrade remains manual |
-| 3d, 3.9.0 | [UI consistency and accessibility](plans/ui-consistency-and-accessibility.md) | Fix text scaling, touch targets, contrast, Mac appearance and live/saved insight parity through shared primitives before the next ownership UI changes. Reuse the isolated UI harness; broader consolidation follows its feature owner. | Selected for 3.9.0, 2026-11-09; not implemented |
+| 3d, 3.9.0 | [UI consistency and accessibility](plans/ui-consistency-and-accessibility.md) | Fix text scaling, touch targets, contrast, Mac appearance and live/saved insight parity through shared primitives before the next ownership UI changes. Reuse the isolated UI harness; broader consolidation follows its feature owner. | Delivered in 3.9.0 (Mac live 2026-11-10, iOS in App Review); whole-package device acceptance recorded as open in the checklist |
 | 4, 3.10.0 | [Account ownership](plans/account-ownership.md) | B0–B3 make device changes stop moving/removing Pro and consumed usage. Requires access protection, real-storage tests, policy decisions and rehearsed migration/correction tools. | Moved to 3.10.0 on 2026-11-10; migration design/policy gates remain |
 | 5, 3.10.0 | [Meeting ownership across accounts](plans/meeting-ownership.md) | B4 adds provenance and deliberate copies after lifecycle is stable. Client compatibility must precede server refusal enforcement. | Moved to 3.10.0 on 2026-11-10; integrate with B3/B5 transfer flow |
 | 6, 3.10.0 | [Integration ownership](plans/integration-ownership.md) | B5 keeps Google/Attio/Twenty connections with the account across device changes. Depends on B0–B3, not B4. Preserve device choices; include T16 OAuth and partial-send/retry regressions. | Moved to 3.10.0 on 2026-11-10 alongside B0–B4; implementation pending |
@@ -180,9 +180,9 @@ The website is a customer-facing projection of this index. Keep `../minitidotapp
 
 | Public section | Source and order | Customer-facing scope |
 |---|---|---|
-| Latest release | Mac 3.8.0 released; iOS 3.7.0 remains available | Folders, optional setup, completion in place, recording and account recovery on Mac. Keep iOS 3.8.0 pending App Review distinct from availability. |
-| Next | Pending iOS 3.8.0 availability; UI/device work selected for 3.9.0; ownership also Next but publicly unversioned pending split decision | Consistent controls/readability; stable Pro and usage ownership; deliberate meeting copies; account-owned calendar/CRM connections; clear device and account-switching behavior. No ownership version/date or accessibility certification claim. |
-| Later | Core orders 8 and 9, then later product item 1; registry work remains internal order 7 | Interrupted-recording protection, History/long-session performance and bot-free Mac video. These remain outside the selected UI/ownership scope regardless of the split outcome. |
+| Latest release | Mac 3.9.0 released; iOS 3.9.0 in App Review, iOS 3.8.0 available | History page and resizable sidebar, folders that learn, consistent controls and readability, Home stats and simpler setup on Mac. Keep iOS 3.9.0 pending App Review distinct from availability. |
+| Next | Ownership orders 4–6, selected for 3.10.0 but publicly unversioned | Stable Pro and usage ownership; deliberate meeting copies; account-owned calendar/CRM connections; clear device and account-switching behavior. No ownership version/date or accessibility certification claim. |
+| Later | Core orders 8 and 9, then later product item 1; registry work remains internal order 7 | Interrupted-recording protection, History/long-session performance and bot-free Mac video. These remain outside the selected ownership scope. |
 | Exploring | Later product items 2–10, in order | Retain every public idea with its exploratory status and no release dates. |
 | Recently shipped | Release evidence and changelog | The full shipped-feature showcase, with per-platform availability and a link to the full changelog. Preserve the feature list and per-feature emojis. Show changelog-backed first-ship dates, noting later additions/platform launches separately. |
 

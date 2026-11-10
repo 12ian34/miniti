@@ -2,7 +2,7 @@
 
 3.9.0 follow-through (Charlie's feedback that only 4 of 13 meetings were filed, 2026-11-10): series learning from calendar series and hand moves, summary evidence into existing broad folders only, wider but reviewed keyword lists, and a Mac History page with folder chips and a dismissible organise prompt. Current rules live in [meeting history and import](../reference/meeting-history-and-import.md).
 
-Status, 2026-11-09: Mac 3.8.0 build 164 was released on 2026-11-09; iOS build 164 is waiting for App Review. Final automated validation and signed-package verification pass. Specialist physical evidence remains unitemised; publication does not turn it into a pass. FO1/MC1 are included. See the implementation contract below and the [release record](../releases/3.8.0.md).
+Status, 2026-11-09: Mac 3.8.0 build 164 was released on 2026-11-09; iOS build 164 was confirmed live on the App Store on 2026-11-10. Final automated validation and signed-package verification pass. Specialist physical evidence remains unitemised; publication does not turn it into a pass. FO1/MC1 are included. See the implementation contract below and the [release record](../releases/3.8.0.md).
 
 ## Original scope and acceptance
 
@@ -99,7 +99,7 @@ Ian selected an optional organise-your-meetings setup task and a focused folder 
 
 The optional setup task starts unreviewed, even when automatic filing is already enabled. Opening or hiding it does not complete it. Confirm folder choices marks it reviewed without changing settings or filing history; review persistence lives in HomeSetupState. The task has the same hide/General restore controls and help popover as the other tasks. Home loads at most 1,000 finished meetings, only when Preview is requested. It does not observe or fetch the whole history for the checklist. The existing History entry point uses its supplied meetings.
 
-Current delivery: these changes are included in Mac 3.8.0 build 164, released on 2026-11-09, and iOS build 164, waiting for App Review. Full hosted suites, all 31 iPhone UI journeys and signed-package verification pass. The [release record](../releases/3.8.0.md) retains specialist physical evidence limitations.
+Current delivery: these changes are included in Mac 3.8.0 build 164, released on 2026-11-09, and iOS build 164, live on the App Store since its 2026-11-10 confirmation. Full hosted suites, all 31 iPhone UI journeys and signed-package verification pass. The [release record](../releases/3.8.0.md) retains specialist physical evidence limitations.
 
 
 ### Mac folder presentation refinement, 2026-11-09

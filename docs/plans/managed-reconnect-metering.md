@@ -2,7 +2,7 @@
 
 Local implementation update (2026-11-04): the selected 3.8.0 changes are present in the working tree. The [release evidence](../releases/3.8.0-evidence.md#local-implementation-evidence) owns commands, results and remaining manual/runner gates. This does not change the released 3.7.0 baseline or authorize publication.
 
-Status, 2026-11-09: Mac 3.8.0 build 164 was released on 2026-11-09; iOS build 164 is waiting for App Review. Final automated validation and signed-package verification pass. Specialist physical evidence remains unitemised; publication does not turn it into a pass. The compatible backend is deployed. The [roadmap](../roadmap.md#next-release-after-370) owns priority; the [release checklist](../releases/3.8.0.md) owns delivery and evidence. This plan owns the usage defect found during 3.7.0 QA.
+Status, 2026-11-09: Mac 3.8.0 build 164 was released on 2026-11-09; iOS build 164 was confirmed live on the App Store on 2026-11-10. Final automated validation and signed-package verification pass. Specialist physical evidence remains unitemised; publication does not turn it into a pass. The compatible backend is deployed. The [roadmap](../roadmap.md#next-release-after-370) owns priority; the [release checklist](../releases/3.8.0.md) owns delivery and evidence. This plan owns the usage defect found during 3.7.0 QA.
 
 ## Problem and evidence
 
