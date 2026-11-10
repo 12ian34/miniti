@@ -29,6 +29,7 @@
 - improvement: (macOS and iOS) clearer plan status text
 - improvement: (macOS) clearer Coaching details, API setup labels and notes hints
 - improvement: (macOS) clearer recording and ending text in the menu bar
+- fix: (macOS and iOS) billing updates with differently formatted dates no longer reset used minutes
 - fix: (macOS and iOS) switching accounts accepts a shared subscription and blocks different subscriptions from the same payment provider
 - fix: (macOS) selected transcript text stays selected when you change the interface text size
 - fix: (macOS and iOS) custom date filters keep both the start and end dates
