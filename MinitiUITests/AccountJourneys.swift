@@ -214,11 +214,11 @@ final class AccountJourneys: XCTestCase {
         #endif
     }
 
-    private func captureAppScreen(_ name: String) {
+    private func captureAppScreen(_ name: String, fullScreen: Bool = false) {
         #if os(macOS)
         let capture = XCTAttachment(screenshot: app.windows["Miniti"].screenshot())
         #else
-        let capture = XCTAttachment(screenshot: app.screenshot())
+        let capture = XCTAttachment(screenshot: fullScreen ? XCUIScreen.main.screenshot() : app.screenshot())
         #endif
         capture.name = name
         capture.lifetime = .keepAlways; add(capture)
@@ -2292,6 +2292,60 @@ final class AccountJourneys: XCTestCase {
         XCTAssertTrue(app.buttons["stop"].exists, "Association must keep the current recording running")
     }
 
+    func testLandscapeOnboardingChoicesAtTextExtremes() {
+        executionTimeAllowance = 180
+        defer { XCUIDevice.shared.orientation = .portrait }
+        for (scale, largest) in [(0, false), (2, true)] {
+            if app != nil { resetAccountMatrixFixture() }
+            app?.terminate()
+            XCUIDevice.shared.orientation = .landscapeLeft
+            launch("onboardingReadingMatrix", largeText: largest, interfaceScale: scale)
+            assertLandscapeViewport()
+            let probe = app.staticTexts["ui-test.readingMetrics"]
+            XCTAssertTrue(probe.waitForExistence(timeout: 5))
+            XCTAssertEqual(probe.label, "Reading scale \(scale), text \(largest ? "largest" : "normal")")
+            assertOnboardingChoicesRemainUsable(requiresFullBounds: true)
+        }
+    }
+
+    func testLandscapeFirstConsentAtTextExtremes() {
+        assertLandscapeConsent(first: true)
+    }
+
+    func testLandscapeConsentSheetAtTextExtremes() {
+        assertLandscapeConsent(first: false)
+    }
+
+    private func assertLandscapeViewport() {
+        let landscape = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+            self.app.frame.width > self.app.frame.height
+        }, object: nil)
+        XCTAssertEqual(XCTWaiter.wait(for: [landscape], timeout: 5), .completed)
+    }
+
+    private func assertLandscapeConsent(first: Bool) {
+        executionTimeAllowance = 240
+        defer { XCUIDevice.shared.orientation = .portrait }
+        for (scale, largest) in [(0, false), (2, true)] {
+            app?.terminate()
+            XCUIDevice.shared.orientation = .landscapeLeft
+            launch(first ? "setupUpgrade" : "consentSheet", largeText: largest, interfaceScale: scale)
+            assertLandscapeViewport()
+            let scope = app.buttons["ui-test.readingScope.consent.\(first ? "first" : "sheet")"]
+            XCTAssertTrue(scope.waitForExistence(timeout: 5))
+            XCTAssertEqual(scope.label, "scale \(scale); reading \(largest ? "largest" : "normal"); controls \(largest ? "accessibility5" : "large")")
+            scope.tap(); XCTAssertTrue(scope.waitForNonExistence(timeout: 5))
+            if first {
+                app.buttons["ui-test.hideStatus"].tap()
+                XCTAssertTrue(app.staticTexts["ui-test.ready"].waitForNonExistence(timeout: 5))
+            }
+            for id in ["consent.allow", "consent.decline"] {
+                XCTAssertTrue(app.frame.contains(app.buttons[id].frame))
+            }
+            assertConsentSheetActions("Landscape \(first ? "first" : "sheet") consent, scale \(scale)", requiresScroll: largest, fullScreen: true)
+        }
+    }
+
     func testOnboardingChoicesRemainUsableAtAccessibilityTextSize() {
         launch("onboarding", largeText: true)
         assertOnboardingChoicesRemainUsable()
@@ -2320,12 +2374,29 @@ final class AccountJourneys: XCTestCase {
         }
     }
 
-    private func assertOnboardingChoicesRemainUsable() {
+    private func revealLandscapeChoice(_ button: XCUIElement) {
+        // Full-height swipes can overshoot a target in this short viewport.
+        var trace: [String] = []
+        for _ in 0..<12 {
+            trace.append("Viewport: \(app.frame), target: \(button.frame), hittable: \(button.isHittable)")
+            if app.frame.contains(button.frame) && button.isHittable { break }
+            let start = app.coordinate(withNormalizedOffset: CGVector(dx: 0.8, dy: 0.5))
+            let dy: CGFloat = button.frame.midY < app.frame.midY ? 80 : -80
+            start.press(forDuration: 0.05, thenDragTo: start.withOffset(CGVector(dx: 0, dy: dy)), withVelocity: .slow, thenHoldForDuration: 0)
+        }
+        let frames = XCTAttachment(string: trace.joined(separator: "\n"))
+        frames.name = "Landscape onboarding target \(button.identifier)"; frames.lifetime = .keepAlways; add(frames)
+        XCTAssertTrue(button.isHittable)
+        XCTAssertTrue(app.frame.contains(button.frame), "Viewport: \(app.frame), target: \(button.frame)")
+    }
+
+    private func assertOnboardingChoicesRemainUsable(requiresFullBounds: Bool = false) {
         let signIn = app.buttons["account.signIn"]
         XCTAssertTrue(signIn.waitForExistence(timeout: 5))
         for _ in 0..<4 where !signIn.isHittable { app.swipeUp() }
         XCTAssertTrue(signIn.isHittable, app.debugDescription)
         XCTAssertGreaterThanOrEqual(signIn.frame.height, 44)
+        if requiresFullBounds { revealLandscapeChoice(signIn) }
         signIn.tap()
         XCTAssertTrue(app.textFields["Email"].waitForExistence(timeout: 5))
         app.buttons["Cancel"].firstMatch.tap()
@@ -2333,7 +2404,8 @@ final class AccountJourneys: XCTestCase {
         for _ in 0..<3 where !continueButton.isHittable { app.swipeUp() }
         XCTAssertTrue(continueButton.isHittable, app.debugDescription)
         XCTAssertGreaterThanOrEqual(continueButton.frame.height, 44)
-        let evidence = XCTAttachment(screenshot: app.screenshot())
+        if requiresFullBounds { revealLandscapeChoice(continueButton) }
+        let evidence = XCTAttachment(screenshot: requiresFullBounds ? XCUIScreen.main.screenshot() : app.screenshot())
         evidence.name = "First launch choices after sign-in cancellation"
         evidence.lifetime = .keepAlways
         self.add(evidence)
@@ -3160,12 +3232,12 @@ final class AccountJourneys: XCTestCase {
         }
     }
 
-    private func assertConsentSheetActions(_ name: String = "Consent sheet action bounds", requiresScroll: Bool = false, returnButton: String = "Settings") {
+    private func assertConsentSheetActions(_ name: String = "Consent sheet action bounds", requiresScroll: Bool = false, returnButton: String = "Settings", fullScreen: Bool = false) {
         let allow = app.buttons["consent.allow"]
         let cancel = app.buttons["consent.decline"]
         XCTAssertTrue(allow.waitForExistence(timeout: 5))
         XCTAssertTrue(cancel.exists)
-        captureAppScreen(name)
+        captureAppScreen(name, fullScreen: fullScreen)
         let frames = XCTAttachment(string: "Allow: \(allow.frame)\nCancel: \(cancel.frame)")
         frames.name = name + " frames"; frames.lifetime = .keepAlways; add(frames)
         for button in [allow, cancel] {
@@ -3188,7 +3260,7 @@ final class AccountJourneys: XCTestCase {
         XCTAssertTrue(allow.isHittable)
         XCTAssertTrue(cancel.isHittable)
         XCTAssertEqual(allow.frame.minY, initialAllowY, accuracy: 0.5)
-        captureAppScreen(name + " disclosure end")
+        captureAppScreen(name + " disclosure end", fullScreen: fullScreen)
         cancel.tap()
         XCTAssertTrue(cancel.waitForNonExistence(timeout: 5))
         XCTAssertTrue(app.buttons[returnButton].waitForExistence(timeout: 5))
