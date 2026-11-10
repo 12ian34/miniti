@@ -2185,7 +2185,7 @@ struct LiveTemplateSections: View {
     }
 }
 
-private struct LiveInsightsEmptyState: View {
+struct LiveInsightsEmptyState: View {
     @EnvironmentObject var appState: AppState
 
     private var mode: InsightsMode { appState.insightsMode }
@@ -2203,15 +2203,15 @@ private struct LiveInsightsEmptyState: View {
             } else if appState.isRecording {
                 Text(waitingTitle)
                     .font(.system(size: 11, weight: .medium, design: .default))
-                    .foregroundStyle(Color(hex: "484F58"))
+                    .foregroundStyle(ColorPalette.Text.dim)
                 Text(waitingSubtitle)
                     .font(.system(size: 10, weight: .regular, design: .default))
-                    .foregroundStyle(Color(hex: "3F3F46"))
+                    .foregroundStyle(ColorPalette.Text.dim)
                     .multilineTextAlignment(.center)
             } else {
                 Text("start recording")
                     .font(.system(size: 11, weight: .medium, design: .default))
-                    .foregroundStyle(Color(hex: "484F58"))
+                    .foregroundStyle(ColorPalette.Text.dim)
             }
         }
         .frame(maxWidth: .infinity)

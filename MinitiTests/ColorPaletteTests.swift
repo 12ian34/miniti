@@ -372,6 +372,73 @@ final class ColorPaletteTests: XCTestCase {
     }
 
     @MainActor
+    func testCoachingEmptyGuidanceHasReadableTitleAndExplanation() throws {
+        try assertReadableWaitingGuidance(AnyView(TrainingEmptyState()), name: "Coaching")
+    }
+
+    #if os(macOS)
+    @MainActor
+    func testLiveInsightEmptyGuidanceHasReadableTitleAndExplanation() throws {
+        let state = AppState()
+        state.appMode = .managed
+        state.isRecording = true // Presentation only, no recording method is called.
+        defer { state.isRecording = false }
+        for mode: InsightsMode in [.standard, .meddpicc, .template] {
+            state.insightsMode = mode
+            try assertReadableWaitingGuidance(
+                AnyView(LiveInsightsEmptyState().environmentObject(state)), name: mode.rawValue)
+        }
+        state.isRecording = false
+        let renderer = ImageRenderer(content: LiveInsightsEmptyState()
+            .environmentObject(state).frame(width: 420).background(ColorPalette.Background.primary))
+        renderer.scale = 2
+        XCTAssertGreaterThan(try pixelCount(ColorPalette.Text.dim, in: XCTUnwrap(renderer.cgImage)), 10,
+                             "start recording")
+    }
+    #endif
+
+    @MainActor
+    func testNoInsightsGuidanceUsesReadableTextWithAndWithoutTranscript() throws {
+        let state = AppState()
+        state.appMode = .managed
+        for hasTranscript in [false, true] {
+            state.liveSegments = hasTranscript
+                ? [.init(id: UUID(), text: "Synthetic transcript.", speaker: 0, timestamp: 0, isFinal: true)] : []
+            let renderer = ImageRenderer(content: TerminalNoInsightsView()
+                .environmentObject(state).frame(width: 420, height: 300)
+                .background(ColorPalette.Background.primary))
+            renderer.scale = 2
+            // Other text is meta/blue; only the instruction uses the dim role.
+            XCTAssertGreaterThan(try pixelCount(ColorPalette.Text.dim, in: XCTUnwrap(renderer.cgImage)), 10,
+                                 "has transcript: \(hasTranscript)")
+        }
+    }
+
+    @MainActor
+    private func assertReadableWaitingGuidance(_ view: AnyView, name: String) throws {
+        let renderer = ImageRenderer(content: view.frame(width: 420)
+            .background(ColorPalette.Background.primary))
+        renderer.scale = 2
+        let raster = try XCTUnwrap(renderer.cgImage)
+        #if os(macOS)
+        let attachment = XCTAttachment(image: NSImage(cgImage: raster, size: .zero))
+        #else
+        let attachment = XCTAttachment(image: UIImage(cgImage: raster))
+        #endif
+        attachment.name = "Waiting guidance: \(name)"
+        attachment.lifetime = .keepAlways
+        add(attachment)
+        // These production states end in a two-line 10pt explanation. Separate
+        // crops prevent the 11pt title from masking an explanation regression.
+        let explanation = try XCTUnwrap(raster.cropping(to: CGRect(
+            x: 0, y: raster.height - 56, width: raster.width, height: 56)))
+        let title = try XCTUnwrap(raster.cropping(to: CGRect(
+            x: 0, y: raster.height - 110, width: raster.width, height: 50)))
+        XCTAssertGreaterThan(try pixelCount(ColorPalette.Text.dim, in: title), 10, "\(name) title")
+        XCTAssertGreaterThan(try pixelCount(ColorPalette.Text.dim, in: explanation), 10, "\(name) explanation")
+    }
+
+    @MainActor
     func testSpeakerLegendGuidanceUsesReadableText() throws {
         let mic = DeepgramService.micSpeakerID
         let cases: [(String, [Int], Set<Int>?)] = [

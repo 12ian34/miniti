@@ -1632,10 +1632,10 @@ struct TrainingEmptyState: View {
                 .foregroundStyle(Color(hex: "1C1C1F"))
             Text("waiting for speech...")
                 .font(.system(size: 11, weight: .medium, design: .default))
-                .foregroundStyle(Color(hex: "484F58"))
+                .foregroundStyle(ColorPalette.Text.dim)
             Text("fillers, pace, clarity, and talk ratio\nupdate as you speak")
                 .font(.system(size: 10, weight: .regular, design: .default))
-                .foregroundStyle(Color(hex: "3F3F46"))
+                .foregroundStyle(ColorPalette.Text.dim)
                 .multilineTextAlignment(.center)
         }
         .frame(maxWidth: .infinity)
@@ -3831,7 +3831,7 @@ struct TerminalNoInsightsView: View {
             if hasTranscript {
                 Text("$ generate --from=transcript")
                     .font(.system(size: 12, weight: .regular, design: .default))
-                    .foregroundStyle(Color(hex: "484F58"))
+                    .foregroundStyle(ColorPalette.Text.dim)
                 
                 Button {
                     Task {
@@ -3870,7 +3870,7 @@ struct TerminalNoInsightsView: View {
             } else {
                 Text("record a session first")
                     .font(.system(size: 12, weight: .regular, design: .default))
-                    .foregroundStyle(Color(hex: "484F58"))
+                    .foregroundStyle(ColorPalette.Text.dim)
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)

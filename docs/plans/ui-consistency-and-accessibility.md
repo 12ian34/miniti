@@ -114,3 +114,5 @@ The [3.9.0 checklist](../releases/3.9.0.md) and [planning audit](../releases/3.9
 ## Completion
 
 Close order 3d when UI1–UI3, their regression/rendered checks and affected documentation are complete in the assigned release. Keep any unverified platform evidence explicit. Later-owner and deferred rows remain tracked through this register and their named plans; they are not hidden leftovers from this package. Re-run the planning audit after material implementation changes and before release preparation.
+
+UI3 waiting/empty-state contrast follow-through: seven foreground occurrences in TrainingEmptyState, LiveInsightsEmptyState and TerminalNoInsightsView move to Text.dim. The release record owns hosted evidence for separate title/explanation crops and transcript-present/absent instructions. Native full-screen, accessibility and actual recording/generation transitions remain separate gates.
