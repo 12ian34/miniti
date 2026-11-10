@@ -1,6 +1,6 @@
 # Miniti
 
-Released on Mac, 2026-11-09: 3.8.0 build 164 is public through the verified DMG and Sparkle feed. iOS 3.8.0 build 164 is live on the App Store (confirmed 2026-11-10). Full Mac/iOS suites, all 31 iPhone journeys, remote Apple CI and signed-package checks pass. Ian completed app QA and App Privacy. The backend, Linux 0.7.2, website and public docs are deployed. Unitemised specialist device checks remain evidence limitations, not claimed passes.
+Released on Mac, 2026-11-10: 3.9.0 build 165 is public through the verified DMG and Sparkle feed. iOS 3.9.0 build 165 is submitted for App Review with automatic release; iOS 3.8.0 build 164 is the current App Store version. Full Mac/iOS suites, backend suites and signed-package checks pass. See [RELEASE.md](RELEASE.md) and the [3.9.0 checklist](docs/releases/3.9.0.md). Owner device checks of the new Home, History, sidebar and setup changes remain open.
 
 macOS + iOS meeting assistant app built with SwiftUI + SwiftData. Records mic + system audio (macOS) or mic-only (iOS), streams to Deepgram for live transcription with speaker diarization, generates AI insights via OpenAI. Three tiers: free managed (500 min/month), pro managed ($5/month, 5000 min/month), or BYOK (own API keys, unlimited). Pro purchase rail is platform-specific: Polar.sh on macOS and StoreKit auto-renewable subscription on iOS.
 

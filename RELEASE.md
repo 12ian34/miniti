@@ -1,6 +1,6 @@
 # Release Process
 
-Released on Mac, 2026-11-09: 3.8.0 build 164 is public through the verified DMG and Sparkle feed. iOS build 164 is available in internal TestFlight and submitted as WAITING_FOR_REVIEW with automatic release after approval; 3.7.0 remains the App Store version. Full Mac/iOS suites, all 31 iPhone journeys, remote Apple CI and signed-package checks pass. Ian completed app QA and App Privacy. The backend, Linux 0.7.2, website and public docs are deployed. Unitemised specialist device checks remain evidence limitations, not claimed passes.
+Released on Mac, 2026-11-10: 3.9.0 build 165 is public through the verified DMG and Sparkle feed; iOS 3.9.0 is in App Review. iOS build 164 is available in internal TestFlight and submitted as WAITING_FOR_REVIEW with automatic release after approval; 3.7.0 remains the App Store version. Full Mac/iOS suites, all 31 iPhone journeys, remote Apple CI and signed-package checks pass. Ian completed app QA and App Privacy. The backend, Linux 0.7.2, website and public docs are deployed. Unitemised specialist device checks remain evidence limitations, not claimed passes.
 
 Authoritative 10-step runbook for shipping Miniti. For repo context, start with [AGENTS.md](AGENTS.md). For distribution detail, see [docs/reference/distribution.md](docs/reference/distribution.md). For per-lane detail, see [fastlane/RUNBOOK.md](fastlane/RUNBOOK.md).
 
@@ -15,16 +15,19 @@ Authoritative 10-step runbook for shipping Miniti. For repo context, start with 
   ```
 - `.env` at repo root has `APP_STORE_CONNECT_KEY_ID`, `APP_STORE_CONNECT_ISSUER_ID`, `APP_STORE_CONNECT_API_KEY`.
 
-## Current release: 3.8.0
+## Current release: 3.9.0
 
-Use the [3.8.0 checklist](docs/releases/3.8.0.md) and [planning audit](docs/releases/3.8.0-planning-audit.md) for exact evidence. Build 164 passes full hosted suites, all 31 iPhone journeys, remote CI and signed-package verification. Owner Mac/mobile app QA and App Privacy are complete. Backend, Linux, Mac, website and docs are deployed. The exact iOS build 164 is waiting for review, with automatic release after approval. iOS latest remains 3.7.0 until actual App Store availability.
+Mac 3.9.0 build 165 is public from 2026-11-10: GitHub release asset, website redirects and Sparkle feed verified byte-for-byte (181,922,423 bytes), `MACOS_LATEST_VERSION` 3.9.0. iOS 3.9.0 build 165 is uploaded and submitted for App Review with automatic release; iOS 3.8.0 is the current App Store version (`IOS_LATEST_VERSION` 3.8.0). The [3.9.0 checklist](docs/releases/3.9.0.md) owns scope, evidence and review dispositions.
 
-- Full hosted Apple suites ran in `Testing`, all 31 iPhone UI journeys passed, and remote Apple CI passed. Hardware/provider checks remain separate evidence.
-- Additive backend migration `002_folders.sql` was applied before feature deployment and new Apple distribution. V2 metering, folder sync, device labels, atomic links and installed-client compatibility were validated. Production model settings were preserved.
-- All selected scope is included: folders, completion without Done, browser detection/association and the Home setup guide. Specialist signed-upgrade, browser/audio/Watch and accessibility evidence remains unitemised; native Mac UI automation remains unavailable on the build host. These are recorded limitations, not pending publication tasks or claimed passes. Local-speaker defaults and existing privacy/account choices are preserved.
-- Store notes, descriptions, review instructions, public docs/site/changelog and retained assets are reconciled. Ian confirmed the [App Privacy correction](docs/releases/3.8.0-planning-audit.md#internal-app-store-disclosure-correction) before submission. Mac download links, appcast and availability metadata are live and verified.
-- Final package hashes, signatures, entitlements and notarization are recorded. Exact iOS build 164 is submitted with automatic release after approval and is available in internal TestFlight.
-- Remaining after Apple approval: confirm iOS 3.8.0 is actually available on the App Store, then bump `IOS_LATEST_VERSION` in `miniti-api` and mark iOS 3.8.0 available on the website and in changelog availability text.
+- Final source `2c65b010` (plus release-record docs). Full hosted suites pass: Mac 1440 tests / 9 skipped, iOS 1339 / 5 skipped. Backend 911 / 5 skipped and 46/46 disposable storage, types, lint and production build. UI source guard passes.
+- Scope: UI1–UI3, device count/name fixes and the S0 subscription-conflict guard, 2026-11-10 field fixes, all of Charlie's 3.8.0 feedback (Mac History page, resizable sidebar, series-based filing, setup guide highlight and single audio choice, two-column Coaching), hideable Mac Home stats and a local Coaching row cache. Account ownership B0–B5 moved to 3.10.0.
+- Reviews: Fable 5.2 reviewed the whole candidate, then every later batch; all findings fixed or recorded in the checklist.
+- Remaining after Apple approval: confirm iOS 3.9.0 is on the App Store, then bump `IOS_LATEST_VERSION` to 3.9.0 in `miniti-api`, set `IOS_PENDING_VERSION` handling in the website changelog generator, and mark iOS 3.9.0 available on the roadmap, llms files and public docs.
+- Owner checks still open: Sparkle update from 3.8.0 on a real Mac, Home stats hide/restore, History page, sidebar drag, setup audio choice and wide Coaching.
+
+## Previous release: 3.8.0
+
+Mac 3.8.0 build 164 shipped on 2026-11-09 and iOS 3.8.0 build 164 was confirmed live on 2026-11-10. The [3.8.0 checklist](docs/releases/3.8.0.md) keeps its evidence.
 
 <a id="360-release-preparation"></a>
 <a id="360-rollout-gates"></a>
