@@ -30,6 +30,9 @@ final class AccountJourneys: XCTestCase {
         if let screenshotScene {
             app.launchArguments = ["-MinitiScreenshotScene", screenshotScene]
         }
+        if scenario == "prepPresentation" {
+            app.launchArguments += ["-homeSetup.hidden.v1", "YES", "-home.calendarHidden.v1", "NO"]
+        }
         if let interfaceScale {
             // ScreenshotMode preserves explicit arguments in its volatile domain.
             app.launchArguments += ["-interfaceScale", String(interfaceScale)]
@@ -797,6 +800,74 @@ final class AccountJourneys: XCTestCase {
         close.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(dx: 2, dy: 2)).tap()
         XCTAssertTrue(close.waitForNonExistence(timeout: 5))
         XCTAssertTrue(help.exists)
+    }
+
+    func testLiveInvestigationInheritsInterfaceSize() {
+        assertLiveOrPrepPresentation("liveInvestigation", largeText: false, scale: 2)
+    }
+
+    func testLiveCatchUpInheritsInterfaceSize() {
+        assertLiveOrPrepPresentation("liveCatchUp", largeText: false, scale: 2)
+    }
+
+    func testEventPreparationInheritsInterfaceSize() {
+        assertLiveOrPrepPresentation("eventPrep", largeText: false, scale: 2)
+    }
+
+    func testLiveInvestigationAtNormalTextAcrossInterfaceScales() {
+        executionTimeAllowance = 180
+        for scale in 0...2 { assertLiveOrPrepPresentation("liveInvestigation", largeText: false, scale: scale) }
+    }
+
+    func testLiveInvestigationAtLargestTextAcrossInterfaceScales() {
+        executionTimeAllowance = 180
+        for scale in 0...2 { assertLiveOrPrepPresentation("liveInvestigation", largeText: true, scale: scale) }
+    }
+
+    func testLiveCatchUpAtNormalTextAcrossInterfaceScales() {
+        executionTimeAllowance = 180
+        for scale in 0...2 { assertLiveOrPrepPresentation("liveCatchUp", largeText: false, scale: scale) }
+    }
+
+    func testLiveCatchUpAtLargestTextAcrossInterfaceScales() {
+        executionTimeAllowance = 180
+        for scale in 0...2 { assertLiveOrPrepPresentation("liveCatchUp", largeText: true, scale: scale) }
+    }
+
+    func testEventPreparationAtNormalTextAcrossInterfaceScales() {
+        executionTimeAllowance = 180
+        for scale in 0...2 { assertLiveOrPrepPresentation("eventPrep", largeText: false, scale: scale) }
+    }
+
+    func testEventPreparationAtLargestTextAcrossInterfaceScales() {
+        executionTimeAllowance = 180
+        for scale in 0...2 { assertLiveOrPrepPresentation("eventPrep", largeText: true, scale: scale) }
+    }
+
+    private func assertLiveOrPrepPresentation(_ name: String, largeText: Bool, scale: Int) {
+        let preparing = name == "eventPrep"
+        let scenario = preparing ? "prepPresentation" : name + "Presentation"
+        launch(scenario, largeText: largeText, screenshotScene: preparing ? "home" : "recording-insights", interfaceScale: scale)
+        let event = app.buttons.matching(NSPredicate(format: "label CONTAINS %@", "Halcyon Labs: pricing follow-up")).firstMatch
+        if preparing {
+            XCTAssertTrue(event.waitForExistence(timeout: 10), app.debugDescription)
+            XCTAssertTrue(event.isHittable)
+            event.tap()
+        }
+        let scope = app.buttons["ui-test.readingScope.\(name)"]
+        XCTAssertTrue(scope.waitForExistence(timeout: 10), app.debugDescription)
+        XCTAssertEqual(scope.label, "scale \(scale); reading \(largeText ? "largest" : "normal"); controls \(largeText ? "accessibility5" : ["large", "xLarge", "xxLarge"][scale])")
+        scope.tap()
+        XCTAssertTrue(scope.waitForNonExistence(timeout: 5))
+        captureAppScreen("\(name) \(largeText ? "largest" : "normal") scale \(scale)")
+        let close = app.buttons[name == "liveCatchUp" ? "close" : "Done"]
+        XCTAssertTrue(close.waitForExistence(timeout: 5))
+        XCTAssertTrue(close.isHittable)
+        close.tap()
+        XCTAssertTrue(close.waitForNonExistence(timeout: 5))
+        if preparing { XCTAssertTrue(event.waitForExistence(timeout: 5)) }
+        else { XCTAssertTrue(app.buttons["meeting.section.transcript"].waitForExistence(timeout: 5)) }
+        app.terminate()
     }
 
     func testHistorySpeakerRenameInheritsInterfaceSize() {

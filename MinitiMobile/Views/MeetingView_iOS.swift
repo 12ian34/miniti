@@ -93,7 +93,7 @@ struct MeetingView_iOS: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .background(ColorPalette.Background.primary)
         }
-        .sheet(
+        .minitiSheet(
             isPresented: Binding(
                 get: { appState.isInvestigationPresented },
                 set: { presented in
@@ -107,6 +107,7 @@ struct MeetingView_iOS: View {
         ) {
             InvestigationSheet_iOS()
                 .environmentObject(appState)
+                .modifier(AccountUITestReadingScopeProbe(name: "liveInvestigation", alignment: .topLeading))
         }
     }
     
@@ -242,7 +243,7 @@ struct MeetingView_iOS: View {
             }
         }
         .meetingCloudFeedback(for: appState.currentMeeting?.id)
-        .sheet(
+        .minitiSheet(
             isPresented: Binding(
                 get: { appState.isZonedOutPresented },
                 set: { newValue in
@@ -258,6 +259,7 @@ struct MeetingView_iOS: View {
         ) {
             ZonedOutSheet_iOS()
                 .environmentObject(appState)
+                .modifier(AccountUITestReadingScopeProbe(name: "liveCatchUp", alignment: .topLeading))
         }
         .overlay {
             if showSavedOverlay {
@@ -840,9 +842,10 @@ struct ReadyStateView_iOS: View {
                 .accessibilityLabel("Settings")
             }
         }
-        .sheet(item: $prepEvent) { event in
+        .minitiSheet(item: $prepEvent) { event in
             EventPrepSheet_iOS(event: event)
                 .environmentObject(appState)
+                .modifier(AccountUITestReadingScopeProbe(name: "eventPrep", alignment: .topLeading))
         }
     }
 

@@ -282,6 +282,13 @@ enum ScreenshotMode {
            scene.isLiveRecording || scene.opensSavedMeeting {
             appState.isGeneratingInsights = true
         }
+        if AccountUITestHarness.isActive, scene.isLiveRecording {
+            switch ProcessInfo.processInfo.environment["MINITI_UI_TEST_SCENARIO"] {
+            case "liveInvestigationPresentation": appState.isInvestigationPresented = true
+            case "liveCatchUpPresentation": appState.isZonedOutPresented = true
+            default: break
+            }
+        }
         #endif
         if scene == .persistenceIssue {
             appState.setPersistenceIssue(PersistenceIssue(operation: .pin, kind: .save))
