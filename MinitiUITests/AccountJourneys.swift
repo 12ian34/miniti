@@ -765,6 +765,63 @@ final class AccountJourneys: XCTestCase {
         }
     }
 
+    func testMacEmailInputAndCancellationAcrossInterfaceScales() {
+        assertMacAccountInput(recovery: false)
+    }
+
+    func testMacRecoveryInputAndCancellationAcrossInterfaceScales() {
+        assertMacAccountInput(recovery: true)
+    }
+
+    private func assertMacAccountInput(recovery: Bool) {
+        executionTimeAllowance = 180
+        for scale in 0...2 {
+            app?.terminate()
+            launch("first", interfaceScale: scale)
+            app.activate()
+            XCTAssertTrue(app.wait(for: .runningForeground, timeout: 5))
+            let open = app.buttons["account.signIn"]
+            XCTAssertTrue(open.waitForExistence(timeout: 5)); open.click()
+            if recovery {
+                let useKey = app.buttons["Use a recovery key"]
+                XCTAssertTrue(useKey.waitForExistence(timeout: 5)); useKey.click()
+            }
+            let probe = app.buttons["ui-test.readingScope.\(recovery ? "accessRecovery" : "accessEmail")"]
+            XCTAssertTrue(probe.waitForExistence(timeout: 5))
+            XCTAssertTrue(probe.label.contains("scale \(scale);"))
+            probe.click(); XCTAssertTrue(probe.waitForNonExistence(timeout: 5))
+            let prefix = recovery ? "account.restore" : "account.emailSignIn"
+            let heading = app.staticTexts["\(prefix).heading"]
+            let input = app.textFields[recovery ? "account.restore.key" : "account.emailSignIn.field"]
+            let submit = recovery ? app.buttons["account.restore.submit"] : app.buttons["Send link"]
+            let cancel = recovery ? app.buttons["account.restore.cancel"] : app.buttons["Cancel"].firstMatch
+            XCTAssertTrue(input.waitForExistence(timeout: 5)); XCTAssertTrue(input.isHittable)
+            XCTAssertFalse(submit.isEnabled)
+            // Public synthetic values only. Never submit or send Return.
+            let draft = recovery ? "M1-000G-40R4-0M30-E209-185G-R38E-1WET-S870" : "layout@example.invalid"
+            input.click(); input.typeText(draft)
+            let typed = XCTNSPredicateExpectation(predicate: NSPredicate(format: "value == %@", draft), object: input)
+            XCTAssertEqual(XCTWaiter.wait(for: [typed], timeout: 5), .completed)
+            let enabled = XCTNSPredicateExpectation(predicate: NSPredicate(format: "enabled == true"), object: submit)
+            XCTAssertEqual(XCTWaiter.wait(for: [enabled], timeout: 5), .completed)
+            XCTAssertTrue(cancel.isHittable); XCTAssertTrue(submit.isHittable)
+            let window = app.windows["Miniti"].frame
+            for element in [heading, input, cancel, submit] {
+                XCTAssertTrue(window.contains(element.frame), "Account control must remain inside the native window")
+            }
+            XCTAssertTrue(cancel.frame.intersection(submit.frame).isEmpty)
+            XCTAssertLessThanOrEqual(input.frame.maxY, min(cancel.frame.minY, submit.frame.minY))
+            let frames = XCTAttachment(string: "scale=\(scale); heading=\(heading.frame); input=\(input.frame); cancel=\(cancel.frame); submit=\(submit.frame)")
+            frames.name = "Mac \(recovery ? "recovery" : "email") input frames"; frames.lifetime = .keepAlways; add(frames)
+            captureAppScreen("Mac \(recovery ? "recovery" : "email") typed scale \(scale)")
+            app.activate()
+            if scale == 1 { app.typeKey(.escape, modifierFlags: []) }
+            else { cancel.click() }
+            XCTAssertTrue(heading.waitForNonExistence(timeout: 5))
+            XCTAssertTrue(app.buttons["account.continueAnonymous"].exists)
+        }
+    }
+
     func testMacRecoveryKeySaveAtInterfaceScales() {
         executionTimeAllowance = 180
         var compactHeight: CGFloat = 0

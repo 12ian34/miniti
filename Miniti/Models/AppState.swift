@@ -12,6 +12,7 @@ import UIKit
 #endif
 #if os(macOS)
 import AppKit
+import SystemConfiguration
 #endif
 
 /// Low-frequency setup presentation and permission evidence. Kept separate from
@@ -11942,12 +11943,18 @@ final class AppState: ObservableObject {
         return await enrollmentCoordinator.ensure(trigger: trigger)
     }
 
-    /// Short, non-identifying label shown in the device list ("MacBook Pro", "iPhone").
+    /// Display metadata; a Mac computer name may identify its owner. Never log it.
     nonisolated static var managedDeviceLabel: String {
         #if os(iOS)
         return "iPhone or iPad"
         #else
-        return Host.current().localizedName ?? "Mac"
+        // Read the configured local name without NSHost name resolution. This runs
+        // on existing token exchanges as well as enrollment; no name is cached.
+        if let name = (SCDynamicStoreCopyComputerName(nil, nil) as String?)?
+            .trimmingCharacters(in: .whitespacesAndNewlines), !name.isEmpty {
+            return name
+        }
+        return "Mac"
         #endif
     }
 
