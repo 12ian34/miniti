@@ -222,12 +222,6 @@
     {
       "path": "Miniti/Views/InsightsView.swift",
       "rule": "raw-color",
-      "signature": "Color ( hex : \"3F3F46\" )",
-      "count": 1
-    },
-    {
-      "path": "Miniti/Views/InsightsView.swift",
-      "rule": "raw-color",
       "signature": "Color ( hex : \"3FB950\" )",
       "count": 3
     },
@@ -853,7 +847,7 @@
       "path": "Miniti/Views/MeetingView.swift",
       "rule": "raw-color",
       "signature": "Color ( hex : \"3F3F46\" )",
-      "count": 8
+      "count": 7
     },
     {
       "path": "Miniti/Views/MeetingView.swift",
@@ -865,7 +859,7 @@
       "path": "Miniti/Views/MeetingView.swift",
       "rule": "raw-color",
       "signature": "Color ( hex : \"484F58\" )",
-      "count": 5
+      "count": 4
     },
     {
       "path": "Miniti/Views/MeetingView.swift",
@@ -883,7 +877,7 @@
       "path": "Miniti/Views/MeetingView.swift",
       "rule": "raw-color",
       "signature": "Color ( hex : \"71717A\" )",
-      "count": 16
+      "count": 13
     },
     {
       "path": "Miniti/Views/MeetingView.swift",

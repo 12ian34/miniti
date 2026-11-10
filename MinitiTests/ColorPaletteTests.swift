@@ -372,6 +372,68 @@ final class ColorPaletteTests: XCTestCase {
     }
 
     @MainActor
+    func testCoachingSupportingTextUsesReadableRoles() throws {
+        let speaker = TrainingMetrics.SpeakerStats(
+            speakerLabel: "You", isLocalMic: true, wordCount: 100, segmentCount: 2,
+            fillers: [], totalFillers: 0, fillersPerMinute: 0, wordsPerMinute: 50,
+            longestMonologueWords: 60, questionsAsked: 1, avgWordsPerTurn: 50)
+        var explanations: [(String, AnyView, Int)] = [
+            ("legacy clarity", AnyView(ClaritySection(speakers: [speaker])), 32)
+        ]
+        #if os(macOS)
+        explanations.append(("live clarity", AnyView(LiveTrainingInsightsContent(metrics:
+            .init(speakers: [speaker], talkRatioYou: 1, durationMinutes: 2))), 0))
+        for trailing in ["100 words", "avg words/turn"] {
+            let renderer = ImageRenderer(content: LiveTrainingMetricRow(
+                speaker: speaker, value: "", trailing: trailing)
+                .frame(width: 420).background(ColorPalette.Background.primary))
+            renderer.scale = 2
+            // Blank primary value excludes antialiasing from neutral primary text.
+            XCTAssertGreaterThan(try pixelCount(ColorPalette.Text.dim, in: XCTUnwrap(renderer.cgImage)), 10, trailing)
+        }
+        #endif
+        for (name, view, bottomInset) in explanations {
+            let renderer = ImageRenderer(content: view.frame(width: 420)
+                .background(ColorPalette.Background.primary))
+            renderer.scale = 2
+            let raster = try XCTUnwrap(renderer.cgImage)
+            addRenderAttachment(raster, name: name)
+            // Last 14pt of content, above the legacy card's 16pt bottom padding.
+            // Excludes speaker rows, headings and the live filler summary.
+            let explanation = try XCTUnwrap(raster.cropping(to: CGRect(
+                x: 0, y: raster.height - bottomInset - 28, width: raster.width, height: 28)))
+            XCTAssertGreaterThan(try pixelCount(ColorPalette.Text.dim, in: explanation), 10, name)
+        }
+    }
+
+    #if os(macOS)
+    @MainActor
+    func testAPISetupInstructionsUseReadableText() throws {
+        for (name, label, editing) in [("edit heading", "API", true),
+                                       ("disconnected label", "API", false),
+                                       ("add instruction", "", false)] {
+            let renderer = ImageRenderer(content: APIStatusPill(label: label,
+                key: .constant(""), isEditing: .constant(editing), placeholder: "")
+                .fixedSize().background(ColorPalette.Background.primary))
+            renderer.scale = 2
+            let raster = try XCTUnwrap(renderer.cgImage)
+            addRenderAttachment(raster, name: "API \(name)")
+            let target: CGImage
+            if editing {
+                target = try XCTUnwrap(raster.cropping(to: CGRect(x: 0, y: 0, width: raster.width, height: 24)))
+            } else if !label.isEmpty {
+                // 12pt padding + 6pt indicator + 6pt gap puts the fixed API label
+                // at x=24pt. The next hint starts beyond this 20pt crop.
+                target = try XCTUnwrap(raster.cropping(to: CGRect(x: 44, y: 0, width: 40, height: raster.height)))
+            } else {
+                target = raster // Empty heading isolates "click to add".
+            }
+            XCTAssertGreaterThan(try pixelCount(ColorPalette.Text.dim, in: target), 10, name)
+        }
+    }
+    #endif
+
+    @MainActor
     func testCoachingEmptyGuidanceHasReadableTitleAndExplanation() throws {
         try assertReadableWaitingGuidance(AnyView(TrainingEmptyState()), name: "Coaching")
     }
@@ -380,9 +442,13 @@ final class ColorPaletteTests: XCTestCase {
     @MainActor
     func testLiveInsightEmptyGuidanceHasReadableTitleAndExplanation() throws {
         let state = AppState()
-        state.appMode = .managed
+        let originalMode = state.appModeRaw
+        defer { state.appModeRaw = originalMode }
+        state.appModeRaw = AppMode.managed.rawValue
         state.isRecording = true // Presentation only, no recording method is called.
         defer { state.isRecording = false }
+        // Pin the short built-in name: crop bands require a two-line explanation.
+        state.liveTemplateID = "bant"
         for mode: InsightsMode in [.standard, .meddpicc, .template] {
             state.insightsMode = mode
             try assertReadableWaitingGuidance(
@@ -400,7 +466,9 @@ final class ColorPaletteTests: XCTestCase {
     @MainActor
     func testNoInsightsGuidanceUsesReadableTextWithAndWithoutTranscript() throws {
         let state = AppState()
-        state.appMode = .managed
+        let originalMode = state.appModeRaw
+        defer { state.appModeRaw = originalMode }
+        state.appModeRaw = AppMode.managed.rawValue
         for hasTranscript in [false, true] {
             state.liveSegments = hasTranscript
                 ? [.init(id: UUID(), text: "Synthetic transcript.", speaker: 0, timestamp: 0, isFinal: true)] : []
@@ -415,19 +483,24 @@ final class ColorPaletteTests: XCTestCase {
     }
 
     @MainActor
+    private func addRenderAttachment(_ image: CGImage, name: String) {
+        #if os(macOS)
+        let attachment = XCTAttachment(image: NSImage(cgImage: image, size: .zero))
+        #else
+        let attachment = XCTAttachment(image: UIImage(cgImage: image))
+        #endif
+        attachment.name = name
+        attachment.lifetime = .keepAlways
+        add(attachment)
+    }
+
+    @MainActor
     private func assertReadableWaitingGuidance(_ view: AnyView, name: String) throws {
         let renderer = ImageRenderer(content: view.frame(width: 420)
             .background(ColorPalette.Background.primary))
         renderer.scale = 2
         let raster = try XCTUnwrap(renderer.cgImage)
-        #if os(macOS)
-        let attachment = XCTAttachment(image: NSImage(cgImage: raster, size: .zero))
-        #else
-        let attachment = XCTAttachment(image: UIImage(cgImage: raster))
-        #endif
-        attachment.name = "Waiting guidance: \(name)"
-        attachment.lifetime = .keepAlways
-        add(attachment)
+        addRenderAttachment(raster, name: "Waiting guidance: \(name)")
         // These production states end in a two-line 10pt explanation. Separate
         // crops prevent the 11pt title from masking an explanation regression.
         let explanation = try XCTUnwrap(raster.cropping(to: CGRect(

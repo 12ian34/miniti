@@ -1519,7 +1519,7 @@ struct APIStatusPill: View {
             VStack(alignment: .leading, spacing: 6) {
                 Text(label)
                     .font(.system(size: 10, weight: .medium, design: .default))
-                    .foregroundStyle(Color(hex: "71717A"))
+                    .foregroundStyle(ColorPalette.Text.dim)
 
                 HStack(spacing: 8) {
                     SecureField(placeholder, text: $key)
@@ -1565,7 +1565,7 @@ struct APIStatusPill: View {
 
                     Text(label)
                         .font(.system(size: 10, weight: .medium, design: .default))
-                        .foregroundStyle(isConnected ? Color(hex: "D4D4D8") : Color(hex: "71717A"))
+                        .foregroundStyle(isConnected ? Color(hex: "D4D4D8") : ColorPalette.Text.dim)
 
                     if isConnected {
                         Text("connected")
@@ -1574,7 +1574,7 @@ struct APIStatusPill: View {
                     } else {
                         Text("click to add")
                             .font(.system(size: 10, weight: .regular, design: .default))
-                            .foregroundStyle(Color(hex: "71717A").opacity(0.6))
+                            .foregroundStyle(ColorPalette.Text.dim)
                     }
                 }
                 .padding(.horizontal, 12)
@@ -2344,7 +2344,7 @@ struct LiveTrainingInsightsContent: View {
 
                     Text("lower = clearer = better")
                         .font(.system(size: 10, weight: .regular, design: .default))
-                        .foregroundStyle(Color(hex: "3F3F46"))
+                        .foregroundStyle(ColorPalette.Text.dim)
                 }
             }
         }
@@ -2440,7 +2440,7 @@ struct LiveTrainingFillersSection: View {
     }
 }
 
-private struct LiveTrainingMetricRow: View {
+struct LiveTrainingMetricRow: View {
     let speaker: TrainingMetrics.SpeakerStats
     let value: String
     var trailing: String? = nil
@@ -2459,7 +2459,7 @@ private struct LiveTrainingMetricRow: View {
             if let trailing {
                 Text(trailing)
                     .font(.system(size: 10, weight: .regular, design: .default))
-                    .foregroundStyle(Color(hex: "484F58"))
+                    .foregroundStyle(ColorPalette.Text.dim)
             }
         }
     }

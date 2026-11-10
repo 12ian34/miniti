@@ -137,3 +137,5 @@ Questions and Playbook guidance (3.9.0 local): empty/setup/error instructions, n
 Transcript speaker guidance (3.9.0 local): legend heading/detection/count text and rename-panel current-name, attendee-email and split-speaker guidance use readable dim text. Speaker identity colours, grouping, wording, field behavior and rename/attendee actions are unchanged.
 
 Insight waiting guidance uses readable neutral text for the shared Coaching title/explanation, Mac live listening/start instructions and no-insights record/generate instructions. Decorative symbols retain their existing appearance. Recording, generation, private-mode and missing-key branches are unchanged.
+
+Live Mac Coaching count/unit details and clarity explanations use readable neutral text. API setup edit/disconnected/add instructions also use readable text at full opacity; key storage, focus, connection state, native buttons and editing behavior are unchanged. The retained legacy clarity card is covered as retained code, not a new shipping surface.

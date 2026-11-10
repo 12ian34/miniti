@@ -1777,7 +1777,7 @@ private struct QuestionsSection: View {
     }
 }
 
-private struct ClaritySection: View {
+struct ClaritySection: View {
     let speakers: [TrainingMetrics.SpeakerStats]
     
     var body: some View {
@@ -1793,7 +1793,7 @@ private struct ClaritySection: View {
                 
                 Text("lower = clearer = better")
                     .font(.system(size: 10, weight: .regular, design: .default))
-                    .foregroundStyle(Color(hex: "3F3F46"))
+                    .foregroundStyle(ColorPalette.Text.dim)
                     .padding(.top, 4)
             }
         }
