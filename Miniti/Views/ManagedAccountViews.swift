@@ -495,8 +495,14 @@ struct ManagedAccessChoiceCard: View {
                 } else {
                     EmailSignInSheet(onJoined: onContinued)
                         .modifier(AccountUITestReadingScopeProbe(name: "accessEmail", alignment: .topLeading))
-                    Button("Use a recovery key") { recovery = true }
-                        .padding(.bottom)
+                    Button { recovery = true } label: {
+                        Text("Use a recovery key")
+                            #if os(iOS)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .minitiMinimumControlTarget()
+                            #endif
+                    }
+                    .padding(.bottom)
                 }
             }
             .environmentObject(appState)
@@ -2300,6 +2306,9 @@ struct EmailSignInSheet: View {
 
     @EnvironmentObject var appState: AppState
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.readingMetrics) private var readingMetrics
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    @FocusState private var emailFieldFocused: Bool
     @State private var email = ""
     @State private var linkID: String?
     @State private var isWorking = false
@@ -2311,23 +2320,66 @@ struct EmailSignInSheet: View {
 
     private var canSend: Bool { !isWorking && linkID == nil && email.contains("@") }
 
+    private var stacksActions: Bool {
+        #if os(iOS)
+        dynamicTypeSize.isAccessibilitySize
+        #else
+        false
+        #endif
+    }
+
     var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
+        VStack(alignment: .leading, spacing: MinitiDesignSystem.Spacing.section) {
+            #if os(iOS)
+            ScrollViewReader { proxy in
+                ScrollView { formContent.frame(maxWidth: .infinity, alignment: .leading) }
+                    .accessibilityIdentifier("account.emailSignIn.scroll")
+                    .onChange(of: error) { _, message in
+                        if message != nil { proxy.scrollTo("account.emailSignIn.error", anchor: .bottom) }
+                    }
+                    .onChange(of: linkID) { _, id in
+                        if id != nil { proxy.scrollTo("account.emailSignIn.waiting", anchor: .bottom) }
+                    }
+                    .onChange(of: canRetryLink) { _, retry in
+                        if !retry, linkID != nil { proxy.scrollTo("account.emailSignIn.waiting", anchor: .bottom) }
+                    }
+            }
+            #else
+            formContent
+            #endif
+            actions
+        }
+        .padding(MinitiDesignSystem.Spacing.page)
+        .modifier(AccountUITestAppearanceProbe(name: "email"))
+        #if os(macOS)
+        .frame(minWidth: 380, idealWidth: 440)
+        #else
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        #endif
+        .onDisappear { pollTask?.cancel() }
+    }
+
+    private var formContent: some View {
+        VStack(alignment: .leading, spacing: MinitiDesignSystem.Spacing.section) {
             Text(mode == .move ? "Join another account by email" : "Sign in with email")
-                .font(.system(size: 17, weight: .semibold))
+                .accessibilityIdentifier("account.emailSignIn.heading")
+                .font(.system(size: readingMetrics.dialogHeadingSize, weight: .semibold))
                 .foregroundStyle(ColorPalette.Text.primary)
+                .fixedSize(horizontal: false, vertical: true)
             Text(mode == .move
                  ? "Enter the email on the account to join. miniti sends it a link; open it anywhere and press Approve. This device keeps its meetings, usage and connections and joins that account."
                  : "Enter the email on your account. miniti sends it a link; open it anywhere and press Approve, and this device joins the account.")
-                .font(.system(size: 12))
+                .font(.system(size: readingMetrics.dialogBodySize))
                 .foregroundStyle(ColorPalette.Text.muted)
                 .fixedSize(horizontal: false, vertical: true)
             TextField("Email", text: $email)
+                .accessibilityIdentifier("account.emailSignIn.field")
                 .textFieldStyle(.roundedBorder)
                 .disabled(linkID != nil)
                 #if os(iOS)
                 .keyboardType(.emailAddress)
                 .textInputAutocapitalization(.never)
+                .focused($emailFieldFocused)
                 #endif
             if linkID != nil && !canRetryLink {
                 HStack(spacing: 8) {
@@ -2336,45 +2388,63 @@ struct EmailSignInSheet: View {
                         .controlSize(.small)
                         #endif
                     Text("Waiting for you to approve the link. It works for 15 minutes.")
-                        .font(.system(size: 12))
+                        .accessibilityIdentifier("account.emailSignIn.waiting")
+                        .font(.system(size: readingMetrics.dialogBodySize))
                         .foregroundStyle(ColorPalette.Text.muted)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
+                .id("account.emailSignIn.waiting")
             }
             if let error {
                 Text(error)
-                    .font(.system(size: 12))
+                    .accessibilityIdentifier("account.emailSignIn.error")
+                    .id("account.emailSignIn.error")
+                    .font(.system(size: readingMetrics.dialogBodySize))
                     .foregroundStyle(ColorPalette.Status.error)
                     .fixedSize(horizontal: false, vertical: true)
             }
-            HStack {
-                Spacer()
-                Button("Cancel") { pollTask?.cancel(); dismiss() }
-                    .keyboardShortcut(.cancelAction)
-                if canRetryLink, let linkID {
-                    Button("Try again") { canRetryLink = false; error = nil; poll(linkID) }
-                        .buttonStyle(.borderedProminent)
-                        .disabled(isWorking)
-                    Button("New link") { self.linkID = nil; canRetryLink = false; send() }
-                        .disabled(isWorking)
-                } else {
-                    Button("Send link") { send() }
-                        .keyboardShortcut(.defaultAction)
-                        .buttonStyle(.borderedProminent)
-                        .disabled(!canSend)
-                }
+        }
+    }
+
+    private var actions: some View {
+        let layout = stacksActions
+            ? AnyLayout(VStackLayout(alignment: .leading, spacing: MinitiDesignSystem.Spacing.control))
+            : AnyLayout(HStackLayout())
+        return layout {
+            if !stacksActions { Spacer() }
+            Button { pollTask?.cancel(); dismiss() } label: { actionLabel("Cancel") }
+                .keyboardShortcut(.cancelAction)
+            if canRetryLink, let linkID {
+                Button { canRetryLink = false; error = nil; poll(linkID) } label: { actionLabel("Try again") }
+                    .buttonStyle(.borderedProminent)
+                    .disabled(isWorking)
+                Button { self.linkID = nil; canRetryLink = false; send() } label: { actionLabel("New link") }
+                    .disabled(isWorking)
+            } else {
+                Button { send() } label: { actionLabel("Send link") }
+                    .keyboardShortcut(.defaultAction)
+                    .buttonStyle(.borderedProminent)
+                    .disabled(!canSend)
             }
         }
-        .padding(24)
-        .modifier(AccountUITestAppearanceProbe(name: "email"))
-        #if os(macOS)
-        .frame(minWidth: 380, idealWidth: 440)
+    }
+
+    @ViewBuilder
+    private func actionLabel(_ title: String) -> some View {
+        #if os(iOS)
+        Text(title)
+            .multilineTextAlignment(.leading)
+            .fixedSize(horizontal: false, vertical: true)
+            .minitiMinimumControlTarget()
         #else
-        .frame(maxWidth: .infinity)
+        Text(title)
         #endif
-        .onDisappear { pollTask?.cancel() }
     }
 
     private func send() {
+        #if os(iOS)
+        emailFieldFocused = false
+        #endif
         isWorking = true
         error = nil
         Task { @MainActor in

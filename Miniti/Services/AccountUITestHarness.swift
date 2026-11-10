@@ -245,7 +245,7 @@ enum AccountUITestHarness {
                     body = ["access_token": "fixture-token", "expires_in": 3600, "account_id": "acct_ui_fixture", "device_cap": 5]
                 }
             case "/api/auth/email/start": body = ["link_id": "lnk_fixturefixture01"]
-            case "/api/auth/email/status": body = ["status": "approved"]
+            case "/api/auth/email/status": body = ["status": scenario == "accountFallbackWaiting" ? "pending" : "approved"]
             case "/api/auth/revoke": body = ["revoked": true]
             case "/api/session": body = ["access_token": "fixture-token", "token_type": "Bearer", "expires_in": 3600,
                 "expires_at": ISO8601DateFormatter().string(from: Date().addingTimeInterval(3600)),

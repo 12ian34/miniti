@@ -1018,6 +1018,14 @@ final class AccountJourneys: XCTestCase {
         assertFallbackRestore(recovery: true, succeeds: false, largeText: true)
     }
 
+    func testFallbackEmailRestoreShowsLargestTextError() {
+        assertFallbackRestore(recovery: false, succeeds: false, largeText: true)
+    }
+
+    func testFallbackEmailWaitingAtLargestText() {
+        assertFallbackRestore(recovery: false, succeeds: false, largeText: true, waitsForApproval: true)
+    }
+
     func testFallbackEmailRestoreCompletesWithoutReopening() {
         assertFallbackRestore(recovery: false, succeeds: true)
     }
@@ -1026,9 +1034,9 @@ final class AccountJourneys: XCTestCase {
         assertFallbackRestore(recovery: true, succeeds: true)
     }
 
-    private func assertFallbackRestore(recovery: Bool, succeeds: Bool, largeText: Bool = false) {
+    private func assertFallbackRestore(recovery: Bool, succeeds: Bool, largeText: Bool = false, waitsForApproval: Bool = false) {
         executionTimeAllowance = 120
-        launch(succeeds ? "accountFallbackSuccess" : "accountFallbackFailure", largeText: largeText, interfaceScale: largeText ? 2 : 0)
+        launch(waitsForApproval ? "accountFallbackWaiting" : succeeds ? "accountFallbackSuccess" : "accountFallbackFailure", largeText: largeText, interfaceScale: largeText ? 2 : 0)
         let settings = app.buttons["Settings"]
         XCTAssertTrue(settings.waitForExistence(timeout: 5))
         settings.tap()
@@ -1047,10 +1055,10 @@ final class AccountJourneys: XCTestCase {
             ? app.textFields.matching(NSPredicate(format: "placeholderValue BEGINSWITH 'M1-'")).firstMatch
             : app.textFields["Email"]
         XCTAssertTrue(field.waitForExistence(timeout: 5))
-        if recovery {
+        if recovery || largeText {
             for _ in 0..<16 {
                 if field.isHittable { break }
-                app.scrollViews["account.restore.scroll"].swipeUp(velocity: .slow)
+                app.scrollViews[recovery ? "account.restore.scroll" : "account.emailSignIn.scroll"].swipeUp(velocity: .slow)
             }
         }
         XCTAssertTrue(field.isHittable)
@@ -1061,7 +1069,16 @@ final class AccountJourneys: XCTestCase {
             : app.buttons["Send link"]
         XCTAssertTrue(submit.isEnabled)
         submit.tap()
-        if succeeds {
+        if waitsForApproval {
+            let status = app.staticTexts["account.emailSignIn.waiting"]
+            XCTAssertTrue(status.waitForExistence(timeout: 10))
+            assertEmailResponseVisible(status)
+            XCTAssertFalse(field.isEnabled)
+            XCTAssertFalse(submit.isEnabled)
+            captureAppScreen("Email awaiting approval at largest text")
+            app.buttons["Cancel"].firstMatch.tap()
+            XCTAssertTrue(app.buttons["Cancel"].firstMatch.waitForNonExistence(timeout: 5))
+        } else if succeeds {
             XCTAssertTrue(app.buttons["Cancel"].firstMatch.waitForNonExistence(timeout: 20))
             XCTAssertTrue(app.buttons["Switch account…"].waitForExistence(timeout: 10), app.debugDescription)
             XCTAssertFalse(app.buttons["Cancel"].firstMatch.exists)
@@ -1071,7 +1088,15 @@ final class AccountJourneys: XCTestCase {
             XCTAssertTrue(field.exists, "The original sheet keeps its input and error")
             XCTAssertEqual(field.value as? String, recovery ? "M1-000G-40R4-0M30-E209-185G-R38E-1WET-S870" : "fixture@example.invalid")
             if !recovery { XCTAssertTrue(app.buttons["Try again"].exists) }
-            if largeText {
+            if largeText && !recovery {
+                assertEmailResponseVisible(app.staticTexts["account.emailSignIn.error"])
+                for label in ["Cancel", "Try again", "New link"] {
+                    let action = app.buttons[label].firstMatch
+                    XCTAssertTrue(action.isHittable)
+                    XCTAssertGreaterThanOrEqual(action.frame.height, 44 - 0.001)
+                }
+            }
+            if largeText && recovery {
                 let sheetError = app.staticTexts["account.restore.error"]
                 let scroll = app.scrollViews["account.restore.scroll"]
                 let keyboard = app.keyboards.firstMatch
@@ -1093,6 +1118,20 @@ final class AccountJourneys: XCTestCase {
             XCTAssertTrue(entry.waitForExistence(timeout: 5))
         }
         captureAppScreen("Fallback restore completed")
+    }
+
+    private func assertEmailResponseVisible(_ status: XCUIElement) {
+        XCTAssertTrue(app.keyboards.firstMatch.waitForNonExistence(timeout: 5))
+        let scroll = app.scrollViews["account.emailSignIn.scroll"]
+        let visible = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+            status.isHittable && status.frame.minY >= scroll.frame.minY - 1
+                && status.frame.maxY <= scroll.frame.maxY + 1
+        }, object: nil)
+        let result = XCTWaiter.wait(for: [visible], timeout: 5)
+        let frames = XCTAttachment(string: "status=\(status.frame); scroll=\(scroll.frame)")
+        frames.name = "Email response visibility"; frames.lifetime = .keepAlways; add(frames)
+        captureAppScreen("Email response after keyboard dismissal")
+        XCTAssertEqual(result, .completed)
     }
 
     func testSettingsEmailRestoreInheritsInterfaceSize() {
@@ -1189,6 +1228,7 @@ final class AccountJourneys: XCTestCase {
         XCTAssertTrue(submit.waitForExistence(timeout: 5))
         XCTAssertFalse(submit.isEnabled)
         if recovery { assertRecoveryReadingAndTyping(largeText: largeText) }
+        else { assertEmailReadingAndTyping(largeText: largeText) }
         captureAppScreen("\(name) \(largeText ? "largest" : "normal") scale 2")
         let cancel = app.buttons["Cancel"].firstMatch
         XCTAssertTrue(cancel.waitForExistence(timeout: 5))
@@ -1258,6 +1298,7 @@ final class AccountJourneys: XCTestCase {
         XCTAssertTrue(submit.waitForExistence(timeout: 5))
         XCTAssertFalse(submit.isEnabled, "An empty credential field must not allow submission")
         if recovery { assertRecoveryReadingAndTyping(largeText: largeText) }
+        else { assertEmailReadingAndTyping(largeText: largeText) }
         captureAppScreen("\(name) \(largeText ? "largest" : "normal") scale \(scale)")
         let cancel = app.buttons["Cancel"].firstMatch
         XCTAssertTrue(cancel.waitForExistence(timeout: 5))
@@ -1266,6 +1307,48 @@ final class AccountJourneys: XCTestCase {
         XCTAssertTrue(cancel.waitForNonExistence(timeout: 5))
         XCTAssertTrue(app.buttons["account.continueAnonymous"].waitForExistence(timeout: 5))
         app.terminate()
+    }
+
+    private func assertEmailReadingAndTyping(largeText: Bool) {
+        let heading = app.staticTexts["account.emailSignIn.heading"]
+        XCTAssertTrue(heading.waitForExistence(timeout: 5))
+        if largeText { XCTAssertGreaterThanOrEqual(heading.frame.height, 30.5) }
+        captureAppScreen("Email sign-in reading before keyboard")
+        let field = app.textFields["account.emailSignIn.field"]
+        XCTAssertTrue(field.waitForExistence(timeout: 5))
+        for _ in 0..<16 {
+            if field.isHittable { break }
+            app.scrollViews["account.emailSignIn.scroll"].swipeUp(velocity: .slow)
+        }
+        XCTAssertTrue(field.isHittable)
+        field.tap()
+        let keyboard = app.keyboards.firstMatch
+        XCTAssertTrue(keyboard.waitForExistence(timeout: 5))
+        field.typeText("layout@example.invalid")
+        let entered = XCTNSPredicateExpectation(predicate: NSPredicate(format: "value == %@", "layout@example.invalid"), object: field)
+        XCTAssertEqual(XCTWaiter.wait(for: [entered], timeout: 5), .completed)
+        XCTAssertEqual(field.value as? String, "layout@example.invalid")
+        let send = app.buttons["Send link"]
+        let cancel = app.buttons["Cancel"].firstMatch
+        XCTAssertTrue(send.isEnabled)
+        for action in [cancel, send] {
+            XCTAssertTrue(action.isHittable)
+            XCTAssertGreaterThanOrEqual(action.frame.width, 44 - 0.001)
+            XCTAssertGreaterThanOrEqual(action.frame.height, 44 - 0.001)
+            XCTAssertLessThanOrEqual(action.frame.maxY, keyboard.frame.minY)
+        }
+        XCTAssertFalse(cancel.frame.intersects(send.frame))
+        let useKey = app.buttons["Use a recovery key"]
+        if useKey.exists {
+            XCTAssertTrue(useKey.isHittable)
+            XCTAssertGreaterThanOrEqual(useKey.frame.height, 44 - 0.001)
+            XCTAssertLessThanOrEqual(useKey.frame.maxY, keyboard.frame.minY)
+            XCTAssertFalse(send.frame.intersects(useKey.frame))
+            XCTAssertFalse(cancel.frame.intersects(useKey.frame))
+        }
+        let frames = XCTAttachment(string: "field=\(field.frame); cancel=\(cancel.frame); send=\(send.frame); keyboard=\(keyboard.frame)")
+        frames.name = "Email sign-in typing frames"; frames.lifetime = .keepAlways; add(frames)
+        // The caller cancels. This helper never taps Send or sends a newline.
     }
 
     private func assertRecoveryReadingAndTyping(largeText: Bool) {

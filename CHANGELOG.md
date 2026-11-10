@@ -7,8 +7,8 @@
 - improvement: (iOS) Settings, History filters and meeting preparation follow your interface text size
 - improvement: (iOS) meeting preparation scrolls to keep notes and actions within reach
 - improvement: (iOS) sign-in buttons and the email field follow your interface text size during setup and in Account
-- improvement: (macOS and iOS) recovery-key sign-in text follows your text size
-- improvement: (iOS) recovery-key sign-in actions stay above the keyboard
+- improvement: (macOS and iOS) sign-in guidance follows your text size
+- improvement: (iOS) sign-in actions stay above the keyboard
 - improvement: (iOS) Debug Log controls fit smaller screens and larger text
 - improvement: (iOS) History folder controls stay readable with larger text
 - improvement: (iOS) email editing and recovery key controls stay readable with larger text and have larger tap areas

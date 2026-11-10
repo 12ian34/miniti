@@ -751,7 +751,7 @@
       "path": "Miniti/Views/ManagedAccountViews.swift",
       "rule": "small-fixed-font",
       "signature": "system ( size : 12 )",
-      "count": 6
+      "count": 3
     },
     {
       "path": "Miniti/Views/MeetingView.swift",

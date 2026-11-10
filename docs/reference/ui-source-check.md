@@ -90,3 +90,5 @@ Next work is the required platform matrix and candidate validation. Any new conc
 UI3 consent reading (CP2) replaces the two 12pt secondary-font occurrences in TermsAcceptanceView with shared reading metrics. The baseline prune removes only that existing small-fixed-font entry; no raw-colour allowance or review cue is added.
 
 AL3 recovery sign-in reading prunes two small-fixed-font occurrences from ManagedAccountViews (one each at 11pt and 12pt). Heading and monospaced-field migration add no raw-colour allowance. Remaining fixed account/dialog text stays in the open reading inventory.
+
+AL4 replaces three fixed 12pt EmailSignInSheet text occurrences with shared dialog metrics. The prune removes those existing small-font cues only; no new raw-colour allowance is added.

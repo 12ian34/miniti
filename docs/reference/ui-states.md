@@ -171,3 +171,5 @@ Pending/replacement and unavailable email summaries share the same minimum-targe
 Recovery-key sign-in and Switch account (AL3) use shared reading metrics for the heading, explanation, key field and errors. The iPhone form scrolls above its actions, which stack at accessibility text sizes and remain above the keyboard. Empty or malformed keys still disable submission. Native Cancel and the existing restore/move task own their original behavior; no account lifecycle change follows from the layout correction.
 
 Recovery sign-in brings a newly returned error into the iPhone scroll viewport without changing focus, task state or action eligibility. The keyboard may remain open; longer errors remain scrollable.
+
+Email sign-in uses resolved dialog reading sizes for guidance, waiting and error copy. iPhone Send link dismisses the keyboard; the subsequent waiting/error state is brought into the scroll viewport while native actions remain outside it. Retry and New link keep their existing polling/request behavior, and leaving the sheet still cancels polling. The recovery-key branch choice stays owned by the access card.
