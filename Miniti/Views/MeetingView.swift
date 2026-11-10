@@ -5,6 +5,7 @@ struct MeetingView: View {
     @EnvironmentObject var appState: AppState
     @State private var meetingTitle: String = ""
     var meetings: [Meeting] = []
+    var coachingStore: CoachingOverviewStore? = nil
 
     var body: some View {
         Group {
@@ -95,7 +96,7 @@ struct MeetingView: View {
                     if let prompt = appState.smartMeetingPrompt, prompt.kind == .callStart {
                         SmartMeetingBanner(prompt: prompt)
                     }
-                    ReadyStateView(meetings: meetings)
+                    ReadyStateView(meetings: meetings, coachingStore: coachingStore)
                 }
             }
         }
@@ -516,6 +517,7 @@ struct ReadyStateView: View {
     @State private var editingOpenAI = false
     @State private var confirmEvent: MinitiAPIService.CalendarEvent?
     var meetings: [Meeting] = []
+    var coachingStore: CoachingOverviewStore? = nil
 
     var body: some View {
         HomeCalendarSidebarLayout(
@@ -571,6 +573,15 @@ struct ReadyStateView: View {
                     }
 
                     HomeSetupOrCalendar { EmptyView() }
+
+                    // Fills Home's empty middle once the setup guide is collapsed.
+                    if let coachingStore, !appState.isRecording {
+                        HomeSetupStateObserver(state: appState.homeSetupState) {
+                            if !appState.isHomeSetupExpanded {
+                                HomeStatsPanel(meetings: meetings, store: coachingStore)
+                            }
+                        }
+                    }
                 }
                 .padding(MinitiDesignSystem.Spacing.page)
                 .frame(maxWidth: .infinity)
@@ -3826,5 +3837,65 @@ struct MarkdownExportIssueCard: View {
                 )
         )
         .accessibilityElement(children: .contain)
+    }
+}
+
+
+/// All-time stats on Home, in the Coaching stats style: meetings, time recorded, the most
+/// common top filler word and fillers per meeting. Hidden until a meeting is finished.
+struct HomeStatsPanel: View {
+    let meetings: [Meeting]
+    @ObservedObject var store: CoachingOverviewStore
+
+    var body: some View {
+        let stats = HomeStats.compute(meetings: meetings, rows: store.rows)
+        if stats.meetingCount > 0 {
+            VStack(alignment: .leading, spacing: MinitiDesignSystem.Spacing.comfortable) {
+                Text("your miniti so far")
+                    .font(.system(size: MinitiDesignSystem.CoachingTypography.size(13), weight: .bold, design: .default))
+                    .foregroundStyle(ColorPalette.Text.primary)
+                    .accessibilityAddTraits(.isHeader)
+                // Grid rows share one height so paired tiles line up.
+                Grid(horizontalSpacing: MinitiDesignSystem.Spacing.standard, verticalSpacing: MinitiDesignSystem.Spacing.standard) {
+                    GridRow {
+                        tile(icon: "calendar", value: "\(stats.meetingCount)",
+                             label: stats.meetingCount == 1 ? "meeting" : "meetings", accent: ColorPalette.Text.primary)
+                        tile(icon: "clock", value: HomeStats.formatMinutes(stats.recordedMinutes),
+                             label: "recorded", accent: ColorPalette.Coaching.pace)
+                    }
+                    GridRow {
+                        tile(icon: "quote.opening", value: stats.topFiller.map { "\u{201C}\($0)\u{201D}" } ?? "none yet",
+                             label: stats.topFiller == nil ? "top filler word" : "top filler in \(stats.topFillerMeetings) meeting\(stats.topFillerMeetings == 1 ? "" : "s")",
+                             accent: ColorPalette.Coaching.fillers)
+                        tile(icon: "waveform", value: stats.fillersPerMeeting.map { "\($0)" } ?? "none yet",
+                             label: "fillers per meeting", accent: ColorPalette.Coaching.fillers)
+                    }
+                }
+            }
+            .frame(maxWidth: MinitiDesignSystem.HomeSetup.maximumWidth, alignment: .leading)
+        }
+    }
+
+    private func tile(icon: String, value: String, label: String, accent: Color) -> some View {
+        MinitiCardSurface(style: .inset, contentPadding: MinitiDesignSystem.Spacing.comfortable) {
+            VStack(alignment: .leading, spacing: MinitiDesignSystem.Spacing.small) {
+                Image(systemName: icon)
+                    .font(.system(size: MinitiDesignSystem.CoachingTypography.size(11), weight: .semibold))
+                    .foregroundStyle(accent)
+                    .accessibilityHidden(true)
+                Text(value)
+                    .font(.system(size: MinitiDesignSystem.CoachingTypography.size(18), weight: .semibold, design: .default))
+                    .monospacedDigit()
+                    .foregroundStyle(ColorPalette.Text.primary)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.7)
+                Text(label)
+                    .font(.system(size: MinitiDesignSystem.CoachingTypography.size(10), weight: .medium, design: .default))
+                    .foregroundStyle(ColorPalette.Text.dim)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        }
+        .accessibilityElement(children: .combine)
     }
 }

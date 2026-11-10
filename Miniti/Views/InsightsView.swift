@@ -2841,6 +2841,50 @@ private struct TrainingColumnInfoCard: View {
 }
 #endif
 
+/// All-time totals for the Mac Home stats panel: finished meetings, recorded time, the
+/// filler word that most often tops a meeting, and the average filler count per meeting.
+struct HomeStats: Equatable {
+    let meetingCount: Int
+    let recordedMinutes: Int
+    let topFiller: String?
+    let topFillerMeetings: Int
+    let fillersPerMeeting: Int?
+
+    static func compute(meetings: [Meeting], rows: [TrainingRow]) -> HomeStats {
+        var count = 0
+        var seconds: TimeInterval = 0
+        for meeting in meetings {
+            guard let duration = meeting.duration, duration > 0 else { continue }
+            count += 1
+            seconds += duration
+        }
+        var tally: [String: Int] = [:]
+        var fillerTotal = 0.0
+        var fillerMeetings = 0
+        for row in rows {
+            if let word = row.topFiller?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased(), !word.isEmpty {
+                tally[word, default: 0] += 1
+            }
+            if row.durationMinutes > 0 {
+                fillerTotal += row.fillers * row.durationMinutes
+                fillerMeetings += 1
+            }
+        }
+        let top = tally.max { a, b in a.value != b.value ? a.value < b.value : a.key > b.key }
+        return HomeStats(
+            meetingCount: count,
+            recordedMinutes: Int((seconds / 60).rounded()),
+            topFiller: top?.key,
+            topFillerMeetings: top?.value ?? 0,
+            fillersPerMeeting: fillerMeetings > 0 ? Int((fillerTotal / Double(fillerMeetings)).rounded()) : nil
+        )
+    }
+
+    static func formatMinutes(_ minutes: Int) -> String {
+        minutes < 60 ? "\(minutes) min" : "\(minutes / 60) h \(minutes % 60) min"
+    }
+}
+
 struct TrainingRow: Identifiable, Sendable {
     let id: UUID
     let date: Date

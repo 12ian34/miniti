@@ -322,7 +322,7 @@ struct MainWindow: View {
                             onSearchFocusChange: { isHistoryPageSearchFocused = $0 }
                         )
                     } else {
-                        MeetingView(meetings: meetings)
+                        MeetingView(meetings: meetings, coachingStore: coachingOverviewStore)
                     }
                 }
 
@@ -1303,6 +1303,9 @@ struct TerminalSidebar: View {
                         showHistory = true
                     }
                     .overlay(alignment: .trailing) {
+                        // The History page already shows every meeting, so the sidebar
+                        // list toggle goes away there instead of doing nothing.
+                        if !(showHistory && selectedMeetingID == nil) {
                         Button {
                             withAnimation(.easeInOut(duration: 0.16)) {
                                 historyCollapsed.toggle()
@@ -1319,6 +1322,7 @@ struct TerminalSidebar: View {
                         .padding(.trailing, 4)
                         .accessibilityLabel(historyCollapsed ? "Show recent meetings in the sidebar" : "Hide recent meetings in the sidebar")
                         .help(historyCollapsed ? "Show recent meetings" : "Hide recent meetings")
+                        }
                     }
                 }
             }

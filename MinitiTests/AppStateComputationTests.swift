@@ -2761,6 +2761,28 @@ final class AppStateComputationTests: XCTestCase {
         XCTAssertTrue(result.isEmpty)
     }
 
+    func testHomeStatsTotalsMeetingsTimeAndFillers() {
+        let now = Date()
+        let a = Meeting(title: "A", startTime: now.addingTimeInterval(-3600), endTime: now)            // 60 min
+        let b = Meeting(title: "B", startTime: now.addingTimeInterval(-1800), endTime: now)            // 30 min
+        let live = Meeting(title: "Live", startTime: now.addingTimeInterval(-600), endTime: nil)       // unfinished
+        func row(_ filler: String?, perMinute: Double, minutes: Double) -> TrainingRow {
+            TrainingRow(id: UUID(), date: now, dateString: "", title: "", fillers: perMinute, pace: 0, clarity: 0,
+                        questions: 0, durationMinutes: minutes, talkRatio: nil, longestMonologue: 0, topFiller: filler, examples: [:])
+        }
+        let stats = HomeStats.compute(meetings: [a, b, live], rows: [
+            row("Um", perMinute: 0.5, minutes: 60), row("um ", perMinute: 1, minutes: 30), row("like", perMinute: 0, minutes: 10)])
+        XCTAssertEqual(stats.meetingCount, 2, "Unfinished meetings are not counted")
+        XCTAssertEqual(stats.recordedMinutes, 90)
+        XCTAssertEqual(stats.topFiller, "um", "Case and spacing do not split the same word")
+        XCTAssertEqual(stats.topFillerMeetings, 2)
+        XCTAssertEqual(stats.fillersPerMeeting, 20, "(30 + 30 + 0) fillers over 3 meetings")
+        XCTAssertEqual(HomeStats.formatMinutes(45), "45 min")
+        XCTAssertEqual(HomeStats.formatMinutes(605), "10 h 5 min")
+        let empty = HomeStats.compute(meetings: [], rows: [])
+        XCTAssertEqual(empty.meetingCount, 0); XCTAssertNil(empty.topFiller); XCTAssertNil(empty.fillersPerMeeting)
+    }
+
     #if !IOS_TEST_TARGET
     func testHistoryPageIsADestinationThatMeetingsReturnTo() {
         let meetingID = UUID()
@@ -2810,6 +2832,15 @@ final class AppStateComputationTests: XCTestCase {
         let searching = HistoryPageView.sections(of: meetings, searching: true, now: now, calendar: calendar)
         XCTAssertEqual(searching.map(\.title), ["results"])
         XCTAssertTrue(HistoryPageView.sections(of: [], searching: true).isEmpty)
+    }
+
+    @MainActor func testHomeStatsPanelRendersOnlyOnceAMeetingIsFinished() {
+        let store = CoachingOverviewStore()
+        let empty = NSHostingView(rootView: HomeStatsPanel(meetings: [], store: store).frame(width: 480))
+        XCTAssertEqual(empty.fittingSize.height, 0, accuracy: 0.5, "No panel before the first finished meeting")
+        let finished = Meeting(title: "Done", startTime: Date().addingTimeInterval(-1200), endTime: Date())
+        let host = NSHostingView(rootView: HomeStatsPanel(meetings: [finished], store: store).frame(width: 480))
+        XCTAssertGreaterThan(host.fittingSize.height, 100, "Header plus two rows of tiles")
     }
 
     @MainActor func testHistoryPageRendersAndReportsItsVisibleOrder() throws {
