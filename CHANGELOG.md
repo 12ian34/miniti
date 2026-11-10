@@ -2,6 +2,14 @@
 
 ### Unreleased - v3.9.0
 
+- new: (macOS) history opens as its own page, with search, folder counts and meetings grouped by date
+- new: (macOS) drag the sidebar edge to make it wider. Double-click to reset
+- improvement: (macOS and iOS) recurring meetings and meetings you move by hand teach miniti where later meetings go
+- improvement: (macOS and iOS) automatic folders recognise more kinds of meetings and can use the summary to file into folders you already have
+- improvement: (macOS) history suggests organising when 3 or more meetings are unfiled
+- improvement: (macOS) setup asks one audio question: online or on this Mac
+- improvement: (macOS and iOS) collapsing the setup guide shows the button that reopens it
+- improvement: (macOS) Coaching uses two columns on wide windows
 - improvement: (macOS and iOS) Sales, templates and notes follow the interface text size in live and saved meetings
 - improvement: (iOS) transcript and insight text follow the system text size, including accessibility sizes
 - improvement: (iOS) Settings, History filters and meeting preparation follow your interface text size

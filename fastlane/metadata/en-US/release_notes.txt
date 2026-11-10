@@ -1,4 +1,7 @@
 IMPROVED
+- Recurring meetings and meetings you move by hand teach miniti where later meetings go.
+- Automatic folders recognize more kinds of meetings and can use the summary to file into folders you already have.
+- Collapsing the setup guide shows the button that reopens it.
 - Transcript, insight, sign-in and recovery key text follow the system text size, including accessibility sizes.
 - Settings, History filters, meeting preparation and permission text follow your interface text size.
 - Sign-in actions stay above the keyboard, and meeting preparation keeps notes and actions within reach.
