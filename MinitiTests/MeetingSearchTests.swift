@@ -153,6 +153,24 @@ final class MeetingSearchTests: XCTestCase {
         XCTAssertEqual(parse(text).people, ["sam", "maria chen"])
     }
 
+    func testCustomRangeInsertionKeepsBothBoundsAndOtherSearchTerms() {
+        let tokens = MeetingSearchDatePreset.rangeTokens(from: date(2026, 9, 1), to: date(2026, 9, 14), calendar: Self.utc)
+        let text = MeetingSearchQuery.inserting(tokens: tokens,
+            into: "\"annual budget\" with:\"Maria Chen\" from:mac on:today")
+        let query = parse(text)
+        XCTAssertEqual(query.words, ["annual budget"])
+        XCTAssertEqual(query.people, ["maria chen"])
+        XCTAssertEqual(query.devices, ["mac"])
+        XCTAssertEqual(query.dateRange?.start, date(2026, 9, 1, 0))
+        XCTAssertEqual(query.dateRange?.end, date(2026, 9, 15, 0))
+        XCTAssertFalse(query.dateRange?.contains(date(2026, 8, 31, 23)) == true)
+        XCTAssertTrue(query.dateRange?.contains(date(2026, 9, 1, 0)) == true)
+        XCTAssertTrue(query.dateRange?.contains(date(2026, 9, 14, 23)) == true)
+        XCTAssertFalse(query.dateRange?.contains(date(2026, 9, 15, 0)) == true)
+        let replaced = MeetingSearchQuery.inserting(token: "on:yesterday", into: text)
+        XCTAssertEqual(replaced, "\"annual budget\" with:\"Maria Chen\" from:mac on:yesterday")
+    }
+
     func testDatePresetsProduceParseableTokens() {
         for preset in MeetingSearchDatePreset.allCases {
             let token = preset.token(now: Self.now, calendar: Self.utc)

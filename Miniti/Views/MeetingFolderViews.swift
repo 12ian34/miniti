@@ -12,13 +12,24 @@ struct MeetingFolderControls: View {
             appState.folderFilterID = UUID(uuidString: $0)
         })
     }
+    private var usesVerticalControls: Bool {
+#if os(iOS)
+        dynamicTypeSize.isAccessibilitySize
+#else
+        false
+#endif
+    }
+    private var controlsLayout: AnyLayout {
+        usesVerticalControls ? AnyLayout(VStackLayout(alignment: .leading)) : AnyLayout(HStackLayout())
+    }
     var body: some View {
-        HStack {
+        controlsLayout {
             Picker("Folder", selection: selection) {
                 Text("All meetings").tag("all")
                 Text("Unfiled").tag("unfiled")
                 ForEach(appState.meetingFolders.active) { folder in Text(folder.name).tag(folder.id.uuidString) }
             }.labelsHidden().accessibilityLabel("Filter meetings by folder")
+                .frame(maxWidth: usesVerticalControls ? .infinity : nil, alignment: .leading)
             Button { managing = true } label: { Label("Folders", systemImage: "folder.badge.gearshape") }
                 .labelStyle(.iconOnly).accessibilityLabel("Manage folders")
             if !appState.folderUndo.isEmpty {

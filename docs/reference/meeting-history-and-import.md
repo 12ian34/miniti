@@ -6,6 +6,8 @@ Current baseline, reconciled through released 3.6.0. [Patterns](patterns.md) own
 
 Shared query grammar supports AND words, quoted phrases, person/title/date/range and field operators; unknown operators stay plain text. Use local-calendar date boundaries. Search projections/cache are keyed by meeting and transcript revision. Optional calendar event title is populated for new records, not invented for old ones. Preserve ranking/snippets/pins/grouping while optimizing. Semantic search, saved searches and Spotlight are not implied. [Shipped search design](../archive/meeting-search-plan.md) retains detailed grammar; its “today” paragraph describes the old implementation. The weeks-old meeting manual check has no recorded completion.
 
+3.9.0 local correction: applying a custom date range inserts both after:/before: tokens in one query update. Existing date filters are replaced once while words, phrases, people and devices remain. Single-date presets still replace the previous date selection. Both platform controls use the same batch insertion contract.
+
 ## Granola
 
 3.4.0 accepts the current emailed ZIP or CSVs, column aliases and duplicate protection. Unlabelled exports do not contain speaker identities or word timings: keep one S1 and sentence turns, estimate duration at 150 words/minute and say it is estimated. Never infer speakers by alternating lines. Preserve summary cleanup and explicit external-source/id keys.

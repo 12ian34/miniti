@@ -1404,9 +1404,9 @@ struct MeetingSearchFilterSheet_iOS: View {
                     DatePicker("From", selection: $customRangeStart, in: ...customRangeEnd, displayedComponents: .date)
                     DatePicker("To", selection: $customRangeEnd, in: customRangeStart..., displayedComponents: .date)
                     Button("Apply range") {
-                        for token in MeetingSearchDatePreset.rangeTokens(from: customRangeStart, to: customRangeEnd) {
-                            insert(token)
-                        }
+                        searchText = MeetingSearchQuery.inserting(
+                            tokens: MeetingSearchDatePreset.rangeTokens(from: customRangeStart, to: customRangeEnd),
+                            into: searchText)
                     }
                 }
                 if query.hasFilters {

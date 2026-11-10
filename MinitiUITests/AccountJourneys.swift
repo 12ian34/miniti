@@ -1501,31 +1501,124 @@ final class AccountJourneys: XCTestCase {
         XCTAssertTrue(scope.waitForNonExistence(timeout: 5))
         assertDebugLogHeaderFits()
         let options = app.buttons["debugLog.options"]
-        XCTAssertEqual(options.value as? String, "all categories, routine hidden, pretty")
+        func expectOptionsValue(_ value: String) {
+            let changed = XCTNSPredicateExpectation(predicate: NSPredicate(format: "value == %@", value), object: options)
+            XCTAssertEqual(XCTWaiter.wait(for: [changed], timeout: 5), .completed)
+        }
+        expectOptionsValue("all categories, routine hidden, pretty")
         options.tap()
         for name in ["audio", "deepgram", "app", "show routine", "raw", "copy", "clear"] {
             XCTAssertTrue(app.buttons[name].waitForExistence(timeout: 5))
         }
         app.buttons["audio"].tap()
-        XCTAssertEqual(options.value as? String, "audio, routine hidden, pretty")
+        expectOptionsValue("audio, routine hidden, pretty")
         options.tap()
         captureAppScreen("Debug Log options with audio selected")
         app.buttons["audio"].tap()
-        XCTAssertEqual(options.value as? String, "all categories, routine hidden, pretty")
+        expectOptionsValue("all categories, routine hidden, pretty")
         options.tap()
         app.buttons["show routine"].tap()
-        XCTAssertEqual(options.value as? String, "all categories, routine shown, pretty")
+        expectOptionsValue("all categories, routine shown, pretty")
         options.tap()
         app.buttons["hide routine"].tap()
+        expectOptionsValue("all categories, routine hidden, pretty")
         options.tap()
         app.buttons["raw"].tap()
-        XCTAssertEqual(options.value as? String, "all categories, routine hidden, raw")
+        expectOptionsValue("all categories, routine hidden, raw")
         options.tap()
         app.buttons["pretty"].tap()
-        XCTAssertEqual(options.value as? String, "all categories, routine hidden, pretty")
+        expectOptionsValue("all categories, routine hidden, pretty")
         captureAppScreen("Debug Log after options round trip")
         app.buttons["close"].tap()
         XCTAssertTrue(app.navigationBars["About"].waitForExistence(timeout: 5))
+    }
+
+    func testDebugLogCloseRespondsInAddedPadding() {
+        openDebugLog(largeText: false, scale: 0)
+        let scope = app.buttons["ui-test.readingScope.debugLog"]
+        XCTAssertTrue(scope.waitForExistence(timeout: 5))
+        scope.tap()
+        XCTAssertTrue(scope.waitForNonExistence(timeout: 5))
+        let close = app.buttons["close"]
+        XCTAssertGreaterThanOrEqual(close.frame.height, 44 - 0.001)
+        close.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(dx: 2, dy: 1)).tap()
+        XCTAssertTrue(close.waitForNonExistence(timeout: 5))
+        XCTAssertTrue(app.navigationBars["About"].exists)
+    }
+
+    func testHistoryFolderSelectorAtLargestTextAcrossInterfaceScales() {
+        assertHistoryFolderSelectorAcrossInterfaceScales(largeText: true)
+    }
+
+    func testHistoryFolderSelectorAtNormalTextAcrossInterfaceScales() {
+        assertHistoryFolderSelectorAcrossInterfaceScales(largeText: false)
+    }
+
+    private func assertHistoryFolderSelectorAcrossInterfaceScales(largeText: Bool) {
+        for scale in 0...2 {
+            if scale > 0 { resetAccountMatrixFixture(); app.terminate() }
+            openHistoryFilters(largeText: largeText, scale: scale)
+            let scope = app.buttons["ui-test.readingScope.historyFilters"]
+            XCTAssertTrue(scope.waitForExistence(timeout: 5))
+            XCTAssertEqual(scope.label, "scale \(scale); reading \(largeText ? "largest" : "normal"); controls \(largeText ? "accessibility5" : ["large", "xLarge", "xxLarge"][scale])")
+            scope.tap()
+            XCTAssertTrue(scope.waitForNonExistence(timeout: 5))
+            app.navigationBars["Filter"].buttons["Done"].tap()
+            let picker = app.buttons.matching(NSPredicate(format: "label CONTAINS %@", "Filter meetings by folder")).firstMatch
+            XCTAssertTrue(picker.waitForExistence(timeout: 5))
+            let manage = app.buttons["Manage folders"]
+            captureAppScreen("History folder selector \(largeText ? "largest" : "normal") scale \(scale)")
+            let frames = XCTAttachment(string: "Picker: \(picker.frame)\nManage: \(manage.frame)")
+            frames.name = "History folder control frames"; frames.lifetime = .keepAlways; add(frames)
+            XCTAssertGreaterThan(picker.frame.width, picker.frame.height * 2)
+            XCTAssertFalse(picker.frame.intersects(manage.frame))
+            XCTAssertTrue(picker.isHittable)
+            XCTAssertTrue(manage.isHittable)
+            picker.tap()
+            app.buttons["Unfiled"].tap()
+            XCTAssertTrue(picker.staticTexts["Unfiled"].waitForExistence(timeout: 5))
+            picker.tap()
+            app.buttons["All meetings"].tap()
+            XCTAssertTrue(picker.staticTexts["All meetings"].waitForExistence(timeout: 5))
+        }
+    }
+
+    func testHistoryDateRangeIsReachableAtLargestText() {
+        openHistoryFilters(largeText: true, scale: 2)
+        let scope = app.buttons["ui-test.readingScope.historyFilters"]
+        XCTAssertTrue(scope.waitForExistence(timeout: 5))
+        scope.tap()
+        XCTAssertTrue(scope.waitForNonExistence(timeout: 5))
+        let range = app.buttons["Apply range"]
+        var swipes = 0
+        for _ in 0..<16 where !range.isHittable || range.frame.maxY > app.frame.maxY - 50 {
+            app.collectionViews.firstMatch.swipeUp()
+            swipes += 1
+        }
+        XCTAssertTrue(range.isHittable)
+        XCTAssertLessThanOrEqual(range.frame.maxY, app.frame.maxY - 50)
+        XCTAssertGreaterThan(swipes, 0)
+        captureAppScreen("History Date range at largest text")
+        range.tap()
+        app.navigationBars["Filter"].buttons["Done"].tap()
+        let search = app.searchFields["Search meetings..."]
+        XCTAssertTrue(search.waitForExistence(timeout: 5))
+        captureAppScreen("History query after Date range")
+        XCTAssertTrue((search.value as? String ?? "").contains("after:"), "Actual search value: \(String(describing: search.value))")
+        XCTAssertTrue((search.value as? String ?? "").contains("before:"))
+        app.buttons["Filter meetings by person or date"].tap()
+        let newScope = app.buttons["ui-test.readingScope.historyFilters"]
+        XCTAssertTrue(newScope.waitForExistence(timeout: 5))
+        newScope.tap()
+        XCTAssertTrue(newScope.waitForNonExistence(timeout: 5))
+        let clear = app.buttons["Clear filters"]
+        for _ in 0..<16 where !clear.isHittable || clear.frame.maxY > app.frame.maxY - 50 { app.collectionViews.firstMatch.swipeUp() }
+        XCTAssertTrue(clear.isHittable)
+        XCTAssertLessThanOrEqual(clear.frame.maxY, app.frame.maxY - 50)
+        clear.tap()
+        app.navigationBars["Filter"].buttons["Done"].tap()
+        XCTAssertFalse((search.value as? String ?? "").contains("after:"))
+        XCTAssertFalse((search.value as? String ?? "").contains("before:"))
     }
 
     private func assertDebugLogHeaderFits() {

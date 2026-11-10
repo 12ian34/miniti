@@ -231,15 +231,24 @@ struct MeetingSearchQuery: Equatable {
     /// Appends a filter token to the typed text. Date tokens replace any date token already
     /// present, since two date presets never make sense together; people tokens stack.
     static func inserting(token: String, into text: String) -> String {
+        inserting(tokens: [token], into: text)
+    }
+
+    /// Insert a related set together so a custom range keeps both date bounds.
+    /// Existing date filters are replaced once; words and other filters survive.
+    static func inserting(tokens newTokens: [String], into text: String) -> String {
         var tokens = tokenize(text).map(quotedIfNeeded)
-        let newKey = token.split(separator: ":", maxSplits: 1).first.map(String.init)?.lowercased() ?? ""
-        if dateKeys.contains(newKey) {
+        let replacesDates = newTokens.contains { token in
+            let key = token.split(separator: ":", maxSplits: 1).first.map(String.init)?.lowercased() ?? ""
+            return dateKeys.contains(key)
+        }
+        if replacesDates {
             tokens.removeAll { t in
                 let key = t.split(separator: ":", maxSplits: 1).first.map(String.init)?.lowercased() ?? ""
                 return t.contains(":") && dateKeys.contains(key)
             }
         }
-        if !tokens.contains(token) { tokens.append(token) }
+        for token in newTokens where !tokens.contains(token) { tokens.append(token) }
         return tokens.joined(separator: " ")
     }
 

@@ -229,14 +229,16 @@ struct DebugLogView: View {
     }
 
     private var closeButton: some View {
-        Button("close") { dismiss() }
-            .font(.system(.caption, design: .default))
-            .buttonStyle(.plain)
-            .foregroundStyle(ColorPalette.Text.meta)
-            .keyboardShortcut(.cancelAction)
+        Button { dismiss() } label: {
+            Text("close")
+                .font(.system(.caption, design: .default))
+                .foregroundStyle(ColorPalette.Text.meta)
 #if os(iOS)
-            .minitiMinimumControlTarget()
+                .minitiMinimumControlTarget()
 #endif
+        }
+        .buttonStyle(.plain)
+        .keyboardShortcut(.cancelAction)
     }
 
     private var logList: some View {

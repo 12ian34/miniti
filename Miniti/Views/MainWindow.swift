@@ -4312,9 +4312,9 @@ struct MeetingSearchFilterRow: View {
                 .font(.system(size: 11, design: .default))
                 .padding(.horizontal, 8)
             Button {
-                for token in MeetingSearchDatePreset.rangeTokens(from: customRangeStart, to: customRangeEnd) {
-                    insert(token)
-                }
+                searchText = MeetingSearchQuery.inserting(
+                    tokens: MeetingSearchDatePreset.rangeTokens(from: customRangeStart, to: customRangeEnd),
+                    into: searchText)
                 isDateMenuPresented = false
             } label: {
                 MinitiControlLabel(role: .primary, isEmphasized: true) {
