@@ -2182,6 +2182,36 @@ enum CoachingOverviewTab: String, CaseIterable {
     }
 }
 
+/// On-disk cache of computed Coaching rows, keyed by meeting and invalidated by the same
+/// signature the store already uses (transcript revision, speakers, fillers and so on).
+enum CoachingRowCache {
+    struct Entry: Codable, Sendable {
+        let signature: String
+        let row: TrainingRow?
+    }
+    private struct File: Codable { var version = 1; var entries: [String: Entry] }
+
+    static var defaultURL: URL? {
+        FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first?
+            .appendingPathComponent("miniti", isDirectory: true)
+            .appendingPathComponent("coaching-rows-v1.json")
+    }
+
+    static func load(from url: URL) -> [UUID: Entry]? {
+        guard let data = try? Data(contentsOf: url),
+              let file = try? JSONDecoder().decode(File.self, from: data), file.version == 1 else { return nil }
+        return Dictionary(uniqueKeysWithValues: file.entries.compactMap { key, entry in UUID(uuidString: key).map { ($0, entry) } })
+    }
+
+    static func save(_ entries: [UUID: Entry], to url: URL) {
+        guard !Task.isCancelled else { return }
+        let file = File(entries: Dictionary(uniqueKeysWithValues: entries.map { ($0.key.uuidString, $0.value) }))
+        guard let data = try? JSONEncoder().encode(file) else { return }
+        try? FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try? data.write(to: url, options: .atomic)
+    }
+}
+
 private struct CoachingMeetingInput: Sendable {
     let id: UUID
     let startTime: Date
@@ -2204,6 +2234,20 @@ final class CoachingOverviewStore: ObservableObject {
 
     private var rowsByMeetingID: [UUID: TrainingRow] = [:]
     private var completedSignatures: [UUID: String] = [:]
+    /// Computed rows survive relaunch, so Coaching and the Home stats start complete and
+    /// only new or edited meetings are analysed again. Local file, same data as the store.
+    private let cacheURL: URL?
+    private var cacheSaveTask: Task<Void, Never>?
+
+    init(cacheURL: URL? = AppState.isRunningUnderXCTest ? nil : CoachingRowCache.defaultURL) {
+        self.cacheURL = cacheURL
+        if let cacheURL, let cached = CoachingRowCache.load(from: cacheURL) {
+            for (id, entry) in cached {
+                completedSignatures[id] = entry.signature
+                if let row = entry.row { rowsByMeetingID[id] = row }
+            }
+        }
+    }
     private var metricsTask: Task<TrainingRow?, Never>?
     private var refreshTask: Task<Void, Never>?
     private var refreshGeneration = 0
@@ -2241,10 +2285,13 @@ final class CoachingOverviewStore: ObservableObject {
         for id in Set(rowsByMeetingID.keys).subtracting(eligibleIDs) {
             rowsByMeetingID.removeValue(forKey: id)
         }
-        for id in Set(completedSignatures.keys).subtracting(eligibleIDs) {
+        let removed = Set(completedSignatures.keys).subtracting(eligibleIDs)
+        for id in removed {
             completedSignatures.removeValue(forKey: id)
         }
         publishRows(in: meetings)
+        // Deleted meetings leave the on-disk cache too.
+        if !removed.isEmpty { scheduleCacheSave() }
 
         refreshGeneration += 1
         let generation = refreshGeneration
@@ -2269,40 +2316,66 @@ final class CoachingOverviewStore: ObservableObject {
         }
     }
 
+    /// Meetings analysed at once. Transcript reading stays on the main actor (SwiftData);
+    /// the analysis itself runs off it, several meetings in parallel.
+    private static let batchSize = 4
+
     private func performRefresh(meetings: [Meeting], generation: Int) async {
+        var pending: [(meeting: Meeting, signature: String)] = []
         for meeting in meetings {
-            guard generation == refreshGeneration, !Task.isCancelled else { return }
-            await Task.yield()
             guard generation == refreshGeneration, !Task.isCancelled else { return }
             guard let signature = Self.signature(for: meeting),
                   completedSignatures[meeting.id] != signature else { continue }
+            pending.append((meeting, signature))
+        }
+        if !pending.isEmpty { isComputing = true }
 
-            isComputing = true
-
-            guard let input = Self.input(from: meeting) else {
-                rowsByMeetingID.removeValue(forKey: meeting.id)
-                completedSignatures[meeting.id] = signature
-                publishRows(in: meetings)
-                continue
-            }
-
-            let metricsTask = Task.detached(priority: .userInitiated) {
-                Self.computeRow(from: input)
-            }
-            self.metricsTask = metricsTask
-            let row = await metricsTask.value
-
+        var index = 0
+        while index < pending.count {
+            await Task.yield()
             guard generation == refreshGeneration, !Task.isCancelled else { return }
-            if let row {
-                rowsByMeetingID[meeting.id] = row
-            } else {
-                rowsByMeetingID.removeValue(forKey: meeting.id)
+            let batch = pending[index..<min(index + Self.batchSize, pending.count)]
+            index += batch.count
+
+            var inputs: [(UUID, String, CoachingMeetingInput?)] = []
+            for item in batch {
+                inputs.append((item.meeting.id, item.signature, Self.input(from: item.meeting)))
             }
-            completedSignatures[meeting.id] = signature
+            let computed = await withTaskGroup(of: (UUID, TrainingRow?).self) { group in
+                for (id, _, input) in inputs {
+                    guard let input else { continue }
+                    group.addTask(priority: .userInitiated) { (id, Self.computeRow(from: input)) }
+                }
+                var results: [UUID: TrainingRow?] = [:]
+                for await (id, row) in group { results[id] = row }
+                return results
+            }
+            guard generation == refreshGeneration, !Task.isCancelled else { return }
+            for (id, signature, _) in inputs {
+                if let row = computed[id] ?? nil {
+                    rowsByMeetingID[id] = row
+                } else {
+                    rowsByMeetingID.removeValue(forKey: id)
+                }
+                completedSignatures[id] = signature
+            }
             publishRows(in: meetings)
         }
 
         finishRefresh(generation: generation)
+        if !pending.isEmpty { scheduleCacheSave() }
+    }
+
+    private func scheduleCacheSave() {
+        guard let cacheURL else { return }
+        var entries: [UUID: CoachingRowCache.Entry] = [:]
+        for (id, signature) in completedSignatures {
+            entries[id] = CoachingRowCache.Entry(signature: signature, row: rowsByMeetingID[id])
+        }
+        cacheSaveTask?.cancel()
+        cacheSaveTask = Task.detached(priority: .utility) {
+            CoachingRowCache.save(entries, to: cacheURL)
+        }
     }
 
     private func finishRefresh(generation: Int) {
@@ -2851,25 +2924,29 @@ struct HomeStats: Equatable {
     let topFillerMeetings: Int
     let fillersPerMeeting: Int?
 
-    struct MeetingTotals: Equatable { let count: Int; let minutes: Int }
-    struct FillerStats: Equatable { let topFiller: String?; let topFillerMeetings: Int; let perMeeting: Int? }
+    struct MeetingTotals: Equatable { let count: Int; let minutes: Int; let longestMinutes: Int }
+    struct FillerStats: Equatable { let topFiller: String?; let topFillerMeetings: Int; let perMeeting: Int?; let questionsAsked: Int }
 
     static func meetingTotals(_ meetings: [Meeting]) -> MeetingTotals {
         var count = 0
         var seconds: TimeInterval = 0
+        var longest: TimeInterval = 0
         for meeting in meetings where meeting.externalSource == nil {
             guard let duration = meeting.duration, duration > 0 else { continue }
             count += 1
             seconds += duration
+            longest = max(longest, duration)
         }
-        return MeetingTotals(count: count, minutes: Int((seconds / 60).rounded()))
+        return MeetingTotals(count: count, minutes: Int((seconds / 60).rounded()), longestMinutes: Int((longest / 60).rounded()))
     }
 
     static func fillerStats(_ rows: [TrainingRow]) -> FillerStats {
         var tally: [String: Int] = [:]
         var fillerTotal = 0.0
         var fillerMeetings = 0
+        var questions = 0
         for row in rows {
+            questions += row.questions
             if let word = row.topFiller?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased(), !word.isEmpty {
                 tally[word, default: 0] += 1
             }
@@ -2880,7 +2957,8 @@ struct HomeStats: Equatable {
         }
         let top = tally.max { a, b in a.value != b.value ? a.value < b.value : a.key > b.key }
         return FillerStats(topFiller: top?.key, topFillerMeetings: top?.value ?? 0,
-                           perMeeting: fillerMeetings > 0 ? Int((fillerTotal / Double(fillerMeetings)).rounded()) : nil)
+                           perMeeting: fillerMeetings > 0 ? Int((fillerTotal / Double(fillerMeetings)).rounded()) : nil,
+                           questionsAsked: questions)
     }
 
     static func compute(meetings: [Meeting], rows: [TrainingRow]) -> HomeStats {
@@ -2906,7 +2984,7 @@ struct HomeStats: Equatable {
     }
 }
 
-struct TrainingRow: Identifiable, Sendable {
+struct TrainingRow: Identifiable, Sendable, Codable {
     let id: UUID
     let date: Date
     let dateString: String

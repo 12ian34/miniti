@@ -579,8 +579,10 @@ struct ReadyStateView: View {
                     if let coachingStore, !appState.isRecording, !appState.isStartingMeeting,
                        appState.pendingAutoStartEvent == nil {
                         HomeSetupStateObserver(state: appState.homeSetupState) {
-                            if !appState.isHomeSetupExpanded {
-                                HomeStatsPanel(meetings: meetings, store: coachingStore)
+                            if !appState.isHomeSetupExpanded, !appState.homeSetupState.statsHidden {
+                                HomeStatsPanel(meetings: meetings, store: coachingStore) {
+                                    appState.homeSetupState.statsHidden = true
+                                }
                             }
                         }
                     }
@@ -3848,18 +3850,28 @@ struct MarkdownExportIssueCard: View {
 struct HomeStatsPanel: View {
     let meetings: [Meeting]
     @ObservedObject var store: CoachingOverviewStore
+    var onHide: () -> Void = {}
 
     var body: some View {
         let totals = HomeStats.meetingTotals(meetings)
         if totals.count > 0 {
-            // Filler numbers wait for Coaching to finish counting, so they never show
-            // "none yet" and then jump, and Home does no work per published row.
-            let fillers: HomeStats.FillerStats? = store.isComputing ? nil : HomeStats.fillerStats(store.rows)
+            // Coaching results are cached between launches, so this is ready straight
+            // away. "counting" only shows before anything has ever been counted.
+            let coaching: HomeStats.FillerStats? = store.rows.isEmpty && store.isComputing ? nil : HomeStats.fillerStats(store.rows)
             VStack(alignment: .leading, spacing: MinitiDesignSystem.Spacing.comfortable) {
-                Text("your miniti so far")
-                    .font(.system(size: MinitiDesignSystem.CoachingTypography.size(13), weight: .bold, design: .default))
-                    .foregroundStyle(ColorPalette.Text.primary)
-                    .accessibilityAddTraits(.isHeader)
+                HStack(alignment: .firstTextBaseline) {
+                    Text("your miniti so far")
+                        .font(.system(size: MinitiDesignSystem.CoachingTypography.size(13), weight: .bold, design: .default))
+                        .foregroundStyle(ColorPalette.Text.primary)
+                        .accessibilityAddTraits(.isHeader)
+                    Spacer(minLength: MinitiDesignSystem.Spacing.standard)
+                    Button(action: onHide) {
+                        MinitiControlLabel(role: .secondary) { Text("hide") }
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("Hide stats")
+                    .help("Hide stats. Show them again in Settings, General.")
+                }
                 // Grid rows share one height so paired tiles line up.
                 Grid(horizontalSpacing: MinitiDesignSystem.Spacing.standard, verticalSpacing: MinitiDesignSystem.Spacing.standard) {
                     GridRow {
@@ -3870,10 +3882,17 @@ struct HomeStatsPanel: View {
                              label: "recorded", accent: ColorPalette.Accent.blue)
                     }
                     GridRow {
-                        tile(icon: "quote.opening", value: fillerWord(fillers),
-                             label: fillerWordLabel(fillers), accent: ColorPalette.Coaching.fillers, wraps: true)
-                        tile(icon: "waveform", value: fillers.map { $0.perMeeting.map { "\($0)" } ?? "none yet" } ?? "counting",
+                        tile(icon: "quote.opening", value: fillerWord(coaching),
+                             label: fillerWordLabel(coaching), accent: ColorPalette.Coaching.fillers, wraps: true)
+                        tile(icon: "waveform", value: coaching.map { $0.perMeeting.map { "\($0)" } ?? "none yet" } ?? "counting",
                              label: "fillers per meeting", accent: ColorPalette.Coaching.fillers)
+                    }
+                    GridRow {
+                        tile(icon: "questionmark.bubble", value: coaching.map { "\($0.questionsAsked)" } ?? "counting",
+                             label: "questions you asked", accent: ColorPalette.Coaching.questions)
+                        tile(icon: "hourglass", value: HomeStats.formatMinutes(totals.longestMinutes),
+                             spoken: HomeStats.spokenMinutes(totals.longestMinutes),
+                             label: "longest meeting", accent: ColorPalette.Accent.purple)
                     }
                 }
             }

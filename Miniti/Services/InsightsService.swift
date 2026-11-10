@@ -571,7 +571,7 @@ struct CoachingSnapshot: Sendable {
     let examples: [CoachingMetric: CoachingExample]
 }
 
-enum CoachingMetric: String, CaseIterable, Hashable, Sendable {
+enum CoachingMetric: String, CaseIterable, Hashable, Sendable, Codable {
     case fillers
     case pace
     case clarity
@@ -580,7 +580,7 @@ enum CoachingMetric: String, CaseIterable, Hashable, Sendable {
     case monologue
 }
 
-struct CoachingExample: Sendable, Equatable {
+struct CoachingExample: Sendable, Equatable, Codable {
     let meetingID: UUID
     let meetingTitle: String
     let meetingDate: Date

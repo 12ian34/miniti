@@ -985,6 +985,17 @@ struct HomeSetupSettingsSection: View {
                 }
             }
             .id("general.setup")
+            #if os(macOS)
+            Section("Stats on Home") {
+                Toggle("Show stats on Home", isOn: Binding(
+                    get: { !appState.homeSetupState.statsHidden },
+                    set: { appState.homeSetupState.statsHidden = !$0 }))
+                    .accessibilityIdentifier("home.stats.settings.visible")
+                Text("Meetings, time recorded, filler words, questions and your longest meeting. Counted on this Mac.")
+                    .font(.caption).foregroundStyle(ColorPalette.Text.secondary)
+            }
+            .id("general.homeStats")
+            #endif
         }
     }
 }

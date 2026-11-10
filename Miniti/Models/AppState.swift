@@ -25,6 +25,8 @@ final class HomeSetupState: ObservableObject {
     @AppStorage("homeSetup.skipped.v1") var skippedSteps = ""
     @AppStorage("homeSetup.audioReviewed.v1") var audioReviewed = false
     @AppStorage("homeSetup.foldersReviewed.v1") var foldersReviewed = false
+    /// Mac Home stats panel, hidden from Home and restored in Settings, General.
+    @AppStorage("home.statsHidden.v1") var statsHidden = false
     @Published var revision = 0
     /// Bumped when the guide collapses into the Home setup button, so the button can
     /// draw attention once and people can find the guide again.
@@ -401,6 +403,7 @@ enum SettingsSearchCatalog {
         .init("general.showInMenuBar", "Show in Menu Bar", section: "Appearance", destination: .general, keywords: ["status item", "menu icon"], platforms: [.macOS]),
         .init("general.recordingIndicator", "Show Recording Indicator", section: "Appearance", destination: .general, keywords: ["floating", "panel", "overlay", "REC"], platforms: [.macOS]),
         .init("general.setup", "Setup guide", section: "Home", destination: .general, keywords: ["checklist", "restore", "hidden", "tasks", "set up miniti"]),
+        .init("general.homeStats", "Stats on Home", section: "Home", destination: .general, keywords: ["meetings", "minutes", "filler", "questions", "restore", "hidden"], platforms: [.macOS]),
         .init("general.interfaceScale", "Interface Scale", section: "Appearance", destination: .general, keywords: ["compact", "standard", "large", "text size"]),
 
         .init("account.subscription", "Subscription", section: "Plan", destination: .account, keywords: ["free", "pro", "upgrade", "manage", "restore"]),

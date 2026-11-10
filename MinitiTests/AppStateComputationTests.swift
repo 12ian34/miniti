@@ -2768,17 +2768,19 @@ final class AppStateComputationTests: XCTestCase {
         let live = Meeting(title: "Live", startTime: now.addingTimeInterval(-600), endTime: nil)       // unfinished
         let imported = Meeting(title: "Granola", startTime: now.addingTimeInterval(-7200), endTime: now)
         imported.externalSource = "granola"
-        func row(_ filler: String?, perMinute: Double, minutes: Double) -> TrainingRow {
+        func row(_ filler: String?, perMinute: Double, minutes: Double, questions: Int = 0) -> TrainingRow {
             TrainingRow(id: UUID(), date: now, dateString: "", title: "", fillers: perMinute, pace: 0, clarity: 0,
-                        questions: 0, durationMinutes: minutes, talkRatio: nil, longestMonologue: 0, topFiller: filler, examples: [:])
+                        questions: questions, durationMinutes: minutes, talkRatio: nil, longestMonologue: 0, topFiller: filler, examples: [:])
         }
         let stats = HomeStats.compute(meetings: [a, b, live, imported], rows: [
             row("Um", perMinute: 0.5, minutes: 60), row("um ", perMinute: 1, minutes: 30), row("like", perMinute: 0, minutes: 10)])
         XCTAssertEqual(stats.meetingCount, 2, "Unfinished and imported meetings are not counted")
         XCTAssertEqual(stats.recordedMinutes, 90)
+        XCTAssertEqual(HomeStats.meetingTotals([a, b, live, imported]).longestMinutes, 60)
         XCTAssertEqual(stats.topFiller, "um", "Case and spacing do not split the same word")
         XCTAssertEqual(stats.topFillerMeetings, 2)
         XCTAssertEqual(stats.fillersPerMeeting, 20, "(30 + 30 + 0) fillers over 3 meetings")
+        XCTAssertEqual(HomeStats.fillerStats([row("um", perMinute: 1, minutes: 10, questions: 3), row(nil, perMinute: 0, minutes: 5, questions: 4)]).questionsAsked, 7)
         XCTAssertEqual(HomeStats.formatMinutes(45), "45 min")
         XCTAssertEqual(HomeStats.formatMinutes(605), "10 h 5 min")
         XCTAssertEqual(HomeStats.formatMinutes(60), "1 h")

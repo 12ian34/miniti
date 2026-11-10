@@ -512,6 +512,74 @@ final class TrainingMetricsTests: XCTestCase {
         XCTAssertEqual(store.rows.first?.title, "Updated title")
     }
 
+    @MainActor
+    func testCoachingRowsSurviveRelaunchWithoutRecountingAndDeletedMeetingsLeaveTheCache() async throws {
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("coaching-cache-\(UUID().uuidString).json")
+        defer { try? FileManager.default.removeItem(at: url) }
+        var meetings: [Meeting] = []
+        for index in 0..<9 {
+            let start = Date(timeIntervalSince1970: Double(100 + index * 1000))
+            let segment = TranscriptSegment(text: "So um I think we should um ship it. What do you think?",
+                                            speaker: DeepgramService.micSpeakerID, timestamp: 1, isFinal: true)
+            meetings.append(Meeting(title: "Cached \(index)", startTime: start,
+                                    endTime: start.addingTimeInterval(300), segments: [segment]))
+        }
+        let first = CoachingOverviewStore(cacheURL: url)
+        first.refreshIfNeeded(meetings: meetings)
+        try await waitForCoachingStore(first) { first.rows.count == 9 && !first.isComputing }
+        try await waitForCacheFile(url)
+
+        let relaunched = CoachingOverviewStore(cacheURL: url)
+        relaunched.refreshIfNeeded(meetings: meetings)
+        XCTAssertEqual(relaunched.rows.count, 9, "Cached rows are available immediately after relaunch")
+        XCTAssertFalse(relaunched.isComputing, "Unchanged meetings are not analysed again")
+
+        relaunched.refreshIfNeeded(meetings: Array(meetings.prefix(2)))
+        try await waitForCacheFile(url) { (CoachingRowCache.load(from: url)?.count ?? 0) == 2 }
+        XCTAssertEqual(CoachingRowCache.load(from: url)?.count, 2, "Deleted meetings leave the on-disk cache")
+    }
+
+    @MainActor
+    func testCoachingCountsALargeHistoryQuicklyAndRelaunchesInstantly() async throws {
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("coaching-perf-\(UUID().uuidString).json")
+        defer { try? FileManager.default.removeItem(at: url) }
+        var meetings: [Meeting] = []
+        for index in 0..<200 {
+            let start = Date(timeIntervalSince1970: Double(10_000 + index * 4000))
+            var segments: [TranscriptSegment] = []
+            for line in 0..<400 {
+                let speaker = line % 3 == 0 ? 2 : DeepgramService.micSpeakerID
+                segments.append(TranscriptSegment(text: "So um I think we should basically ship it, like, this week. What do you think about that?",
+                                                  speaker: speaker, timestamp: Double(line * 6), isFinal: true))
+            }
+            meetings.append(Meeting(title: "Meeting \(index)", startTime: start, endTime: start.addingTimeInterval(2400), segments: segments))
+        }
+        let begin = CFAbsoluteTimeGetCurrent()
+        let store = CoachingOverviewStore(cacheURL: url)
+        store.refreshIfNeeded(meetings: meetings)
+        for _ in 0..<12_000 where !(store.rows.count == 200 && !store.isComputing) {
+            try await Task.sleep(nanoseconds: 10_000_000)
+        }
+        XCTAssertEqual(store.rows.count, 200)
+        let firstCount = CFAbsoluteTimeGetCurrent() - begin
+        try await waitForCacheFile(url)
+        let relaunchBegin = CFAbsoluteTimeGetCurrent()
+        let relaunched = CoachingOverviewStore(cacheURL: url)
+        relaunched.refreshIfNeeded(meetings: meetings)
+        let relaunch = CFAbsoluteTimeGetCurrent() - relaunchBegin
+        print("COACHING_PERF: first count \(firstCount)s for 200 x 400 lines; relaunch \(relaunch)s, rows \(relaunched.rows.count)")
+        XCTAssertEqual(relaunched.rows.count, 200)
+        XCTAssertFalse(relaunched.isComputing)
+    }
+
+    private func waitForCacheFile(_ url: URL, until condition: @escaping () -> Bool = { true }) async throws {
+        for _ in 0..<200 {
+            if FileManager.default.fileExists(atPath: url.path), condition() { return }
+            try await Task.sleep(nanoseconds: 20_000_000)
+        }
+        XCTFail("Cache file did not reach the expected state")
+    }
+
     func testCoachingAdvisorNeedsAtLeastOneSnapshot() {
         XCTAssertNil(CoachingAdvisor.analyze([]))
     }
