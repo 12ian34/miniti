@@ -2351,7 +2351,7 @@ struct LiveTrainingInsightsContent: View {
     }
 }
 
-private struct LiveTrainingFillersSection: View {
+struct LiveTrainingFillersSection: View {
     let presentations: [TrainingMetrics.SpeakerPresentation]
     @State private var expandedPresentationIDs: Set<String> = []
 
@@ -2367,7 +2367,8 @@ private struct LiveTrainingFillersSection: View {
                     VStack(alignment: .leading, spacing: 8) {
                         Text("\(speaker.totalFillers) fillers (\(String(format: "%.1f", speaker.fillersPerMinute))/min)")
                             .font(.system(size: 10, weight: .regular, design: .default))
-                            .foregroundStyle(Color(hex: "71717A"))
+                            .foregroundStyle(ColorPalette.Text.dim)
+                            .accessibilityIdentifier("coaching.fillers.summary.\(speaker.speakerLabel)")
 
                         if presentation.hasMultipleDetails {
                             Button {

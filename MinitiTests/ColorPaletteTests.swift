@@ -345,6 +345,33 @@ final class ColorPaletteTests: XCTestCase {
     }
 
     @MainActor
+    func testFillerCountsUseReadableTextInProductionSections() throws {
+        let speaker = TrainingMetrics.SpeakerStats(
+            speakerLabel: "You", isLocalMic: true, wordCount: 100, segmentCount: 2,
+            fillers: [.init(word: "um", count: 7)], totalFillers: 7,
+            fillersPerMinute: 3.5, wordsPerMinute: 50, longestMonologueWords: 60,
+            questionsAsked: 1, avgWordsPerTurn: 50)
+        var sections: [(String, AnyView)] = [
+            ("shared card", AnyView(FillerWordsSection(speaker: speaker, durationMinutes: 2)))
+        ]
+        #if os(macOS)
+        sections.append(("live Mac", AnyView(LiveTrainingFillersSection(presentations: [
+            .init(id: "self", summary: speaker, details: [speaker])
+        ]))))
+        #endif
+        for (name, section) in sections {
+            // The heading/help/count accent is gold and the entry word is muted.
+            // Only the summary line uses dim, so surrounding text cannot mask it.
+            let renderer = ImageRenderer(content: section.frame(width: 420)
+                .background(ColorPalette.Background.primary))
+            renderer.scale = 2
+            let raster = try XCTUnwrap(renderer.cgImage)
+            XCTAssertGreaterThan(try pixelCount(ColorPalette.Text.dim, in: raster), 10,
+                                 "\(name): filler summary must be readable independently of its heading")
+        }
+    }
+
+    @MainActor
     func testCopyLabelUsesNeutralChromeAndSuccessFeedback() throws {
         #if os(macOS)
         let minimum: CGFloat = 24

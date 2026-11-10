@@ -1631,7 +1631,7 @@ struct TrainingEmptyState: View {
     }
 }
 
-private struct FillerWordsSection: View {
+struct FillerWordsSection: View {
     @Environment(\.readingMetrics) private var readingMetrics
     let speaker: TrainingMetrics.SpeakerStats
     let durationMinutes: Double
@@ -1646,7 +1646,8 @@ private struct FillerWordsSection: View {
             VStack(alignment: .leading, spacing: 10) {
                 Text("\(speaker.totalFillers) fillers (\(String(format: "%.1f", speaker.fillersPerMinute))/min)")
                     .font(.system(size: readingMetrics.insightSecondarySize, weight: .regular, design: .default))
-                    .foregroundStyle(Color(hex: "71717A"))
+                    .foregroundStyle(ColorPalette.Text.dim)
+                    .accessibilityIdentifier("coaching.fillers.summary.\(speaker.speakerLabel)")
                 
                 if speaker.speakerLabel != "Others" && !speaker.fillers.isEmpty {
                     VStack(alignment: .leading, spacing: 6) {

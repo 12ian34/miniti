@@ -252,12 +252,6 @@
     {
       "path": "Miniti/Views/InsightsView.swift",
       "rule": "raw-color",
-      "signature": "Color ( hex : \"71717A\" )",
-      "count": 1
-    },
-    {
-      "path": "Miniti/Views/InsightsView.swift",
-      "rule": "raw-color",
       "signature": "Color ( hex : \"8B949E\" )",
       "count": 21
     },
@@ -895,7 +889,7 @@
       "path": "Miniti/Views/MeetingView.swift",
       "rule": "raw-color",
       "signature": "Color ( hex : \"71717A\" )",
-      "count": 17
+      "count": 16
     },
     {
       "path": "Miniti/Views/MeetingView.swift",

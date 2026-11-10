@@ -93,6 +93,21 @@ final class AccountJourneys: XCTestCase {
     }
     #endif
 
+    #if os(macOS)
+    func testLiveCoachingFillerSummariesKeepCountAndRateText() {
+        launch(screenshotScene: "recording-coaching")
+        let summaries = app.staticTexts.matching(NSPredicate(format: "identifier BEGINSWITH %@", "coaching.fillers.summary."))
+        XCTAssertTrue(summaries.firstMatch.waitForExistence(timeout: 10), app.debugDescription)
+        XCTAssertGreaterThan(summaries.count, 0)
+        for summary in summaries.allElementsBoundByIndex {
+            let text = summary.value as? String ?? ""
+            XCTAssertTrue(text.contains(" fillers ("), text)
+            XCTAssertTrue(text.hasSuffix("/min)"), text)
+        }
+        captureAppScreen("Live Coaching readable filler summaries")
+    }
+    #endif
+
     func testCoachingStatsShowsAllSixAggregateValues() {
         launch(screenshotScene: "coaching")
         let stats = app.buttons["coaching.tab.stats"]
