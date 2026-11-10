@@ -111,6 +111,34 @@ private extension MainNavigationDestination {
     }
 }
 
+/// Mac sidebar width rules: the stored width stays within the design bounds and never
+/// leaves the main content less than saved meetings need.
+enum MainWindowSidebarWidth {
+    static let mainContentMinimumWidth: CGFloat = 680
+
+    static func maximum(windowWidth: CGFloat) -> CGFloat {
+        max(MinitiDesignSystem.Sidebar.minimumExpandedWidth,
+            min(MinitiDesignSystem.Sidebar.maximumExpandedWidth, windowWidth - mainContentMinimumWidth - 1))
+    }
+
+    static func clamped(_ width: CGFloat, maximum: CGFloat) -> CGFloat {
+        min(max(width, MinitiDesignSystem.Sidebar.minimumExpandedWidth), maximum)
+    }
+}
+
+/// J/K stepping through an ordered meeting list: next or previous from the current
+/// meeting, or the first (J) / last (K) when nothing in the list is selected.
+enum MainWindowListNavigation {
+    static func step(in ids: [UUID], from current: UUID?, direction: Int) -> UUID? {
+        guard !ids.isEmpty else { return nil }
+        if let current, let index = ids.firstIndex(of: current) {
+            let next = index + direction
+            return ids.indices.contains(next) ? ids[next] : nil
+        }
+        return direction > 0 ? ids.first : ids.last
+    }
+}
+
 struct MainWindow: View {
     private static let historySearchDebounceNanoseconds: UInt64 = 200_000_000
     private static let expandedSidebarMinimumWindowWidth: CGFloat = 940
@@ -138,6 +166,9 @@ struct MainWindow: View {
     @State private var coachingOriginMeetingID: UUID?
     @State private var historyOriginMeetingID: UUID?
     @State private var historyPageSearchFocusRequest = 0
+    /// The History page's visible order (folder filter and page search), for J/K.
+    @State private var historyPageOrder: [UUID] = []
+    @State private var isHistoryPageSearchFocused = false
     @State private var searchDebounceTask: Task<Void, Never>?
     @State private var navigationHistory = MainNavigationHistory(current: .home)
     @State private var isApplyingNavigationHistory = false
@@ -286,7 +317,9 @@ struct MainWindow: View {
                                 refreshMeetings()
                             },
                             onDelete: { meeting in deleteMeeting(meeting) },
-                            searchFocusRequest: historyPageSearchFocusRequest
+                            searchFocusRequest: historyPageSearchFocusRequest,
+                            onVisibleMeetingsChange: { historyPageOrder = $0 },
+                            onSearchFocusChange: { isHistoryPageSearchFocused = $0 }
                         )
                     } else {
                         MeetingView(meetings: meetings)
@@ -375,7 +408,9 @@ struct MainWindow: View {
             MainWindowNavigationSwipeObserver(
                 canGoBack: canNavigateBack,
                 canGoForward: canNavigateForward,
-                isMeetingSearchFocused: isMeetingSearchFocused,
+                // A focused single-line search field, in the sidebar or on the History
+                // page, still lets a horizontal swipe navigate.
+                isMeetingSearchFocused: isMeetingSearchFocused || isHistoryPageSearchFocused,
                 onProgress: updateNavigationSwipeProgress,
                 onBack: navigateBack,
                 onForward: navigateForward
@@ -482,19 +517,16 @@ struct MainWindow: View {
 
     /// Saved meetings need 680pt (transcript plus insights), so the sidebar never
     /// takes more than the window can spare, whatever width was stored.
-    private static let mainContentMinimumWidth: CGFloat = 680
-
     private func maximumSidebarWidth(windowWidth: CGFloat) -> CGFloat {
-        max(MinitiDesignSystem.Sidebar.minimumExpandedWidth,
-            min(MinitiDesignSystem.Sidebar.maximumExpandedWidth, windowWidth - Self.mainContentMinimumWidth - 1))
+        MainWindowSidebarWidth.maximum(windowWidth: windowWidth)
     }
 
     private func clampedSidebarWidth(maximum: CGFloat) -> CGFloat {
-        min(max(CGFloat(storedSidebarWidth), MinitiDesignSystem.Sidebar.minimumExpandedWidth), maximum)
+        MainWindowSidebarWidth.clamped(CGFloat(storedSidebarWidth), maximum: maximum)
     }
 
     private func setSidebarWidth(_ width: CGFloat, maximum: CGFloat = MinitiDesignSystem.Sidebar.maximumExpandedWidth) {
-        storedSidebarWidth = Double(min(max(width, MinitiDesignSystem.Sidebar.minimumExpandedWidth), maximum).rounded())
+        storedSidebarWidth = Double(MainWindowSidebarWidth.clamped(width, maximum: maximum).rounded())
     }
 
     /// A wider invisible target over the 1pt divider: drag to resize, double-click to reset.
@@ -663,22 +695,14 @@ struct MainWindow: View {
     }
     
     private func navigateHistory(direction: Int) {
-        let navMeetings = displayedMeetings
-        guard !navMeetings.isEmpty else { return }
-
-        if let selectedMeetingID,
-           let currentIndex = navMeetings.firstIndex(where: { $0.id == selectedMeetingID }) {
-            let newIndex = currentIndex + direction
-            if newIndex >= 0 && newIndex < navMeetings.count {
-                self.selectedMeetingID = navMeetings[newIndex].id
-            }
-        } else {
-            if direction > 0 {
-                selectedMeetingID = navMeetings.first?.id
-            } else {
-                selectedMeetingID = navMeetings.last?.id
-            }
-        }
+        // On the History page, or in a meeting opened from it, J/K follow the page's
+        // own filtered order instead of the sidebar list.
+        let followsHistoryPage = (showHistory && selectedMeetingID == nil) || historyOriginMeetingID != nil
+        let ids = followsHistoryPage ? historyPageOrder : displayedMeetings.map(\.id)
+        guard let next = MainWindowListNavigation.step(in: ids, from: selectedMeetingID, direction: direction),
+              meetings.contains(where: { $0.id == next }) else { return }
+        if followsHistoryPage { historyOriginMeetingID = next }
+        selectedMeetingID = next
     }
 
     private func recordNavigationDestinationChange() {
@@ -4517,6 +4541,8 @@ struct HistoryPageView: View {
     let onTogglePin: (Meeting) -> Void
     let onDelete: (Meeting) -> Void
     var searchFocusRequest = 0
+    var onVisibleMeetingsChange: ([UUID]) -> Void = { _ in }
+    var onSearchFocusChange: (Bool) -> Void = { _ in }
     @State private var query = ""
     @State private var debouncedQuery = ""
     /// Computed once per settled query, not on every render: the search reads transcripts.
@@ -4544,22 +4570,31 @@ struct HistoryPageView: View {
     }
 
     private var sections: [(title: String, meetings: [Meeting])] {
-        let visible = visibleMeetings
+        Self.sections(of: visibleMeetings, searching: searching)
+    }
+
+    /// Pinned first, then today, yesterday, this week and older; one results group while searching.
+    static func sections(of visible: [Meeting], searching: Bool, now: Date = Date(),
+                         calendar: Calendar = .current) -> [(title: String, meetings: [Meeting])] {
         if searching { return visible.isEmpty ? [] : [("results", visible)] }
-        let calendar = Calendar.current
         let pinned = visible.filter(\.isPinned)
         let unpinned = visible.filter { !$0.isPinned }
-        let today = unpinned.filter { calendar.isDateInToday($0.startTime) }
-        let yesterday = unpinned.filter { calendar.isDateInYesterday($0.startTime) }
-        let week = unpinned.filter {
-            !calendar.isDateInToday($0.startTime) && !calendar.isDateInYesterday($0.startTime) &&
-            calendar.isDate($0.startTime, equalTo: Date(), toGranularity: .weekOfYear)
+        let today = unpinned.filter { calendar.isDate($0.startTime, inSameDayAs: now) }
+        let previousDay = calendar.date(byAdding: .day, value: -1, to: now)
+        let yesterday = unpinned.filter { meeting in
+            previousDay.map { calendar.isDate(meeting.startTime, inSameDayAs: $0) } ?? false
         }
-        let used = Set((today + yesterday + week).map(\.id))
-        let older = unpinned.filter { !used.contains($0.id) }
+        let used = Set((today + yesterday).map(\.id))
+        let week = unpinned.filter {
+            !used.contains($0.id) && calendar.isDate($0.startTime, equalTo: now, toGranularity: .weekOfYear)
+        }
+        let grouped = used.union(week.map(\.id))
+        let older = unpinned.filter { !grouped.contains($0.id) }
         return [("pinned", pinned), ("today", today), ("yesterday", yesterday), ("this week", week), ("older", older)]
             .filter { !$0.1.isEmpty }
     }
+
+    private var orderedVisibleIDs: [UUID] { sections.flatMap { $0.meetings.map(\.id) } }
 
     private var selectedFilter: String {
         if appState.showUnfiledMeetings || (appState.folderFilterID != nil && appState.meetingFolders.folder(appState.folderFilterID) == nil) {
@@ -4601,6 +4636,10 @@ struct HistoryPageView: View {
         }
         .onChange(of: meetings.map(\.id)) { _, _ in if !debouncedQuery.isEmpty { refreshResults() } }
         .onChange(of: searchFocusRequest) { _, _ in searchFocused = true }
+        .onChange(of: searchFocused) { _, focused in onSearchFocusChange(focused) }
+        .onChange(of: orderedVisibleIDs) { _, ids in onVisibleMeetingsChange(ids) }
+        .onAppear { onVisibleMeetingsChange(orderedVisibleIDs) }
+        .onDisappear { if searchFocused { onSearchFocusChange(false) } }
         .sheet(isPresented: $managingFolders) {
             MeetingFolderManager(meetings: meetings)
                 .environmentObject(appState)

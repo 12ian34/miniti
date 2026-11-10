@@ -2762,6 +2762,78 @@ final class AppStateComputationTests: XCTestCase {
     }
 
     #if !IOS_TEST_TARGET
+    func testHistoryPageIsADestinationThatMeetingsReturnTo() {
+        let meetingID = UUID()
+        var history = MainNavigationHistory(current: .home)
+        history.visit(.history)
+        history.visit(.meeting(meetingID))
+        XCTAssertEqual(history.goBack(), .history, "Back from a meeting opened on History returns to History")
+        XCTAssertEqual(history.goBack(), .home)
+        history.retainMeetings([])
+        XCTAssertEqual(history.goForward(), .history, "History survives pruning of deleted meetings")
+    }
+
+    func testSidebarWidthLeavesSavedMeetingsTheirMinimum() {
+        XCTAssertEqual(MainWindowSidebarWidth.maximum(windowWidth: 940), 259, "940pt window keeps 680pt for the meeting")
+        XCTAssertEqual(MainWindowSidebarWidth.maximum(windowWidth: 1600), MinitiDesignSystem.Sidebar.maximumExpandedWidth)
+        XCTAssertEqual(MainWindowSidebarWidth.maximum(windowWidth: 700), MinitiDesignSystem.Sidebar.minimumExpandedWidth)
+        XCTAssertEqual(MainWindowSidebarWidth.clamped(500, maximum: 259), 259)
+        XCTAssertEqual(MainWindowSidebarWidth.clamped(120, maximum: 400), MinitiDesignSystem.Sidebar.minimumExpandedWidth)
+        XCTAssertEqual(MainWindowSidebarWidth.clamped(320, maximum: 400), 320)
+    }
+
+    func testListNavigationStepsWithinTheGivenOrder() {
+        let ids = [UUID(), UUID(), UUID()]
+        XCTAssertEqual(MainWindowListNavigation.step(in: ids, from: nil, direction: 1), ids[0])
+        XCTAssertEqual(MainWindowListNavigation.step(in: ids, from: nil, direction: -1), ids[2])
+        XCTAssertEqual(MainWindowListNavigation.step(in: ids, from: ids[0], direction: 1), ids[1])
+        XCTAssertNil(MainWindowListNavigation.step(in: ids, from: ids[2], direction: 1), "No wrap past the end")
+        XCTAssertEqual(MainWindowListNavigation.step(in: ids, from: UUID(), direction: 1), ids[0], "A meeting outside the list starts at the top")
+        XCTAssertNil(MainWindowListNavigation.step(in: [], from: nil, direction: 1))
+    }
+
+    func testHistoryPageGroupsPinnedFirstThenByDay() throws {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(secondsFromGMT: 0)!
+        calendar.firstWeekday = 2
+        let now = try XCTUnwrap(calendar.date(from: DateComponents(year: 2026, month: 11, day: 12, hour: 15)))
+        func meeting(_ title: String, daysAgo: Int, pinned: Bool = false) -> Meeting {
+            let m = Meeting(title: title, startTime: now.addingTimeInterval(TimeInterval(-daysAgo * 86400 - 3600)), endTime: now)
+            m.isPinned = pinned
+            return m
+        }
+        let meetings = [meeting("today", daysAgo: 0), meeting("pinned", daysAgo: 30, pinned: true),
+                        meeting("yesterday", daysAgo: 1), meeting("this week", daysAgo: 2), meeting("older", daysAgo: 20)]
+        let sections = HistoryPageView.sections(of: meetings, searching: false, now: now, calendar: calendar)
+        XCTAssertEqual(sections.map(\.title), ["pinned", "today", "yesterday", "this week", "older"])
+        XCTAssertEqual(sections.flatMap { $0.meetings.map(\.title) }, ["pinned", "today", "yesterday", "this week", "older"])
+        let searching = HistoryPageView.sections(of: meetings, searching: true, now: now, calendar: calendar)
+        XCTAssertEqual(searching.map(\.title), ["results"])
+        XCTAssertTrue(HistoryPageView.sections(of: [], searching: true).isEmpty)
+    }
+
+    @MainActor func testHistoryPageRendersAndReportsItsVisibleOrder() throws {
+        let container = try TestSupport.makeInMemoryContainer()
+        let state = AppState(); state.modelContext = container.mainContext
+        state.folderFilterID = nil; state.showUnfiledMeetings = false
+        let recent = Meeting(title: "Recent", startTime: Date().addingTimeInterval(-600), endTime: Date())
+        let pinned = Meeting(title: "Pinned", startTime: Date().addingTimeInterval(-40 * 86400), endTime: Date().addingTimeInterval(-40 * 86400 + 600))
+        pinned.isPinned = true
+        [recent, pinned].forEach { container.mainContext.insert($0) }
+        var reported: [UUID] = []
+        let page = HistoryPageView(meetings: [recent, pinned], onOpen: { _ in }, onTogglePin: { _ in }, onDelete: { _ in },
+                                   onVisibleMeetingsChange: { reported = $0 })
+        let host = NSHostingView(rootView: page.environmentObject(state).frame(width: 900, height: 700))
+        host.frame = NSRect(x: 0, y: 0, width: 900, height: 700)
+        let window = NSWindow(contentRect: host.frame, styleMask: [.borderless], backing: .buffered, defer: false)
+        window.contentView = host
+        host.layoutSubtreeIfNeeded()
+        RunLoop.main.run(until: Date().addingTimeInterval(0.2))
+        XCTAssertGreaterThan(host.fittingSize.height, 0)
+        XCTAssertEqual(reported, [pinned.id, recent.id], "J/K follow the page: pinned first, then newest")
+        window.contentView = nil
+    }
+
     func testMainNavigationHistoryMovesBackAndForwardInVisitOrder() {
         let meetingID = UUID()
         var history = MainNavigationHistory(current: .home)
