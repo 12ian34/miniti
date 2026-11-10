@@ -16,6 +16,10 @@ final class AccountJourneys: XCTestCase {
         testID = UUID().uuidString
     }
     override func tearDown() {
+        #if os(iOS)
+        // XCTest runs teardown after a failure even when a test-local defer is bypassed.
+        XCUIDevice.shared.orientation = .portrait
+        #endif
         if app != nil {
             app.terminate()
             app.launchArguments = ["-MinitiUITestCleanup"]
