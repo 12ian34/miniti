@@ -322,6 +322,33 @@ private struct MinitiSheetPresentation<SheetContent: View>: ViewModifier {
     }
 }
 
+/// Item identity and native dismissal remain owned by the supplied binding.
+private struct MinitiItemSheetPresentation<Item: Identifiable, SheetContent: View>: ViewModifier {
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    @Binding var item: Item?
+    let sheetContent: (Item) -> SheetContent
+
+    func body(content: Content) -> some View {
+        content.sheet(item: $item) { item in
+            sheetContent(item).dynamicTypeSize(dynamicTypeSize)
+        }
+    }
+}
+
+#if os(iOS)
+private struct MinitiFullScreenPresentation<CoverContent: View>: ViewModifier {
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    @Binding var isPresented: Bool
+    let coverContent: () -> CoverContent
+
+    func body(content: Content) -> some View {
+        content.fullScreenCover(isPresented: $isPresented) {
+            coverContent().dynamicTypeSize(dynamicTypeSize)
+        }
+    }
+}
+#endif
+
 extension View {
     func minitiSheet<SheetContent: View>(
         isPresented: Binding<Bool>,
@@ -329,6 +356,22 @@ extension View {
     ) -> some View {
         modifier(MinitiSheetPresentation(isPresented: isPresented, sheetContent: content))
     }
+
+    func minitiSheet<Item: Identifiable, SheetContent: View>(
+        item: Binding<Item?>,
+        @ViewBuilder content: @escaping (Item) -> SheetContent
+    ) -> some View {
+        modifier(MinitiItemSheetPresentation(item: item, sheetContent: content))
+    }
+
+    #if os(iOS)
+    func minitiFullScreenCover<CoverContent: View>(
+        isPresented: Binding<Bool>,
+        @ViewBuilder content: @escaping () -> CoverContent
+    ) -> some View {
+        modifier(MinitiFullScreenPresentation(isPresented: isPresented, coverContent: content))
+    }
+    #endif
 
     /// Allocate target space in normal layout. Parents must allow this minimum:
     /// a smaller outer frame can still make SwiftUI content overflow its slot.

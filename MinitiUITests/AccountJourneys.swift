@@ -799,6 +799,63 @@ final class AccountJourneys: XCTestCase {
         XCTAssertTrue(help.exists)
     }
 
+    func testHistorySpeakerRenameInheritsInterfaceSize() {
+        assertHistoryDetailPresentation(renaming: true, largeText: false, scale: 2)
+    }
+
+    func testHistoryMetricHelpInheritsInterfaceSize() {
+        assertHistoryDetailPresentation(renaming: false, largeText: false, scale: 2)
+    }
+
+    func testHistorySpeakerRenameAtNormalTextAcrossInterfaceScales() {
+        executionTimeAllowance = 180
+        for scale in 0...2 { assertHistoryDetailPresentation(renaming: true, largeText: false, scale: scale) }
+    }
+
+    func testHistorySpeakerRenameAtLargestTextAcrossInterfaceScales() {
+        executionTimeAllowance = 180
+        for scale in 0...2 { assertHistoryDetailPresentation(renaming: true, largeText: true, scale: scale) }
+    }
+
+    func testHistoryMetricHelpAtNormalTextAcrossInterfaceScales() {
+        executionTimeAllowance = 180
+        for scale in 0...2 { assertHistoryDetailPresentation(renaming: false, largeText: false, scale: scale) }
+    }
+
+    func testHistoryMetricHelpAtLargestTextAcrossInterfaceScales() {
+        executionTimeAllowance = 180
+        for scale in 0...2 { assertHistoryDetailPresentation(renaming: false, largeText: true, scale: scale) }
+    }
+
+    private func assertHistoryDetailPresentation(renaming: Bool, largeText: Bool, scale: Int) {
+        launch("readingMatrix", largeText: largeText,
+               screenshotScene: renaming ? "meeting" : "meeting-coaching", interfaceScale: scale)
+        let entry: XCUIElement
+        if renaming {
+            let transcript = app.buttons["meeting.section.transcript"]
+            XCTAssertTrue(transcript.waitForExistence(timeout: 10))
+            transcript.tap()
+            entry = app.buttons["Marcus Lee"].firstMatch
+        } else {
+            entry = app.buttons["About fillers"].firstMatch
+        }
+        XCTAssertTrue(entry.waitForExistence(timeout: 10), app.debugDescription)
+        entry.tap()
+        let scope = app.buttons["ui-test.readingScope.\(renaming ? "speakerRename" : "savedMetricHelp")"]
+        XCTAssertTrue(scope.waitForExistence(timeout: 5), app.debugDescription)
+        XCTAssertEqual(scope.label, "scale \(scale); reading \(largeText ? "largest" : "normal"); controls \(largeText ? "accessibility5" : ["large", "xLarge", "xxLarge"][scale])")
+        scope.tap()
+        XCTAssertTrue(scope.waitForNonExistence(timeout: 5))
+        captureAppScreen("History \(renaming ? "speaker rename" : "metric help") \(largeText ? "largest" : "normal") scale \(scale)")
+        let close = app.buttons[renaming ? "cancel" : "Close metric help"]
+        XCTAssertTrue(close.waitForExistence(timeout: 5))
+        XCTAssertTrue(close.isHittable)
+        close.tap()
+        XCTAssertTrue(close.waitForNonExistence(timeout: 5))
+        XCTAssertTrue(entry.waitForExistence(timeout: 5))
+        app.terminate()
+    }
+
     func testSpeakerGuidanceRetainsIdentityAndAttendeeActions() {
         launch("speakerGuidance")
         let guest = app.buttons["Fixture guest"]
@@ -1591,7 +1648,8 @@ final class AccountJourneys: XCTestCase {
         XCTAssertTrue(scope.waitForNonExistence(timeout: 5))
         let range = app.buttons["Apply range"]
         var swipes = 0
-        for _ in 0..<16 where !range.isHittable || range.frame.maxY > app.frame.maxY - 50 {
+        for _ in 0..<16 {
+            if range.isHittable && range.frame.maxY <= app.frame.maxY - 50 { break }
             app.collectionViews.firstMatch.swipeUp()
             swipes += 1
         }
@@ -1612,13 +1670,19 @@ final class AccountJourneys: XCTestCase {
         newScope.tap()
         XCTAssertTrue(newScope.waitForNonExistence(timeout: 5))
         let clear = app.buttons["Clear filters"]
-        for _ in 0..<16 where !clear.isHittable || clear.frame.maxY > app.frame.maxY - 50 { app.collectionViews.firstMatch.swipeUp() }
+        for _ in 0..<16 {
+            if clear.isHittable && clear.frame.maxY <= app.frame.maxY - 50 { break }
+            app.collectionViews.firstMatch.swipeUp()
+        }
         XCTAssertTrue(clear.isHittable)
         XCTAssertLessThanOrEqual(clear.frame.maxY, app.frame.maxY - 50)
         clear.tap()
         app.navigationBars["Filter"].buttons["Done"].tap()
-        XCTAssertFalse((search.value as? String ?? "").contains("after:"))
-        XCTAssertFalse((search.value as? String ?? "").contains("before:"))
+        let cleared = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+            guard search.exists, let value = search.value as? String else { return false }
+            return !value.contains("after:") && !value.contains("before:")
+        }, object: search)
+        XCTAssertEqual(XCTWaiter.wait(for: [cleared], timeout: 5), .completed)
     }
 
     private func assertDebugLogHeaderFits() {

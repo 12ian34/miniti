@@ -464,7 +464,7 @@ struct MeetingDetail_iOS: View {
         .onDisappear {
             saveTitle()
         }
-        .sheet(item: Binding(
+        .minitiSheet(item: Binding(
             get: { renamingSpeaker.map { SpeakerRenameTarget(id: $0) } },
             set: { renamingSpeaker = $0?.id }
         )) { target in
@@ -510,6 +510,7 @@ struct MeetingDetail_iOS: View {
                     renamingSpeaker = nil
                 }
             )
+            .modifier(AccountUITestReadingScopeProbe(name: "speakerRename", alignment: .topLeading))
             .presentationDetents([.height(360)])
             .presentationBackground(ColorPalette.Background.primary)
         }
@@ -1134,7 +1135,7 @@ private struct HistoricalMetricInfoButton_iOS: View {
         }
         .buttonStyle(.plain)
         .accessibilityLabel("About \(info.title.lowercased())")
-        .fullScreenCover(isPresented: $showInfo) {
+        .minitiFullScreenCover(isPresented: $showInfo) {
             ZStack {
                 Color.black.opacity(0.45)
                     .ignoresSafeArea()
@@ -1149,6 +1150,7 @@ private struct HistoricalMetricInfoButton_iOS: View {
                 .padding(.horizontal, 20)
             }
             .background(Color.clear)
+            .modifier(AccountUITestReadingScopeProbe(name: "savedMetricHelp", alignment: .topLeading))
         }
     }
 }
