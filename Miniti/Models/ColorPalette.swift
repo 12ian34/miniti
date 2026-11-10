@@ -107,6 +107,7 @@ struct ReadingMetrics: Equatable {
     let notesBodySize: CGFloat
     let dialogHeadingSize: CGFloat
     let dialogBodySize: CGFloat
+    let recoveryKeySize: CGFloat
     var consentHeadingSize: CGFloat { dialogHeadingSize }
     var consentSecondarySize: CGFloat { dialogBodySize }
     var consentBodySize: CGFloat { transcriptBodySize }
@@ -154,6 +155,7 @@ struct ReadingMetrics: Equatable {
         let interfaceIncrease = interfaceScale.transcriptBodySize - InterfaceScale.compact.transcriptBodySize
         dialogHeadingSize = resolved(17 + interfaceIncrease)
         dialogBodySize = resolved(12 + interfaceIncrease)
+        recoveryKeySize = resolved(14 + interfaceIncrease)
     }
 }
 

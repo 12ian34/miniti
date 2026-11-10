@@ -742,18 +742,6 @@
       "count": 2
     },
     {
-      "path": "Miniti/Views/ManagedAccountViews.swift",
-      "rule": "small-fixed-font",
-      "signature": "system ( size : 11 )",
-      "count": 1
-    },
-    {
-      "path": "Miniti/Views/ManagedAccountViews.swift",
-      "rule": "small-fixed-font",
-      "signature": "system ( size : 12 )",
-      "count": 3
-    },
-    {
       "path": "Miniti/Views/MeetingView.swift",
       "rule": "focus-opt-out",
       "signature": "focusable ( false )",

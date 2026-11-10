@@ -173,3 +173,9 @@ Recovery-key sign-in and Switch account (AL3) use shared reading metrics for the
 Recovery sign-in brings a newly returned error into the iPhone scroll viewport without changing focus, task state or action eligibility. The keyboard may remain open; longer errors remain scrollable.
 
 Email sign-in uses resolved dialog reading sizes for guidance, waiting and error copy. iPhone Send link dismisses the keyboard; the subsequent waiting/error state is brought into the scroll viewport while native actions remain outside it. Retry and New link keep their existing polling/request behavior, and leaving the sheet still cancels polling. The recovery-key branch choice stays owned by the access card.
+
+Recovery-key save/display: heading, guidance, saved toggle, hint and displayed key scale through ReadingMetrics. On iPhone the sheet scrolls while Continue stays outside the scroll content and disabled until the native toggle is on. The shared displayed key also appears in Account after explicit reveal. Copy still copies the exact key and changes its label to Copied; no new copying, reveal or rotation path is added.
+
+Home setup presents the recovery-key save sheet with an optional item containing the explicitly selected key and a random presentation ID. It clears that item on dismissal/account change and refuses an empty key; no identifier contains the key. This keeps content and presentation in one state instead of a separate key string and Boolean.
+
+Account device details and Rename/Sign out/Remove stack at iPhone accessibility sizes. The normal iPhone and Mac arrangements remain horizontal; each iPhone action label reserves the shared minimum target. This changes presentation only, not which devices can be renamed or removed, signing requirements or confirmation callbacks.

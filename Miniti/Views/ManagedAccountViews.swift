@@ -29,6 +29,7 @@ struct PurchaseReturnStatusView: View {
 struct RecoveryKeySheet: View {
     @EnvironmentObject var appState: AppState
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.readingMetrics) private var readingMetrics
     let recoveryKey: String
     var title: String = "Save your recovery key"
     var explanation: String = "Another way to sign in. Save it somewhere safe, such as your password manager: it signs this account in on a new device if you have no email, or if email is unavailable. It cannot be recovered if lost."
@@ -36,13 +37,49 @@ struct RecoveryKeySheet: View {
     @State private var copied = false
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
+        VStack(alignment: .leading, spacing: MinitiDesignSystem.Spacing.section) {
+            #if os(iOS)
+            ScrollView { readingContent.frame(maxWidth: .infinity, alignment: .leading) }
+                .accessibilityIdentifier("account.recoveryKey.scroll")
+            #else
+            readingContent
+            #endif
+            HStack {
+                Spacer()
+                Button {
+                    appState.acknowledgeRecoveryKey()
+                    dismiss()
+                } label: {
+                    Text("Continue")
+                        #if os(iOS)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .minitiMinimumControlTarget()
+                        #endif
+                }
+                .keyboardShortcut(.defaultAction)
+                .disabled(!saved)
+                .accessibilityIdentifier("account.recoveryKey.continue")
+            }
+        }
+        .padding(MinitiDesignSystem.Spacing.page)
+        #if os(macOS)
+        .frame(width: 460)
+        #else
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        #endif
+        .modifier(AccountUITestReadingScopeProbe(name: "saveRecovery", alignment: .topLeading))
+    }
+
+    private var readingContent: some View {
+        VStack(alignment: .leading, spacing: MinitiDesignSystem.Spacing.section) {
             Text(title)
-                .font(.system(size: 17, weight: .semibold))
+                .accessibilityIdentifier("account.recoveryKey.heading")
+                .font(.system(size: readingMetrics.dialogHeadingSize, weight: .semibold))
                 .foregroundStyle(ColorPalette.Text.primary)
+                .fixedSize(horizontal: false, vertical: true)
 
             Text(explanation)
-                .font(.system(size: 12))
+                .font(.system(size: readingMetrics.dialogBodySize))
                 .foregroundStyle(ColorPalette.Text.muted)
                 .fixedSize(horizontal: false, vertical: true)
 
@@ -50,44 +87,35 @@ struct RecoveryKeySheet: View {
 
             Toggle(isOn: $saved) {
                 Text("I have saved this recovery key somewhere safe.")
-                    .font(.system(size: 12))
+                    .font(.system(size: readingMetrics.dialogBodySize))
+                    .fixedSize(horizontal: false, vertical: true)
             }
             #if os(macOS)
             .toggleStyle(.checkbox)
             #endif
+            .accessibilityIdentifier("account.recoveryKey.saved")
 
             Text("You can show or replace it later in Settings, Account.")
-                .font(.system(size: 11))
+                .font(.system(size: readingMetrics.dialogBodySize))
                 .foregroundStyle(ColorPalette.Text.dim)
-
-            HStack {
-                Spacer()
-                Button("Continue") {
-                    appState.acknowledgeRecoveryKey()
-                    dismiss()
-                }
-                .keyboardShortcut(.defaultAction)
-                .disabled(!saved)
-            }
+                .fixedSize(horizontal: false, vertical: true)
         }
-        .padding(24)
-        #if os(macOS)
-        .frame(width: 460)
-        #endif
     }
 }
 
 /// The key in a selectable, copyable block.
 struct RecoveryKeyDisplay: View {
+    @Environment(\.readingMetrics) private var readingMetrics
     let recoveryKey: String
     @Binding var copied: Bool
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: MinitiDesignSystem.Spacing.standard) {
             Text(recoveryKey)
-                .font(.system(size: 14, weight: .semibold, design: .monospaced))
+                .font(.system(size: readingMetrics.recoveryKeySize, weight: .semibold, design: .monospaced))
                 .foregroundStyle(ColorPalette.Text.primary)
                 .textSelection(.enabled)
+                .fixedSize(horizontal: false, vertical: true)
                 .padding(12)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .background(
@@ -99,12 +127,20 @@ struct RecoveryKeyDisplay: View {
                         .stroke(ColorPalette.Border.light, lineWidth: 1)
                 )
                 .accessibilityLabel("Recovery key")
+                .accessibilityIdentifier("account.recoveryKey.value")
 
-            Button(copied ? "Copied" : "Copy") {
+            Button {
                 copyToPasteboard(recoveryKey)
                 copied = true
+            } label: {
+                Text(copied ? "Copied" : "Copy")
+                    .font(.system(size: readingMetrics.dialogBodySize))
+                    #if os(iOS)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .minitiMinimumControlTarget()
+                    #endif
             }
-            .font(.system(size: 12))
+            .accessibilityIdentifier("account.recoveryKey.copy")
         }
     }
 
@@ -926,14 +962,17 @@ struct HomeSetupSettingsSection: View {
 
 /// One presentation owner replaces the independent account and calendar nudges.
 struct HomeSetupGuide: View {
+    private struct RecoveryPresentation: Identifiable {
+        let id = UUID()
+        let key: String
+    }
     @EnvironmentObject private var appState: AppState
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var selected: HomeSetupStep?
     @State private var emailPresented = false
-    @State private var recoveryPresented = false
+    @State private var recoveryPresentation: RecoveryPresentation?
     @State private var foldersPresented = false
-    @State private var recoveryKey = ""
     init(initialStep: HomeSetupStep? = nil) { _selected = State(initialValue: initialStep) }
 
     private var items: [HomeSetupItem] {
@@ -985,8 +1024,8 @@ struct HomeSetupGuide: View {
                 .sheet(isPresented: $emailPresented) {
                     HomeSetupEmailSheet().environmentObject(appState).dynamicTypeSize(dynamicTypeSize)
                 }
-                .sheet(isPresented: $recoveryPresented) {
-                    RecoveryKeySheet(recoveryKey: recoveryKey).environmentObject(appState).dynamicTypeSize(dynamicTypeSize)
+                .sheet(item: $recoveryPresentation) { presentation in
+                    RecoveryKeySheet(recoveryKey: presentation.key).environmentObject(appState).dynamicTypeSize(dynamicTypeSize)
                 }
                 .sheet(isPresented: $foldersPresented) {
                     MeetingFolderManager(onConfirmSetup: { appState.confirmHomeSetupFoldersReview() })
@@ -994,7 +1033,7 @@ struct HomeSetupGuide: View {
                 }
                 .onChange(of: appState.clientAuthStatus.accountID) { _, _ in
                     foldersPresented = false
-                    selected = nil; emailPresented = false; recoveryPresented = false; recoveryKey = ""
+                    selected = nil; emailPresented = false; recoveryPresentation = nil
                 }
                 .onAppear { if selected == nil { selected = current?.step } }
                 .task { appState.refreshHomeSetupMicrophonePermission() }
@@ -1260,7 +1299,9 @@ struct HomeSetupGuide: View {
             .accessibilityIdentifier("setup.action.account")
         if !appState.managedDeviceHasNoRecoveryKey {
             Button("save recovery key") {
-                if let key = appState.revealRecoveryKey() { recoveryKey = key; recoveryPresented = true }
+                if let key = appState.revealRecoveryKey(), !key.isEmpty {
+                    recoveryPresentation = RecoveryPresentation(key: key)
+                }
             }.accessibilityIdentifier("setup.account.recovery")
         }
     }
@@ -1641,7 +1682,7 @@ struct ManagedAccountSettingsSection: View {
         }
     }
 
-    private var stacksEmailActions: Bool {
+    private var stacksAccountActions: Bool {
         #if os(iOS)
         dynamicTypeSize.isAccessibilitySize
         #else
@@ -1649,16 +1690,16 @@ struct ManagedAccountSettingsSection: View {
         #endif
     }
 
-    private var emailActionLayout: AnyLayout {
-        stacksEmailActions
+    private var accountActionLayout: AnyLayout {
+        stacksAccountActions
             ? AnyLayout(VStackLayout(alignment: .leading, spacing: MinitiDesignSystem.Spacing.control))
             : AnyLayout(HStackLayout())
     }
 
     private var emailActionSummary: some View {
-        emailActionLayout {
+        accountActionLayout {
             Text("Email")
-            if !stacksEmailActions { Spacer() }
+            if !stacksAccountActions { Spacer() }
             ForEach(model.emailActions, id: \.self) { action in actionButton(action) }
         }
         #if os(iOS)
@@ -1690,7 +1731,7 @@ struct ManagedAccountSettingsSection: View {
             #endif
             .onSubmit { submitEmail() }
         #if os(iOS)
-        emailActionLayout { emailEditorActions }
+        accountActionLayout { emailEditorActions }
         #else
         emailEditorActions
         #endif
@@ -1783,29 +1824,45 @@ struct ManagedAccountSettingsSection: View {
                     .foregroundStyle(ColorPalette.Status.error)
             }
             ForEach(appState.managedDevices) { device in
-                HStack {
+                accountActionLayout {
                     VStack(alignment: .leading, spacing: 2) {
                         Text(deviceTitle(device))
+                            .accessibilityIdentifier("account.device.title.\(device.installationID)")
+                            #if os(iOS)
+                            .fixedSize(horizontal: false, vertical: true)
+                            #endif
                         Text(deviceSubtitle(device))
                             .font(.caption)
                             .foregroundStyle(.secondary)
+                            #if os(iOS)
+                            .fixedSize(horizontal: false, vertical: true)
+                            #endif
                         DisclosureGroup("Device ID") {
                             Text(device.installationID).font(.caption).textSelection(.enabled)
                         }
                         .font(.caption)
                     }
-                    Spacer()
-                    Button("Rename") { deviceName = device.label ?? ""; renamingDevice = device; isRenamingDevice = true }
-                        .buttonStyle(.borderless)
-                        .disabled(isBusy || model.signedActionsDisabled)
-                        .accessibilityIdentifier("account.rename.\(device.installationID)")
+                    if !stacksAccountActions { Spacer() }
+                    Button {
+                        deviceName = device.label ?? ""; renamingDevice = device; isRenamingDevice = true
+                    } label: {
+                        accountActionLabel("Rename")
+                    }
+                    .buttonStyle(.borderless)
+                    .disabled(isBusy || model.signedActionsDisabled)
+                    .accessibilityIdentifier("account.rename.\(device.installationID)")
                     if model.accountActions.contains(.deleteAccount) || device.current {
                         // Removal is a signed request; a device whose key cannot sign only offers
                         // its own sign-out (which clears locally).
-                        Button(device.current ? "Sign out" : "Remove") { pendingRemoval = device; isConfirmingDeviceRemoval = true }
-                            .buttonStyle(.borderless)
-                            .disabled(isBusy || (model.signedActionsDisabled && !device.current))
-                            .foregroundStyle(ColorPalette.Status.error)
+                        Button {
+                            pendingRemoval = device; isConfirmingDeviceRemoval = true
+                        } label: {
+                            accountActionLabel(device.current ? "Sign out" : "Remove")
+                        }
+                        .accessibilityIdentifier("account.device.remove.\(device.installationID)")
+                        .buttonStyle(.borderless)
+                        .disabled(isBusy || (model.signedActionsDisabled && !device.current))
+                        .foregroundStyle(ColorPalette.Status.error)
                     }
                 }
             }

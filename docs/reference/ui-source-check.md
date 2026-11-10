@@ -92,3 +92,5 @@ UI3 consent reading (CP2) replaces the two 12pt secondary-font occurrences in Te
 AL3 recovery sign-in reading prunes two small-fixed-font occurrences from ManagedAccountViews (one each at 11pt and 12pt). Heading and monospaced-field migration add no raw-colour allowance. Remaining fixed account/dialog text stays in the open reading inventory.
 
 AL4 replaces three fixed 12pt EmailSignInSheet text occurrences with shared dialog metrics. The prune removes those existing small-font cues only; no new raw-colour allowance is added.
+
+AL5 recovery-key save/display removes the remaining three 12pt and one 11pt fixed-font cues in ManagedAccountViews. No raw-color allowance is added; the new recoveryKeySize role keeps the display baseline before platform scaling.

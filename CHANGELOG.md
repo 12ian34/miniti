@@ -7,11 +7,11 @@
 - improvement: (iOS) Settings, History filters and meeting preparation follow your interface text size
 - improvement: (iOS) meeting preparation scrolls to keep notes and actions within reach
 - improvement: (iOS) sign-in buttons and the email field follow your interface text size during setup and in Account
-- improvement: (macOS and iOS) sign-in guidance follows your text size
+- improvement: (macOS and iOS) sign-in and recovery key text follows your text size
 - improvement: (iOS) sign-in actions stay above the keyboard
 - improvement: (iOS) Debug Log controls fit smaller screens and larger text
 - improvement: (iOS) History folder controls stay readable with larger text
-- improvement: (iOS) email editing and recovery key controls stay readable with larger text and have larger tap areas
+- improvement: (iOS) email editing, recovery key and device controls stay readable with larger text and have larger tap areas
 - improvement: (macOS and iOS) Deepgram and OpenAI permission text follows your text size
 - improvement: (macOS and iOS) saved discussion and actions use selectable lists, along with decisions on iOS
 - improvement: (macOS and iOS) consistent spacing and wrapped text in insight lists
@@ -27,6 +27,7 @@
 - improvement: (macOS and iOS) clearer plan status text
 - improvement: (macOS) clearer Coaching details, API setup labels and notes hints
 - improvement: (macOS) clearer recording and ending text in the menu bar
+- fix: (iOS) saving your recovery key from setup shows the key when the sheet opens
 - fix: (macOS and iOS) custom date filters keep both the start and end dates
 - fix: (iOS) Playbook answers collapse and reopen while keeping text selectable
 - fix: (macOS) notes stay editable when their pane is resized smaller

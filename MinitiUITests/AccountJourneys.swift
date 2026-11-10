@@ -25,6 +25,14 @@ final class AccountJourneys: XCTestCase {
         super.tearDown()
     }
 
+    private func resetAccountMatrixFixture() {
+        // Each previous case deliberately enrolled its synthetic account.
+        app.terminate()
+        app.launchArguments = ["-MinitiUITestCleanup"]
+        app.launch()
+        XCTAssertTrue(app.staticTexts["ui-test.ready"].waitForExistence(timeout: 10))
+    }
+
     private func launch(_ scenario: String = "first", largeText: Bool = false, screenshotScene: String? = nil, interfaceScale: Int? = nil) {
         app = XCUIApplication()
         if let screenshotScene {
@@ -757,6 +765,40 @@ final class AccountJourneys: XCTestCase {
         }
     }
 
+    func testMacRecoveryKeySaveAtInterfaceScales() {
+        executionTimeAllowance = 180
+        var compactHeight: CGFloat = 0
+        for scale in [0, 2] {
+            if app != nil { resetAccountMatrixFixture() }
+            launch("setup", interfaceScale: scale)
+            app.activate()
+            let guest = app.buttons["account.continueAnonymous"]
+            XCTAssertTrue(guest.waitForExistence(timeout: 5)); guest.click()
+            XCTAssertTrue(guest.waitForNonExistence(timeout: 10))
+            let step = app.buttons["setup.step.account"]
+            XCTAssertTrue(step.waitForExistence(timeout: 5))
+            let open = app.buttons["setup.account.recovery"]
+            if !open.exists { step.click() }
+            XCTAssertTrue(open.waitForExistence(timeout: 5)); open.click()
+            let probe = app.buttons["ui-test.readingScope.saveRecovery"]
+            XCTAssertTrue(probe.waitForExistence(timeout: 5))
+            XCTAssertTrue(probe.label.contains("scale \(scale);")); probe.click()
+            XCTAssertTrue(probe.waitForNonExistence(timeout: 5))
+            let key = app.staticTexts["account.recoveryKey.value"]
+            XCTAssertTrue(key.waitForExistence(timeout: 5))
+            if scale == 0 { compactHeight = key.frame.height }
+            else { XCTAssertGreaterThan(key.frame.height, compactHeight) }
+            let next = app.buttons["account.recoveryKey.continue"]
+            XCTAssertFalse(next.isEnabled)
+            app.checkBoxes["account.recoveryKey.saved"].click()
+            let enabled = XCTNSPredicateExpectation(predicate: NSPredicate(format: "enabled == true"), object: next)
+            XCTAssertEqual(XCTWaiter.wait(for: [enabled], timeout: 5), .completed)
+            captureAppScreen("Mac fixture recovery key scale \(scale)")
+            app.activate(); next.click()
+            XCTAssertTrue(key.waitForNonExistence(timeout: 5))
+        }
+    }
+
     func testMacDocsAnswerCopiesUsingKeyboardOnly() throws {
         launch("docsTargets")
         // Honour the machine's navigation setting; never change global defaults.
@@ -833,6 +875,58 @@ final class AccountJourneys: XCTestCase {
 
     func testPendingAccountEmailActionsKeepMinimumTargets() {
         for largest in [false, true] { assertAccountEmailStateTargets(pending: true, largest: largest) }
+    }
+
+    func testAccountDeviceActionsAtNormalAndLargestText() {
+        executionTimeAllowance = 240
+        for largest in [false, true] {
+            if app != nil { resetAccountMatrixFixture() }
+            launch("first", largeText: largest, interfaceScale: 2)
+            let guest = app.buttons["account.continueAnonymous"]
+            XCTAssertTrue(guest.waitForExistence(timeout: 5))
+            for _ in 0..<8 {
+                if guest.isHittable { break }
+                app.swipeUp(velocity: .slow)
+            }
+            guest.tap()
+            XCTAssertTrue(guest.waitForNonExistence(timeout: 10))
+            app.buttons["Settings"].tap()
+            let scope = app.buttons["ui-test.readingScope.settings"]
+            XCTAssertTrue(scope.waitForExistence(timeout: 5)); scope.tap()
+            XCTAssertTrue(scope.waitForNonExistence(timeout: 5))
+            app.staticTexts["Account"].firstMatch.tap()
+            let id = "550e8400-e29b-41d4-a716-446655440000"
+            let rename = app.buttons["account.rename.\(id)"]
+            let remove = app.buttons["account.device.remove.\(id)"]
+            let title = app.staticTexts["account.device.title.\(id)"]
+            let form = app.collectionViews.firstMatch
+            for _ in 0..<16 {
+                if rename.isHittable && remove.isHittable { break }
+                form.swipeUp(velocity: .slow)
+            }
+            XCTAssertTrue(rename.isHittable)
+            XCTAssertTrue(remove.isHittable)
+            for action in [rename, remove] {
+                XCTAssertGreaterThanOrEqual(action.frame.width, 44 - 0.001)
+                XCTAssertGreaterThanOrEqual(action.frame.height, 44 - 0.001)
+                XCTAssertFalse(action.frame.intersects(title.frame))
+            }
+            XCTAssertFalse(rename.frame.intersects(remove.frame))
+            let frames = XCTAttachment(string: "title=\(title.frame); rename=\(rename.frame); remove=\(remove.frame)")
+            frames.name = "Account device row \(largest ? "largest" : "normal")"
+            frames.lifetime = .keepAlways; add(frames)
+            captureAppScreen("Account device actions \(largest ? "largest" : "normal")")
+            rename.tap()
+            XCTAssertTrue(app.alerts.textFields["Device name"].waitForExistence(timeout: 5))
+            app.alerts.buttons["Cancel"].tap()
+            XCTAssertTrue(app.alerts.firstMatch.waitForNonExistence(timeout: 5))
+            remove.tap()
+            XCTAssertTrue(app.alerts.firstMatch.waitForExistence(timeout: 5))
+            app.alerts.buttons["Cancel"].tap()
+            XCTAssertTrue(app.alerts.firstMatch.waitForNonExistence(timeout: 5))
+            XCTAssertTrue(rename.exists, "Cancelling removal keeps the fixture device")
+            XCTAssertFalse(app.buttons["account.continueAnonymous"].exists)
+        }
     }
 
     func testUnavailableAccountEmailRetryKeepsMinimumTarget() {
@@ -1789,14 +1883,6 @@ final class AccountJourneys: XCTestCase {
             captureAppScreen("Onboarding \(category) text, interface scale \(scale)")
             assertOnboardingChoicesRemainUsable()
         }
-    }
-
-    private func resetAccountMatrixFixture() {
-        // Each previous case deliberately enrolled its synthetic account.
-        app.terminate()
-        app.launchArguments = ["-MinitiUITestCleanup"]
-        app.launch()
-        XCTAssertTrue(app.staticTexts["ui-test.ready"].waitForExistence(timeout: 10))
     }
 
     private func assertOnboardingChoicesRemainUsable() {
@@ -2857,6 +2943,110 @@ final class AccountJourneys: XCTestCase {
         app.terminate(); launch("setup")
         XCTAssertTrue(app.buttons["setup.reopen"].waitForExistence(timeout: 5))
         XCTAssertTrue(app.buttons["setup.step.calendar"].exists)
+    }
+
+    func testSaveRecoveryKeyAtNormalText() {
+        assertSaveRecoveryKeyReading(largeText: false)
+    }
+
+    func testSaveRecoveryKeyAtLargestText() {
+        assertSaveRecoveryKeyReading(largeText: true)
+    }
+
+    private func assertSaveRecoveryKeyReading(largeText: Bool) {
+        executionTimeAllowance = 180
+        launch("setup", largeText: largeText, interfaceScale: 2)
+        let hideStatus = app.buttons["ui-test.hideStatus"]
+        if hideStatus.exists { hideStatus.tap() }
+        let account = app.buttons["account.continueAnonymous"]
+        for _ in 0..<8 {
+            if account.isHittable { break }
+            app.swipeUp()
+        }
+        XCTAssertTrue(account.isHittable)
+        account.tap()
+        XCTAssertTrue(account.waitForNonExistence(timeout: 10))
+        let home = app.scrollViews.firstMatch
+        let step = app.buttons["setup.step.account"]
+        for _ in 0..<12 {
+            if step.isHittable && step.frame.maxY < home.frame.maxY { break }
+            home.swipeUp(velocity: .slow)
+        }
+        XCTAssertTrue(step.isHittable)
+        let open = app.buttons["setup.account.recovery"]
+        if !open.exists { step.tap() }
+        for _ in 0..<12 {
+            if open.isHittable && open.frame.maxY < home.frame.maxY { break }
+            home.swipeUp(velocity: .slow)
+        }
+        XCTAssertTrue(open.isHittable)
+        open.tap()
+        let probe = app.buttons["ui-test.readingScope.saveRecovery"]
+        XCTAssertTrue(probe.waitForExistence(timeout: 5))
+        XCTAssertTrue(probe.label.contains(largeText ? "reading largest" : "reading normal"))
+        XCTAssertTrue(probe.label.contains("scale 2;"))
+        probe.tap()
+        XCTAssertTrue(probe.waitForNonExistence(timeout: 5))
+        let heading = app.staticTexts["account.recoveryKey.heading"]
+        XCTAssertTrue(heading.waitForExistence(timeout: 5))
+        captureAppScreen("Save recovery key heading")
+        if largeText { XCTAssertGreaterThanOrEqual(heading.frame.height, 30.5) }
+        let next = app.buttons["account.recoveryKey.continue"]
+        XCTAssertFalse(next.isEnabled)
+        XCTAssertTrue(next.isHittable)
+        XCTAssertGreaterThanOrEqual(next.frame.height, 44 - 0.001)
+        let scroll = app.scrollViews["account.recoveryKey.scroll"]
+        let key = app.staticTexts["account.recoveryKey.value"]
+        XCTAssertTrue(key.waitForExistence(timeout: 5), "The save sheet must show the selected fixture key")
+        var keyPositions = ""
+        for _ in 0..<12 {
+            keyPositions += "key=\(key.frame); viewport=\(scroll.frame)\n"
+            if key.isHittable && key.frame.minY >= scroll.frame.minY && key.frame.maxY <= scroll.frame.maxY { break }
+            // Small measured drags can reverse an overshoot. A full upward swipe
+            // can skip the whole key at large text, then keep moving away from it.
+            let delta = key.frame.minY < scroll.frame.minY
+                ? min(150, scroll.frame.minY - key.frame.minY + 8)
+                : -min(150, key.frame.maxY - scroll.frame.maxY + 8)
+            let start = scroll.coordinate(withNormalizedOffset: CGVector(dx: 0.02, dy: 0.5))
+            start.press(forDuration: 0.1, thenDragTo: start.withOffset(CGVector(dx: 0, dy: delta)))
+        }
+        let positions = XCTAttachment(string: keyPositions)
+        positions.name = "Key viewport scroll positions"; positions.lifetime = .keepAlways; add(positions)
+        XCTAssertTrue(key.isHittable)
+        XCTAssertGreaterThanOrEqual(key.frame.minY, scroll.frame.minY - 1)
+        XCTAssertLessThanOrEqual(key.frame.maxY, scroll.frame.maxY + 1)
+        captureAppScreen("Synthetic recovery key fits the reading viewport")
+        let copy = app.buttons["account.recoveryKey.copy"]
+        let saved = app.switches["account.recoveryKey.saved"]
+        for _ in 0..<12 {
+            if saved.isHittable && saved.frame.minY >= scroll.frame.minY && saved.frame.maxY <= scroll.frame.maxY { break }
+            let delta = saved.frame.minY < scroll.frame.minY
+                ? min(120, scroll.frame.minY - saved.frame.minY + 8)
+                : -min(120, saved.frame.maxY - scroll.frame.maxY + 8)
+            let start = scroll.coordinate(withNormalizedOffset: CGVector(dx: 0.02, dy: 0.5))
+            start.press(forDuration: 0.1, thenDragTo: start.withOffset(CGVector(dx: 0, dy: delta)))
+        }
+        // Copy was visible with the key. A tall acknowledgment can require a
+        // separate scroll position; partial-label hittability is insufficient.
+        XCTAssertGreaterThanOrEqual(copy.frame.height, 44 - 0.001)
+        XCTAssertTrue(saved.isHittable)
+        XCTAssertGreaterThanOrEqual(saved.frame.minY, scroll.frame.minY - 1)
+        XCTAssertLessThanOrEqual(saved.frame.maxY, scroll.frame.maxY + 1)
+        XCTAssertFalse(next.isEnabled)
+        let toggleFrames = XCTAttachment(string: "saved=\(saved.frame); viewport=\(scroll.frame); value=\(String(describing: saved.value))")
+        toggleFrames.name = "Acknowledgment before tap"; toggleFrames.lifetime = .keepAlways; add(toggleFrames)
+        captureAppScreen("Complete acknowledgment before tap")
+        saved.tap()
+        let enabled = XCTNSPredicateExpectation(predicate: NSPredicate(format: "enabled == true"), object: next)
+        XCTAssertEqual(XCTWaiter.wait(for: [enabled], timeout: 5), .completed)
+        XCTAssertTrue(next.isHittable)
+        let frames = XCTAttachment(string: "key=\(key.frame); scroll=\(scroll.frame); copy=\(copy.frame); saved=\(saved.frame); continue=\(next.frame)")
+        frames.name = "Save recovery key action frames"; frames.lifetime = .keepAlways; add(frames)
+        captureAppScreen("Recovery key acknowledgment enables Continue")
+        // This key belongs only to FixtureCredentials. Never tap Copy or use a real account.
+        next.tap()
+        XCTAssertTrue(heading.waitForNonExistence(timeout: 5))
+        XCTAssertTrue(open.exists)
     }
 
     func testHomeSetupEmailAtLargestTextSize() {

@@ -424,6 +424,26 @@ final class SelectableAttributedTests: XCTestCase {
         }
     }
 
+    func testRecoveryKeyReadingBaselinesAndPlatformScaling() {
+        #if os(macOS)
+        let expected: [CGFloat] = [14, 15, 16]
+        #else
+        let expected: [CGFloat] = [14, 16, 18]
+        #endif
+        for scale in InterfaceScale.allCases {
+            let normal = ReadingMetrics(interfaceScale: scale, systemDynamicTypeSize: .large)
+            let largest = ReadingMetrics(interfaceScale: scale, systemDynamicTypeSize: .accessibility5)
+            XCTAssertEqual(normal.recoveryKeySize, expected[scale.rawValue])
+            #if os(macOS)
+            XCTAssertEqual(largest.recoveryKeySize, normal.recoveryKeySize)
+            #else
+            let traits = UITraitCollection(preferredContentSizeCategory: .accessibilityExtraExtraExtraLarge)
+            let once = UIFontMetrics(forTextStyle: .body).scaledValue(for: expected[scale.rawValue], compatibleWith: traits)
+            XCTAssertEqual(largest.recoveryKeySize, once)
+            #endif
+        }
+    }
+
     func testCompactInterfaceScalePreservesOriginalTranscriptMetrics() {
         XCTAssertEqual(InterfaceScale.compact.transcriptBodySize, 13)
         XCTAssertEqual(InterfaceScale.compact.transcriptHeaderSize, 10)
