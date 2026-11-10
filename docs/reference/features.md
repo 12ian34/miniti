@@ -6,6 +6,7 @@ Reconciled 2026-11-10. Mac and iOS 3.8.0 build 164 are public; 3.9.0 is the unre
 
 - Mac History is its own page like Home and Coaching: search, folder chips with counts, date groups, a dismissible organise prompt that opens the preview, back to history from a meeting, and J/K that follow the page. The expanded sidebar is draggable between 200 and 400 points. See [UI states](ui-states.md).
 - Automatic folders learn from calendar series and hand moves, can use strong summary evidence for folders that already exist, and recognise more meeting types. See [meeting history and import](meeting-history-and-import.md).
+- Mac Home shows all-time stats (meetings, time recorded, top filler word, fillers per meeting) once the setup guide is collapsed.
 - Collapsing the setup guide highlights the button that reopens it; Mac setup asks one audio question, online or on this Mac. Coaching trends use two columns on wide Mac windows.
 - UI1–UI3 reading sizes, contrast, touch targets, Mac appearance and live/saved insight parity; floating-panel and menu-bar window opening fix; device count and automatic name fixes. Account ownership moved to 3.10.0.
 

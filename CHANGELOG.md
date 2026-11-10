@@ -4,6 +4,7 @@
 
 - new: (macOS) history opens as its own page, with search, folders and meetings grouped by date
 - new: (macOS) drag the sidebar edge to make it wider
+- new: (macOS) home shows your stats: meetings, time recorded, top filler word and fillers per meeting
 - improvement: (macOS and iOS) folders learn from recurring meetings and the meetings you move by hand
 - improvement: (macOS and iOS) folders recognise more kinds of meetings
 - improvement: (macOS) setup asks one audio question: online or on this Mac
