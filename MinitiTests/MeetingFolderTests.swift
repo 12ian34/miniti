@@ -255,6 +255,57 @@ final class MeetingFolderTests: XCTestCase {
         XCTAssertEqual(FolderMatcher.match(title: "Client 42 sync", summary: nil, folders: [a, rule]), b.id)
     }
 
+    func testRecurringMeetingFollowsItsSeriesFolderEvenWithoutKeywords() throws {
+        let container = try TestSupport.makeInMemoryContainer()
+        let state = AppState(); state.modelContext = container.mainContext
+        state.automaticFolderCreation = false; state.automaticFolderFiling = true
+        let folder = MeetingFolder(id: UUID(), name: "Acme")
+        XCTAssertTrue(state.meetingFolders.edit(folder))
+        let earlier = Meeting(title: "Ian / Charlie", startTime: Date().addingTimeInterval(-7 * 86400), endTime: Date().addingTimeInterval(-7 * 86400 + 1800))
+        earlier.calendarEventId = "abc123_20261103T100000Z"
+        earlier.folderID = folder.id; earlier.folderManual = false
+        let next = Meeting(title: "Renamed by AI", endTime: Date())
+        next.calendarEventId = "abc123_20261110T100000Z"
+        [earlier, next].forEach { container.mainContext.insert($0) }
+        try container.mainContext.save()
+        state.automaticallyFileMeeting(next)
+        XCTAssertEqual(next.folderID, folder.id, "The next occurrence of a calendar series joins its folder")
+    }
+
+    func testManualMoveTeachesLaterMeetingsWithTheSameTitle() throws {
+        let container = try TestSupport.makeInMemoryContainer()
+        let state = AppState(); state.modelContext = container.mainContext
+        state.automaticFolderCreation = false; state.automaticFolderFiling = true
+        let customers = FolderMatcher.Category.customers.folder(owner: state.meetingFolders.owner, localOnly: false)
+        let partner = MeetingFolder(id: UUID(), name: "Northwind")
+        XCTAssertTrue(state.meetingFolders.edit(customers)); XCTAssertTrue(state.meetingFolders.edit(partner))
+        let moved = Meeting(title: "Northwind demo 3 Nov", startTime: Date().addingTimeInterval(-86400), endTime: Date().addingTimeInterval(-85000))
+        container.mainContext.insert(moved); try container.mainContext.save()
+        _ = state.moveMeeting(moved, to: partner)
+        let later = Meeting(title: "Northwind demo 10 Nov", endTime: Date())
+        container.mainContext.insert(later); try container.mainContext.save()
+        state.automaticallyFileMeeting(later)
+        XCTAssertEqual(later.folderID, partner.id, "A hand-chosen folder outranks the demo keyword for the same series")
+        XCTAssertEqual(FolderMatcher.seriesKeys(calendarEventID: nil, title: "Northwind demo 3 Nov"),
+                       FolderMatcher.seriesKeys(calendarEventID: nil, title: "Northwind demo 10 Nov"))
+        XCTAssertTrue(FolderMatcher.seriesKeys(calendarEventID: nil, title: "untitled").isEmpty)
+    }
+
+    func testSummaryEvidenceFilesOnlyIntoAnExistingBroadFolder() throws {
+        let summary = "We reviewed the product roadmap and agreed the release scope for the next sprint."
+        let creating = AppState(); creating.automaticFolderCreation = true
+        let lone = Meeting(title: "Thursday with Sam", endTime: Date(), summaryText: summary)
+        XCTAssertTrue(creating.folderProposals(meetings: [lone]).isEmpty, "Summary words never create a folder")
+        let state = AppState(); state.automaticFolderCreation = false
+        let product = FolderMatcher.Category.product.folder(owner: state.meetingFolders.owner, localOnly: false)
+        XCTAssertTrue(state.meetingFolders.edit(product))
+        XCTAssertEqual(state.folderProposals(meetings: [lone]).first?.folder.id, product.id)
+        let weak = Meeting(title: "Thursday with Sam", endTime: Date(), summaryText: "A quick product question.")
+        XCTAssertTrue(state.folderProposals(meetings: [weak]).isEmpty, "One incidental phrase is not enough")
+        XCTAssertEqual(FolderMatcher.Category.matching(title: "Weekly retro"), .team)
+        XCTAssertEqual(FolderMatcher.Category.matching(title: "Q4 OKRs"), .planning)
+    }
+
     func testAutomaticFilingOnlyChangesNewMeetingUntilHistoryPreviewIsApplied() throws {
         let container = try TestSupport.makeInMemoryContainer()
         let state = AppState(); state.modelContext = container.mainContext

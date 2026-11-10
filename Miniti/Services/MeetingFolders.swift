@@ -249,13 +249,17 @@ enum FolderMatcher {
         }
         private var phrases: [String] {
             switch self {
-            case .team: ["standup", "stand up", "team sync", "team meeting", "team catch up", "all hands", "one to one", "one on one", "1 1", "1on1"]
-            case .customers: ["customer", "customers", "client", "clients", "prospect", "sales", "demo", "discovery"]
-            case .product: ["product", "engineering", "design", "sprint", "roadmap", "bug triage"]
-            case .hiring: ["interview", "interviews", "recruiting", "recruitment", "hiring", "candidate"]
-            case .planning: ["strategy", "planning", "budget", "finance", "operations", "leadership", "board"]
-            case .partnerships: ["partner", "partnership", "partnerships", "vendor", "supplier"]
-            case .learning: ["training", "workshop", "webinar", "learning"]
+            case .team: ["standup", "standups", "stand up", "team sync", "team meeting", "team catch up", "all hands", "one to one", "one on one", "1 1", "1on1",
+                         "retro", "retrospective", "offsite", "town hall"]
+            case .customers: ["customer", "customers", "client", "clients", "prospect", "prospects", "sales", "demo", "discovery",
+                              "onboarding", "renewal", "account review", "pitch", "pilot", "proposal"]
+            case .product: ["product", "engineering", "design", "sprint", "roadmap", "bug triage",
+                            "spec", "architecture", "release", "launch", "feature", "features", "ux", "user research", "analytics", "data", "dev", "backlog"]
+            case .hiring: ["interview", "interviews", "recruiting", "recruitment", "hiring", "candidate", "candidates", "screening"]
+            case .planning: ["strategy", "planning", "budget", "finance", "operations", "leadership", "board",
+                             "okr", "okrs", "forecast", "investor", "investors", "fundraising", "quarterly"]
+            case .partnerships: ["partner", "partners", "partnership", "partnerships", "vendor", "vendors", "supplier", "suppliers", "agency", "procurement"]
+            case .learning: ["training", "workshop", "webinar", "learning", "lunch and learn", "course", "conference", "meetup"]
             }
         }
         func id(owner: String, localOnly: Bool) -> UUID {
@@ -272,6 +276,17 @@ enum FolderMatcher {
             // Planning is a fallback: "sprint planning" belongs with product work.
             let specific = matches.filter { $0 != .planning }
             return specific.count == 1 ? specific[0] : (specific.isEmpty && matches.contains(.planning) ? .planning : nil)
+        }
+        /// Summary evidence for a broad group: at least two different phrases of exactly
+        /// one category. Callers use this only for folders that already exist, so stray
+        /// summary vocabulary can never create a folder.
+        static func matching(summary: String?) -> Self? {
+            guard let summary, !summary.isEmpty else { return nil }
+            let normalized = " " + String(summary.prefix(4000)).lowercased().split { !$0.isLetter && !$0.isNumber }.joined(separator: " ") + " "
+            let strong = allCases.filter { category in
+                category.phrases.filter { normalized.contains(" " + $0 + " ") }.count >= 2
+            }
+            return strong.count == 1 ? strong[0] : nil
         }
         static func identifying(_ folder: MeetingFolder, owner: String) -> Self? {
             allCases.first { $0.id(owner: owner, localOnly: folder.localOnly) == folder.id }
@@ -320,6 +335,26 @@ enum FolderMatcher {
     }
     static func resolve(title: String, summary: String?, folders: [MeetingFolder]) -> Match {
         Prepared(folders).resolve(title: title, summary: summary)
+    }
+    /// Keys that identify the same recurring meeting: its calendar series and its title
+    /// with dates and numbers removed. Used so a meeting follows the folder of earlier
+    /// meetings in the same series, including folders chosen by hand.
+    static func seriesKeys(calendarEventID: String?, title: String) -> [String] {
+        var keys: [String] = []
+        if let id = calendarEventID?.trimmingCharacters(in: .whitespacesAndNewlines), !id.isEmpty {
+            // Google recurring instances are "<series>_<start>".
+            let series = id.split(separator: "_", maxSplits: 1).first.map(String.init) ?? id
+            keys.append("event:" + series)
+        }
+        let months: Set<String> = ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "sept", "oct", "nov", "dec",
+                                   "january", "february", "march", "april", "june", "july", "august", "september", "october", "november", "december"]
+        let tokens = title.lowercased().split { !$0.isLetter && !$0.isNumber }.map(String.init)
+            .filter { token in !token.allSatisfy(\.isNumber) && !months.contains(token) }
+        let generic: Set<String> = ["meeting", "call", "untitled", "new", "recording", "notes", "chat"]
+        if tokens.contains(where: { $0.count >= 3 && !generic.contains($0) }) {
+            keys.append("title:" + tokens.joined(separator: " "))
+        }
+        return keys
     }
     static func automaticID(title: String, owner: String) -> UUID {
         let digest = SHA256.hash(data: Data((owner + ":" + title.lowercased()).utf8))

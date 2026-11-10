@@ -93,17 +93,35 @@ extension AppState {
             folders.first { categories[$0.id] == category || $0.name.caseInsensitiveCompare(category.name) == .orderedSame }
                 .map { (category, $0) }
         }, uniquingKeysWith: { first, _ in first })
+        let precedents = seriesPrecedents(in: candidates)
         return candidates.compactMap { meeting in
             guard onlyMeetingID == nil || meeting.id == onlyMeetingID,
                   regroupManual || meeting.folderManual != true,
-                  let folder = matchingFolder(for: meeting, custom: custom, prepared: prepared, broad: broad),
+                  let folder = matchingFolder(for: meeting, custom: custom, prepared: prepared, broad: broad, precedents: precedents),
                   folder.id != meeting.folderID else { return nil }
             return .init(owner: meetingFolders.owner, meeting: meeting, title: meeting.title, previousFolder: meeting.folderID,
                          previousManual: meeting.folderManual, previousLocalOnly: meeting.folderLocalOnly, folder: folder)
         }
     }
 
-    private func matchingFolder(for meeting: Meeting, custom: [MeetingFolder], prepared: FolderMatcher.Prepared, broad: [FolderMatcher.Category: MeetingFolder]) -> MeetingFolder? {
+    /// The folder each recurring series already uses, newest first, with folders chosen
+    /// by hand outranking automatic ones. Only existing, active folders count.
+    private func seriesPrecedents(in candidates: [Meeting]) -> [String: (folder: MeetingFolder, manual: Bool, meetingID: UUID)] {
+        var result: [String: (folder: MeetingFolder, manual: Bool, meetingID: UUID)] = [:]
+        for meeting in candidates.sorted(by: { $0.startTime > $1.startTime }) {
+            guard let folder = meetingFolders.folder(meeting.folderID) else { continue }
+            let manual = meeting.folderManual == true
+            for key in FolderMatcher.seriesKeys(calendarEventID: meeting.calendarEventId, title: meeting.calendarEventTitle ?? meeting.title) {
+                if let existing = result[key], existing.manual || !manual { continue }
+                result[key] = (folder, manual, meeting.id)
+            }
+        }
+        return result
+    }
+
+    private func matchingFolder(for meeting: Meeting, custom: [MeetingFolder], prepared: FolderMatcher.Prepared,
+                                broad: [FolderMatcher.Category: MeetingFolder],
+                                precedents: [String: (folder: MeetingFolder, manual: Bool, meetingID: UUID)] = [:]) -> MeetingFolder? {
         let title = meeting.calendarEventTitle ?? meeting.title
         switch prepared.resolve(title: title, summary: meeting.summaryText) {
         case .folder(let id):
@@ -113,8 +131,20 @@ extension AppState {
         case .none:
             break
         }
-        guard let category = FolderMatcher.Category.matching(title: title) else { return nil }
-        return broad[category]
+        // An unfiled meeting follows earlier meetings in the same series, so recurring
+        // meetings and meetings moved by hand teach later ones where they belong.
+        if meetingFolders.folder(meeting.folderID) == nil {
+            for key in FolderMatcher.seriesKeys(calendarEventID: meeting.calendarEventId, title: title) {
+                if let precedent = precedents[key], precedent.meetingID != meeting.id { return precedent.folder }
+            }
+        }
+        if let category = FolderMatcher.Category.matching(title: title), let folder = broad[category] { return folder }
+        // Strong summary evidence may file into a broad folder that already exists, never a new one.
+        if let category = FolderMatcher.Category.matching(summary: meeting.summaryText),
+           let folder = broad[category], meetingFolders.folder(folder.id) != nil {
+            return folder
+        }
+        return nil
     }
 
     func applyFolderProposals(_ proposals: [FolderProposal]) -> [FolderMove] {
