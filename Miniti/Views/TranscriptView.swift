@@ -892,13 +892,13 @@ struct SpeakerLegend: View {
 
             Text("speakers:")
                 .font(.system(size: 10, weight: .medium, design: .default))
-                .foregroundStyle(Color(hex: "484F58"))
+                .foregroundStyle(ColorPalette.Text.dim)
                 .fixedSize()
 
             if speakers.isEmpty {
                 Text("detecting...")
                     .font(.system(size: 10, weight: .medium, design: .default))
-                    .foregroundStyle(Color(hex: "484F58"))
+                    .foregroundStyle(ColorPalette.Text.dim)
                     .fixedSize()
             } else {
                 let uniqueSpeakers: [Int] = {
@@ -946,12 +946,12 @@ struct SpeakerLegend: View {
                 let isSelf = effectiveSelves.contains(speakers[0])
                 Text(isSelf ? "(you only)" : "(single speaker)")
                     .font(.system(size: 10, weight: .regular, design: .default))
-                    .foregroundStyle(Color(hex: "484F58"))
+                    .foregroundStyle(ColorPalette.Text.dim)
                     .fixedSize()
             } else if selfCount >= 1 && remoteCount == 1 {
                 Text(selfCount > 1 ? "(you ×\(selfCount) + 1 remote)" : "(you + 1 remote)")
                     .font(.system(size: 10, weight: .regular, design: .default))
-                    .foregroundStyle(Color(hex: "484F58"))
+                    .foregroundStyle(ColorPalette.Text.dim)
                     .fixedSize()
             }
         }
@@ -1420,7 +1420,7 @@ struct RenameSpeakerView: View {
                  ? "automatic name will appear when detected."
                  : "currently: \(currentName!)" + (currentEmail.map { " · \($0)" } ?? ""))
                 .font(.system(size: 10, weight: .regular, design: .default))
-                .foregroundStyle(Color(hex: "484F58"))
+                .foregroundStyle(ColorPalette.Text.dim)
                 .lineLimit(2)
 
             if let suggestion, let onConfirmSuggestion {
@@ -1476,7 +1476,7 @@ struct RenameSpeakerView: View {
                                         .font(.system(size: 11, weight: .semibold, design: .default))
                                     Text(attendee.email)
                                         .font(.system(size: 10, weight: .regular, design: .default))
-                                        .foregroundStyle(Color(hex: "484F58"))
+                                        .foregroundStyle(ColorPalette.Text.dim)
                                 }
                                 Spacer()
                             }
@@ -1554,7 +1554,7 @@ struct RenameSpeakerView: View {
                 if !isSelf && hasOtherSelves {
                     Text("diarization sometimes splits one person across IDs. mark each one.")
                         .font(.system(size: 10, weight: .regular, design: .default))
-                        .foregroundStyle(Color(hex: "484F58"))
+                        .foregroundStyle(ColorPalette.Text.dim)
                 }
             }
 

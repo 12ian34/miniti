@@ -372,6 +372,25 @@ final class ColorPaletteTests: XCTestCase {
     }
 
     @MainActor
+    func testSpeakerLegendGuidanceUsesReadableText() throws {
+        let mic = DeepgramService.micSpeakerID
+        let cases: [(String, [Int], Set<Int>?)] = [
+            ("detecting", [], nil), ("self only", [mic], nil),
+            ("remote only", [0], nil), ("self and remote", [mic, 0], nil),
+            ("multiple selves", [mic, mic + 1, 0], [mic, mic + 1])
+        ]
+        for (name, speakers, selves) in cases {
+            let renderer = ImageRenderer(content: SpeakerLegend(
+                speakers: speakers, selfIDs: selves).frame(width: 600))
+            renderer.scale = 2
+            let raster = try XCTUnwrap(renderer.cgImage)
+            // Identity chips remain saturated green/blue. This checks the
+            // neutral guidance role, not each individual label in isolation.
+            XCTAssertGreaterThan(try pixelCount(ColorPalette.Text.dim, in: raster), 10, name)
+        }
+    }
+
+    @MainActor
     func testQuestionAndDocsGuidanceUsesReadableText() throws {
         let states: [(String, AnyView)] = [
             ("question needs more", AnyView(QuestionsEmptyState(variant: .needsMore))),

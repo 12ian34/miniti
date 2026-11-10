@@ -12,6 +12,7 @@
 - improvement: (iOS) larger tap areas for Coaching tabs, history sorting and insight Update controls
 - improvement: (macOS and iOS) clearer accessibility labels and larger click and tap areas for Copy and Coaching help
 - improvement: (macOS and iOS) clearer question context, Copy text and Coaching statistics
+- improvement: (macOS and iOS) clearer speaker labels and rename guidance
 - improvement: (macOS and iOS) clearer guidance and status text in Questions and Playbook
 - improvement: (macOS) clearer filler counts during a meeting
 - improvement: (macOS) clearer recording and ending text in the menu bar

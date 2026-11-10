@@ -241,6 +241,9 @@ struct AccountUITestReady: ViewModifier {
                       ProcessInfo.processInfo.environment["MINITI_UI_TEST_SCENARIO"] == "insightUpdateTargets" {
                 InsightUpdateUITestFixture()
             } else if AccountUITestHarness.isActive,
+                      ProcessInfo.processInfo.environment["MINITI_UI_TEST_SCENARIO"] == "speakerGuidance" {
+                SpeakerGuidanceUITestFixture()
+            } else if AccountUITestHarness.isActive,
                       let scenario = ProcessInfo.processInfo.environment["MINITI_UI_TEST_SCENARIO"],
                       scenario.hasPrefix("docsGuidance-") {
                 DocsGuidanceUITestFixture(scenario: scenario)
@@ -289,6 +292,33 @@ struct AccountUITestReady: ViewModifier {
 }
 
 #if MINITI_TEST_HOST
+private struct SpeakerGuidanceUITestFixture: View {
+    @State private var lastAction = "none"
+    private let attendee = MeetingAttendee(email: "ada@example.invalid", displayName: "Ada Fixture",
+        domain: "example.invalid", responseStatus: "accepted", isOrganizer: false, isSelf: false)
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 16) {
+                SpeakerLegend(speakers: [DeepgramService.micSpeakerID, 0],
+                              speakerNames: ["0": "Fixture guest"],
+                              onRename: { lastAction = "rename:\($0)" })
+                RenameSpeakerView(speakerID: 0, currentName: "Current fixture", defaultName: "Speaker 1",
+                    isSelf: false, hasOtherSelves: true,
+                    onSave: { lastAction = "saved:\($0)" }, onClear: { lastAction = "clear" },
+                    onMarkAsSelf: { lastAction = "markSelf" }, onUnmarkAsSelf: { lastAction = "unmarkSelf" },
+                    onCancel: { lastAction = "cancel" }, currentEmail: "current@example.invalid",
+                    attendees: [attendee], onPickAttendee: { lastAction = "picked:\($0.email)" })
+                Text("Action: \(lastAction)")
+                    .font(.caption).foregroundStyle(ColorPalette.Text.muted)
+                    .accessibilityIdentifier("speaker.fixture.action")
+            }
+            .padding(16)
+        }
+        .background(ColorPalette.Background.primary)
+    }
+}
+
 private struct DocsGuidanceUITestFixture: View {
     let scenario: String
     @State private var lookupCount = 0

@@ -1356,12 +1356,6 @@
     {
       "path": "Miniti/Views/TranscriptView.swift",
       "rule": "raw-color",
-      "signature": "Color ( hex : \"484F58\" )",
-      "count": 7
-    },
-    {
-      "path": "Miniti/Views/TranscriptView.swift",
-      "rule": "raw-color",
       "signature": "Color ( hex : \"58A6FF\" )",
       "count": 3
     },

@@ -752,6 +752,22 @@ final class AccountJourneys: XCTestCase {
         XCTAssertTrue(help.exists)
     }
 
+    func testSpeakerGuidanceRetainsIdentityAndAttendeeActions() {
+        launch("speakerGuidance")
+        let guest = app.buttons["Fixture guest"]
+        XCTAssertTrue(guest.waitForExistence(timeout: 5), app.debugDescription)
+        XCTAssertTrue(app.staticTexts["(you + 1 remote)"].exists)
+        guest.tap()
+        XCTAssertTrue(app.staticTexts["Action: rename:0"].waitForExistence(timeout: 2))
+        let attendee = app.buttons.matching(NSPredicate(format: "label CONTAINS %@", "ada@example.invalid")).firstMatch
+        for _ in 0..<3 where !attendee.isHittable { app.swipeUp() }
+        XCTAssertTrue(attendee.isHittable, app.debugDescription)
+        XCTAssertTrue(app.staticTexts["diarization sometimes splits one person across IDs. mark each one."].exists)
+        attendee.tap()
+        XCTAssertTrue(app.staticTexts["Action: picked:ada@example.invalid"].waitForExistence(timeout: 2))
+        captureAppScreen("Speaker guidance and attendee selection")
+    }
+
     func testQuestionAndDocsGuidanceStatesRemainVisible() {
         for (scenario, expected) in [
             ("manual", "tap a topic to look it up in your docs"),
