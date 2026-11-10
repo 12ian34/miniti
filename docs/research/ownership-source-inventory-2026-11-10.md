@@ -1,6 +1,6 @@
 # Ownership source inventory, 2026-11-10
 
-AO0 preparation for the unchanged [3.9.0 scope](../releases/3.9.0.md). Backend source inspected at `a5c93d8c282800d97a05d027ab2312af6e090ba8`. This is a source inventory, not live customer inventory, a migration rehearsal or AO0 acceptance. No backend source, data, credentials or provider configuration changed. The [ownership plan](../plans/account-ownership.md) owns policy, staging and completion.
+AO0 preparation for the unchanged [3.9.0 scope](../releases/3.9.0.md). Backend source inspected at `a5c93d8c282800d97a05d027ab2312af6e090ba8`. This is a source inventory, not live customer inventory, a migration rehearsal or AO0 acceptance. No backend application source, data, credentials or provider configuration changed; the later offline reference scripts do not enter the application. The [ownership plan](../plans/account-ownership.md) owns policy, staging and completion.
 
 ## Device-hash writers
 
@@ -84,6 +84,10 @@ These files were read to map later implementation checks, not run in this packag
 `writeInstallation` is shared by create/migrate/recovery/email enrollment. It writes the installation, membership and device mirror, so callers that appear to repair credentials can also replace ownership evidence. `moveInstallation` takes ordered account locks, updates destination membership/installation/source membership, invalidates the refresh family and mirrors account identity. Its current last-device path tombstones the source account. `revokeInstallation` marks credentials revoked, removes local-usage/accounting identity, removes membership and marks the device mirror revoked. `deleteAccount` purges under its lock before revocation/tombstone. These existing semantics must be replaced only through the selected B1/B2/B3 contracts, not incidentally during B0 normalization.
 
 Current v2 and authenticated legacy finalization require the installation still belongs to the original active account. Merely retaining `accountId` in a receipt does not authorize late settlement after a move. The new contract needs a bounded, replay-safe authorization mechanism that permits charging admitted work without exposing the old account's receipt to the destination. Current revoke cleanup of accounting roots also needs reconciliation with that contract.
+
+## Adoption and correction follow-through
+
+The [2026-11-10 journal contract and offline reference model](ownership-adoption-contract-2026-11-10.md) map each writer above to typed operation semantics and a required real-storage scenario. They require both original hash snapshots, absolute replacement/reset replay and per-device source-account seed components for correction. Twenty-six synthetic oracle tests are arithmetic/replay evidence only; no production writer, storage transaction or authorization path is converted.
 
 ## Decisions and evidence still needed
 
