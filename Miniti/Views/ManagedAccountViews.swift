@@ -159,10 +159,15 @@ struct RestoreRecoveryKeySheet: View {
     var body: some View {
         VStack(alignment: .leading, spacing: MinitiDesignSystem.Spacing.section) {
             #if os(iOS)
-            ScrollView {
-                formContent.frame(maxWidth: .infinity, alignment: .leading)
+            ScrollViewReader { proxy in
+                ScrollView {
+                    formContent.frame(maxWidth: .infinity, alignment: .leading)
+                }
+                .accessibilityIdentifier("account.restore.scroll")
+                .onChange(of: error) { _, message in
+                    if message != nil { proxy.scrollTo("account.restore.error", anchor: .bottom) }
+                }
             }
-            .accessibilityIdentifier("account.restore.scroll")
             #else
             formContent
             #endif
@@ -202,6 +207,8 @@ struct RestoreRecoveryKeySheet: View {
 
             if let error {
                 Text(error)
+                    .accessibilityIdentifier("account.restore.error")
+                    .id("account.restore.error")
                     .font(.system(size: readingMetrics.dialogBodySize))
                     .foregroundStyle(ColorPalette.Status.error)
                     .fixedSize(horizontal: false, vertical: true)

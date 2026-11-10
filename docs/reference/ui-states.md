@@ -169,3 +169,5 @@ Account inline email editing (AL2) places the address above its actions on iPhon
 Pending/replacement and unavailable email summaries share the same minimum-target labels for Resend, Remove and Retry. Their validation, native confirmation and refresh closures are unchanged; target geometry does not certify request outcomes.
 
 Recovery-key sign-in and Switch account (AL3) use shared reading metrics for the heading, explanation, key field and errors. The iPhone form scrolls above its actions, which stack at accessibility text sizes and remain above the keyboard. Empty or malformed keys still disable submission. Native Cancel and the existing restore/move task own their original behavior; no account lifecycle change follows from the layout correction.
+
+Recovery sign-in brings a newly returned error into the iPhone scroll viewport without changing focus, task state or action eligibility. The keyboard may remain open; longer errors remain scrollable.

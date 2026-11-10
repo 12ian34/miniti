@@ -1014,6 +1014,10 @@ final class AccountJourneys: XCTestCase {
         assertFallbackRestore(recovery: true, succeeds: false)
     }
 
+    func testFallbackKeyRestoreShowsLargestTextErrorAboveKeyboard() {
+        assertFallbackRestore(recovery: true, succeeds: false, largeText: true)
+    }
+
     func testFallbackEmailRestoreCompletesWithoutReopening() {
         assertFallbackRestore(recovery: false, succeeds: true)
     }
@@ -1022,9 +1026,9 @@ final class AccountJourneys: XCTestCase {
         assertFallbackRestore(recovery: true, succeeds: true)
     }
 
-    private func assertFallbackRestore(recovery: Bool, succeeds: Bool) {
+    private func assertFallbackRestore(recovery: Bool, succeeds: Bool, largeText: Bool = false) {
         executionTimeAllowance = 120
-        launch(succeeds ? "accountFallbackSuccess" : "accountFallbackFailure", interfaceScale: 0)
+        launch(succeeds ? "accountFallbackSuccess" : "accountFallbackFailure", largeText: largeText, interfaceScale: largeText ? 2 : 0)
         let settings = app.buttons["Settings"]
         XCTAssertTrue(settings.waitForExistence(timeout: 5))
         settings.tap()
@@ -1043,6 +1047,13 @@ final class AccountJourneys: XCTestCase {
             ? app.textFields.matching(NSPredicate(format: "placeholderValue BEGINSWITH 'M1-'")).firstMatch
             : app.textFields["Email"]
         XCTAssertTrue(field.waitForExistence(timeout: 5))
+        if recovery {
+            for _ in 0..<16 {
+                if field.isHittable { break }
+                app.scrollViews["account.restore.scroll"].swipeUp(velocity: .slow)
+            }
+        }
+        XCTAssertTrue(field.isHittable)
         field.tap()
         field.typeText(recovery ? "M1-000G-40R4-0M30-E209-185G-R38E-1WET-S870" : "fixture@example.invalid")
         let submit = recovery
@@ -1060,6 +1071,22 @@ final class AccountJourneys: XCTestCase {
             XCTAssertTrue(field.exists, "The original sheet keeps its input and error")
             XCTAssertEqual(field.value as? String, recovery ? "M1-000G-40R4-0M30-E209-185G-R38E-1WET-S870" : "fixture@example.invalid")
             if !recovery { XCTAssertTrue(app.buttons["Try again"].exists) }
+            if largeText {
+                let sheetError = app.staticTexts["account.restore.error"]
+                let scroll = app.scrollViews["account.restore.scroll"]
+                let keyboard = app.keyboards.firstMatch
+                XCTAssertTrue(keyboard.exists)
+                let visible = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+                    sheetError.isHittable && sheetError.frame.minY >= scroll.frame.minY - 1
+                        && sheetError.frame.maxY <= scroll.frame.maxY + 1
+                }, object: nil)
+                let result = XCTWaiter.wait(for: [visible], timeout: 5)
+                let frames = XCTAttachment(string: "error=\(sheetError.frame); scroll=\(scroll.frame); keyboard=\(keyboard.frame)")
+                frames.name = "Recovery failure visibility"; frames.lifetime = .keepAlways; add(frames)
+                captureAppScreen("Largest recovery failure with keyboard")
+                XCTAssertEqual(result, .completed, "The returned error must be visible without another user scroll")
+                XCTAssertLessThanOrEqual(sheetError.frame.maxY, keyboard.frame.minY)
+            }
             captureAppScreen("Fallback restore failure retains sheet and input")
             app.buttons["Cancel"].firstMatch.tap()
             XCTAssertTrue(app.buttons["Cancel"].firstMatch.waitForNonExistence(timeout: 5))
