@@ -728,6 +728,35 @@ final class AccountJourneys: XCTestCase {
         assertMacAppearance("debug")
     }
 
+    func testMacEmailGuidanceGrowsWithInterfaceScale() {
+        executionTimeAllowance = 120
+        var compactHeight: CGFloat = 0
+        for scale in [0, 2] {
+            app?.terminate()
+            launch("appearance", interfaceScale: scale)
+            app.buttons["account.signIn"].click()
+            let probe = app.buttons["ui-test.readingScope.accessEmail"]
+            XCTAssertTrue(probe.waitForExistence(timeout: 5))
+            XCTAssertTrue(probe.label.contains("scale \(scale);"))
+            probe.click()
+            XCTAssertTrue(probe.waitForNonExistence(timeout: 5))
+            let heading = app.staticTexts["account.emailSignIn.heading"]
+            XCTAssertTrue(heading.waitForExistence(timeout: 5))
+            if scale == 0 { compactHeight = heading.frame.height }
+            else { XCTAssertGreaterThan(heading.frame.height, compactHeight + 1) }
+            let cancel = app.buttons["Cancel"].firstMatch
+            XCTAssertTrue(cancel.isHittable)
+            XCTAssertFalse(app.buttons["Send link"].isEnabled)
+            let frames = XCTAttachment(string: "scale=\(scale); heading=\(heading.frame); cancel=\(cancel.frame)")
+            frames.name = "Mac email reading geometry"; frames.lifetime = .keepAlways; add(frames)
+            captureAppScreen("Mac email interface scale \(scale)")
+            app.activate()
+            XCTAssertTrue(app.wait(for: .runningForeground, timeout: 5))
+            cancel.click()
+            XCTAssertTrue(heading.waitForNonExistence(timeout: 5))
+        }
+    }
+
     func testMacDocsAnswerCopiesUsingKeyboardOnly() throws {
         launch("docsTargets")
         // Honour the machine's navigation setting; never change global defaults.
