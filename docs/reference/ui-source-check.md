@@ -71,3 +71,18 @@ Use `--inventory` for current locations as source lines move. UI1/UI2/UI3 whole-
 Remaining neutral-text triage after waiting guidance: raw 8B949E equals Text.meta and measures 6.47:1 on primary, 6.23:1 on panel, 6.13:1 on tertiary and 5.76:1 on the 18181B control fill. Current iPhone no-insights/no-sales and updating text stays above 4.5:1; its raw constructors remain token debt. The subsequent correction removes six raw occurrences for live Coaching count/unit text, live/retained-card clarity guidance and API edit/disconnected/add instructions, leaving 301 raw colours and 1,151 matches. The add instruction also loses its 0.6 opacity so the text meets the ordinary-text target. NotesEditor placeholder, SectionHeader shortcut, Mac checking-plan and iPhone checking-plan/tier text remain explicit meaningful-text follow-ups. Status accent/opacity pairs still need role-specific review; redundant heading icons/diamonds/tilde are not ordinary-text defects merely because they use a faint literal.
 
 Plan/notes follow-through removes five raw foreground occurrences: checking-plan on both platforms, the iPhone tier label, Mac NotesEditor placeholder and SectionHeader shortcut hint. The resulting inventory is 296 raw colours and 1,146 total matches. Mac usage text also loses its resting 0.8 opacity, which had put low-minutes red at about 3.78:1 on Background.card; full-opacity status text meets the ordinary-text target without changing warning thresholds or entitlement logic. This closes those specifically named text items, not the broader status/appearance/accessibility inventory.
+
+## Selected UI3 inventory checkpoint
+
+The selected corrections now have independent scoped review: aggregate/filler values, Questions/Playbook guidance and disclosure/selection, speaker/rename guidance, waiting instructions, Coaching/API supporting text, plan status and notes/shortcut hints. The current guard records 296 raw colours and 1,146 total matches. This is not a claim that every remaining literal or every whole-screen contrast pairing is accepted.
+
+| Remaining category | Disposition |
+|---|---|
+| Identical surface/border literals, including Coaching stats panel/border | Token debt remains with the owning feature; no ordinary-text contrast defect is inferred from literal use alone. |
+| Existing 8B949E ordinary text on checked dark surfaces | Readable meta value, retained token debt; inspect additional opacity/background combinations when touched. |
+| Decorative symbols and genuinely disabled controls | Keep role-specific disposition; they are not a blanket exemption for useful hints/actions. |
+| Wider account/billing banners, Settings, History, Watch/extensions and full renderer extraction | Follow D10–D21's explicit feature-owner split in the UI plan; do not expand UI3 into a whole-app conversion. |
+| Migrated controls, long content and whole screens | Runtime acceptance remains open: actual container targets, large text, iPad, VoiceOver, keyboard/focus, pointer, Mac appearance and performance. |
+| Source enforcement | Local guard and its tests are accepted; remote CI and final-candidate validation remain separate evidence. |
+
+Next work is the required platform matrix and candidate validation. Any new concrete rendering defect found there gets a bounded correction and its own regression evidence; an accepted small slice alone does not close UI1/UI2/UI3.

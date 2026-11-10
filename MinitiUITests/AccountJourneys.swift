@@ -25,13 +25,19 @@ final class AccountJourneys: XCTestCase {
         super.tearDown()
     }
 
-    private func launch(_ scenario: String = "first", largeText: Bool = false, screenshotScene: String? = nil) {
+    private func launch(_ scenario: String = "first", largeText: Bool = false, screenshotScene: String? = nil, interfaceScale: Int? = nil) {
         app = XCUIApplication()
         if let screenshotScene {
             app.launchArguments = ["-MinitiScreenshotScene", screenshotScene]
         }
+        if let interfaceScale {
+            // ScreenshotMode preserves explicit arguments in its volatile domain.
+            app.launchArguments += ["-interfaceScale", String(interfaceScale)]
+        }
         if largeText {
             app.launchEnvironment["MINITI_UI_TEST_LARGE_TEXT"] = "1"
+        } else if scenario == "readingMatrix" {
+            app.launchEnvironment["MINITI_UI_TEST_NORMAL_TEXT"] = "1"
         }
         app.launchEnvironment["MINITI_UI_TEST_ID"] = testID
         app.launchEnvironment["MINITI_UI_TEST_SCENARIO"] = scenario
@@ -259,6 +265,45 @@ final class AccountJourneys: XCTestCase {
     func testSavedMeetingSectionsHaveSharedTargetsAndRetainNotes() {
         launch(screenshotScene: "meeting")
         assertMeetingSectionNavigation()
+    }
+
+    func testLiveMeetingNavigationAtLargestTextAcrossInterfaceScales() {
+        assertMeetingNavigationAtTextSize(scene: "recording-insights", largeText: true)
+    }
+
+    func testSavedMeetingNavigationAtLargestTextAcrossInterfaceScales() {
+        assertMeetingNavigationAtTextSize(scene: "meeting", largeText: true)
+    }
+
+    func testLiveMeetingNavigationAtNormalTextAcrossInterfaceScales() {
+        assertMeetingNavigationAtTextSize(scene: "recording-insights", largeText: false)
+    }
+
+    func testSavedMeetingNavigationAtNormalTextAcrossInterfaceScales() {
+        assertMeetingNavigationAtTextSize(scene: "meeting", largeText: false)
+    }
+
+    private func assertMeetingNavigationAtTextSize(scene: String, largeText: Bool) {
+        executionTimeAllowance = 180
+        for scale in 0...2 {
+            app?.terminate()
+            launch("readingMatrix", largeText: largeText, screenshotScene: scene, interfaceScale: scale)
+            let metrics = app.staticTexts["ui-test.readingMetrics"]
+            XCTAssertTrue(metrics.waitForExistence(timeout: 5))
+            let category = largeText ? "largest" : "normal"
+            XCTAssertEqual(metrics.label, "Reading scale \(scale), text \(category)",
+                           "Prove the requested scale reaches the actual scene")
+            for section in ["transcript", "insights", "notes"] {
+                let button = app.buttons["meeting.section.\(section)"]
+                XCTAssertTrue(button.isHittable)
+                XCTAssertGreaterThanOrEqual(button.frame.minX, app.frame.minX)
+                XCTAssertLessThanOrEqual(button.frame.maxX, app.frame.maxX + 0.5)
+                XCTAssertGreaterThanOrEqual(button.frame.minY, app.frame.minY)
+                XCTAssertLessThanOrEqual(button.frame.maxY, app.frame.maxY + 0.5)
+            }
+            captureAppScreen("\(scene) \(category) text, interface scale \(scale)")
+            assertMeetingSectionNavigation()
+        }
     }
 
     private func assertMeetingSectionNavigation() {

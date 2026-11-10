@@ -33,6 +33,10 @@ enum AccountUITestHarness {
         if isActive && ProcessInfo.processInfo.environment["MINITI_UI_TEST_LARGE_TEXT"] == "1" {
             return .accessibility5
         }
+        if isActive, ProcessInfo.processInfo.environment["MINITI_UI_TEST_SCENARIO"] == "readingMatrix",
+           ProcessInfo.processInfo.environment["MINITI_UI_TEST_NORMAL_TEXT"] == "1" {
+            return .large
+        }
         #endif
         return systemSize
     }
@@ -231,6 +235,15 @@ enum AccountUITestHarness {
 }
 
 struct AccountUITestReady: ViewModifier {
+    #if MINITI_TEST_HOST
+    @Environment(\.interfaceScale) private var readingScale
+    @Environment(\.systemReadingSize) private var readingSize
+    private var readingCategory: String {
+        if readingSize == .large { return "normal" }
+        if readingSize == .accessibility5 { return "largest" }
+        return "unexpected"
+    }
+    #endif
     func body(content: Content) -> some View {
         Group {
             #if MINITI_TEST_HOST
@@ -278,6 +291,13 @@ struct AccountUITestReady: ViewModifier {
                 VStack(alignment: .leading) {
                     Text("Test ready").font(.caption2).foregroundStyle(ColorPalette.Text.muted)
                         .accessibilityIdentifier("ui-test.ready")
+                    #if MINITI_TEST_HOST
+                    if ProcessInfo.processInfo.environment["MINITI_UI_TEST_SCENARIO"] == "readingMatrix" {
+                        Text("Reading scale \(readingScale.rawValue), text \(readingCategory)")
+                            .font(.caption2).foregroundStyle(ColorPalette.Text.muted)
+                            .accessibilityIdentifier("ui-test.readingMetrics")
+                    }
+                    #endif
                     #if MINITI_TEST_HOST && os(macOS)
                     if ProcessInfo.processInfo.environment["MINITI_UI_TEST_SCENARIO"] == "docsTargets" {
                         Text(NSApp.isFullKeyboardAccessEnabled ? "Keyboard navigation on" : "Keyboard navigation off")
