@@ -105,6 +105,9 @@ struct ReadingMetrics: Equatable {
     let transcriptHeaderSize: CGFloat
     let transcriptLineSpacing: CGFloat
     let notesBodySize: CGFloat
+    let consentHeadingSize: CGFloat
+    let consentSecondarySize: CGFloat
+    var consentBodySize: CGFloat { transcriptBodySize }
 
     var insightBodySize: CGFloat { transcriptBodySize }
     var insightSecondarySize: CGFloat { transcriptBodySize }
@@ -146,6 +149,9 @@ struct ReadingMetrics: Equatable {
         transcriptHeaderSize = resolved(interfaceScale.transcriptHeaderSize)
         transcriptLineSpacing = resolved(interfaceScale.transcriptLineSpacing)
         notesBodySize = resolved(notesBase + interfaceScale.transcriptBodySize - InterfaceScale.compact.transcriptBodySize)
+        let interfaceIncrease = interfaceScale.transcriptBodySize - InterfaceScale.compact.transcriptBodySize
+        consentHeadingSize = resolved(17 + interfaceIncrease)
+        consentSecondarySize = resolved(12 + interfaceIncrease)
     }
 }
 

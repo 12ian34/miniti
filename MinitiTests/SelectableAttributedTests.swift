@@ -398,6 +398,32 @@ final class SelectableAttributedTests: XCTestCase {
         #endif
     }
 
+    func testConsentReadingBaselinesAndPlatformScaling() {
+        #if os(macOS)
+        let body: [CGFloat] = [13, 14, 15]
+        let headings: [CGFloat] = [17, 18, 19]
+        let secondary: [CGFloat] = [12, 13, 14]
+        #else
+        let body: [CGFloat] = [13, 15, 17]
+        let headings: [CGFloat] = [17, 19, 21]
+        let secondary: [CGFloat] = [12, 14, 16]
+        #endif
+        for scale in InterfaceScale.allCases {
+            let normal = ReadingMetrics(interfaceScale: scale, systemDynamicTypeSize: .large)
+            let largest = ReadingMetrics(interfaceScale: scale, systemDynamicTypeSize: .accessibility5)
+            XCTAssertEqual(normal.consentBodySize, body[scale.rawValue])
+            XCTAssertEqual(normal.consentHeadingSize, headings[scale.rawValue])
+            XCTAssertEqual(normal.consentSecondarySize, secondary[scale.rawValue])
+            #if os(macOS)
+            XCTAssertEqual(normal, largest)
+            #else
+            XCTAssertGreaterThan(largest.consentBodySize, normal.consentBodySize)
+            XCTAssertGreaterThan(largest.consentHeadingSize, normal.consentHeadingSize)
+            XCTAssertGreaterThan(largest.consentSecondarySize, normal.consentSecondarySize)
+            #endif
+        }
+    }
+
     func testCompactInterfaceScalePreservesOriginalTranscriptMetrics() {
         XCTAssertEqual(InterfaceScale.compact.transcriptBodySize, 13)
         XCTAssertEqual(InterfaceScale.compact.transcriptHeaderSize, 10)

@@ -5,13 +5,14 @@
 - improvement: (macOS and iOS) Sales, templates and notes follow the interface text size in live and saved meetings
 - improvement: (iOS) transcript and insight text follow the system text size, including accessibility sizes
 - improvement: (iOS) Settings text follows your interface text size
+- improvement: (macOS and iOS) Deepgram and OpenAI permission text follows your text size
 - improvement: (macOS and iOS) saved discussion and actions use selectable lists, along with decisions on iOS
 - improvement: (macOS and iOS) consistent spacing and wrapped text in insight lists
 - improvement: (macOS and iOS) matching section names, colours and heading styles in live and saved insights
 - improvement: (macOS and iOS) matching Copy and Update buttons in live and saved meetings
 - improvement: (iOS) matching transcript, insights and notes tabs in live and saved meetings
 - improvement: (iOS) larger tap areas for Coaching tabs, history sorting and insight Update controls
-- improvement: (iOS) larger tap areas for permission choices
+- improvement: (iOS) larger tap areas for the Deepgram and OpenAI choice
 - improvement: (macOS and iOS) clearer accessibility labels and larger click and tap areas for Copy and Coaching help
 - improvement: (macOS and iOS) clearer question context, Copy text and Coaching statistics
 - improvement: (macOS and iOS) clearer speaker labels and rename guidance

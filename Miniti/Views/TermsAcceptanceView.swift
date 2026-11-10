@@ -27,6 +27,7 @@ struct TermsAcceptanceView: View {
     }
 
     @EnvironmentObject var appState: AppState
+    @Environment(\.readingMetrics) private var readingMetrics
     @Environment(\.dismiss) private var dismiss
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var appeared = false
@@ -106,38 +107,42 @@ struct TermsAcceptanceView: View {
                         .foregroundStyle(ColorPalette.Text.secondary)
 
                     Text(heading)
-                        .font(.system(size: 17, weight: .semibold))
+                        .accessibilityIdentifier("consent.heading")
+                        .font(.system(size: readingMetrics.consentHeadingSize, weight: .semibold))
                         .foregroundStyle(ColorPalette.Text.primary)
                         .fixedSize(horizontal: false, vertical: true)
 
                     ForEach(Self.providerLines, id: \.name) { line in
-                        (Text(line.name).font(.system(size: 13, weight: .semibold)).foregroundStyle(ColorPalette.Text.primary)
-                            + Text(" \(line.text)").font(.system(size: 13)).foregroundStyle(ColorPalette.Text.secondary))
+                        (Text(line.name).font(.system(size: readingMetrics.consentBodySize, weight: .semibold)).foregroundStyle(ColorPalette.Text.primary)
+                            + Text(" \(line.text)").font(.system(size: readingMetrics.consentBodySize)).foregroundStyle(ColorPalette.Text.secondary))
                             .fixedSize(horizontal: false, vertical: true)
                             .accessibilityLabel("\(line.name) \(line.text)")
+                            .accessibilityIdentifier("consent.provider.\(line.name)")
                     }
 
                     Text(Self.pathLine)
-                        .font(.system(size: 13))
+                        .font(.system(size: readingMetrics.consentBodySize))
                         .foregroundStyle(ColorPalette.Text.secondary)
                         .fixedSize(horizontal: false, vertical: true)
 
                     Text(Self.choiceLine)
-                        .font(.system(size: 13))
+                        .accessibilityIdentifier("consent.choice")
+                        .font(.system(size: readingMetrics.consentBodySize))
                         .foregroundStyle(ColorPalette.Text.secondary)
                         .fixedSize(horizontal: false, vertical: true)
 
                     #if os(macOS)
                     Text(Self.privateModeLine)
-                        .font(.system(size: 12))
+                        .font(.system(size: readingMetrics.consentSecondarySize))
                         .foregroundStyle(ColorPalette.Text.dim)
                         .fixedSize(horizontal: false, vertical: true)
                     #endif
 
                     Text(.init("[privacy policy](https://miniti.app/privacy#what-is-sent-to-third-parties) · [terms](https://miniti.app/terms)"))
-                        .font(.system(size: 12))
+                        .font(.system(size: readingMetrics.consentSecondarySize))
                         .foregroundStyle(ColorPalette.Text.dim)
                         .tint(accent)
+                        .accessibilityIdentifier("consent.links")
                         .fixedSize(horizontal: false, vertical: true)
                 }
                 .frame(maxWidth: 460, alignment: .leading)
@@ -157,7 +162,7 @@ struct TermsAcceptanceView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(ColorPalette.Background.primary)
-        .modifier(AccountUITestReadingScopeProbe(name: "consent", alignment: .topLeading))
+        .modifier(AccountUITestReadingScopeProbe(name: presentation == .firstScreen ? "consent.first" : "consent.sheet", alignment: .topLeading))
         .opacity(appeared || reduceMotion ? 1 : 0)
         .onAppear {
             if reduceMotion {
@@ -189,7 +194,8 @@ struct TermsAcceptanceView: View {
     private var declineButton: some View {
         Button(action: decline) {
             Text(declineTitle)
-                .font(.system(size: 13, weight: .semibold))
+                .font(.system(size: readingMetrics.consentBodySize, weight: .semibold))
+                .fixedSize()
                 .foregroundStyle(hoveringDecline ? ColorPalette.Text.primary : ColorPalette.Text.secondary)
                 .padding(.horizontal, MinitiDesignSystem.Spacing.page)
                 .padding(.vertical, MinitiDesignSystem.Spacing.comfortable)
@@ -216,7 +222,8 @@ struct TermsAcceptanceView: View {
     private var allowButton: some View {
         Button(action: allow) {
             Text("allow")
-                .font(.system(size: 13, weight: .semibold))
+                .font(.system(size: readingMetrics.consentBodySize, weight: .semibold))
+                .fixedSize()
                 .foregroundStyle(hoveringAllow ? ColorPalette.Background.primary : accent)
                 .padding(.horizontal, 32)
                 .padding(.vertical, MinitiDesignSystem.Spacing.comfortable)

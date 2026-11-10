@@ -80,6 +80,8 @@ enum AccountUITestHarness {
         let manager = ClientAuthManager(store: store, baseURL: "https://miniti-fixture.invalid/api", session: session,
             deviceIDProvider: { "550e8400-e29b-41d4-a716-446655440000" }, defaults: defaults)
         state.appMode = scenario == "onboardingBYOK" ? .byok : .managed
+        // A prior consentSheet fixture may have recorded a decline in test-host defaults.
+        if scenario == "setupUpgrade" { UserDefaults.standard.removeObject(forKey: "declinedTermsVersion") }
         state.hasAcceptedTerms = scenario != "setupUpgrade"
         state.hasCompletedOnboarding = !scenario.hasPrefix("onboarding")
         if scenario == "consentSheet" {
@@ -279,6 +281,7 @@ struct AccountUITestReadingScopeProbe: ViewModifier {
 
 struct AccountUITestReady: ViewModifier {
     #if MINITI_TEST_HOST
+    @State private var statusHidden = false
     @Environment(\.interfaceScale) private var readingScale
     @Environment(\.systemReadingSize) private var readingSize
     private var readingCategory: String {
@@ -330,8 +333,14 @@ struct AccountUITestReady: ViewModifier {
             content
             #endif
         }.overlay(alignment: .bottomLeading) {
-            if AccountUITestHarness.isActive {
+            #if MINITI_TEST_HOST
+            if AccountUITestHarness.isActive, !statusHidden {
                 VStack(alignment: .leading) {
+                    if ProcessInfo.processInfo.environment["MINITI_UI_TEST_SCENARIO"] == "setupUpgrade" {
+                        Button("Hide test status") { statusHidden = true }
+                            .font(.caption2)
+                            .accessibilityIdentifier("ui-test.hideStatus")
+                    }
                     Text("Test ready").font(.caption2).foregroundStyle(ColorPalette.Text.muted)
                         .accessibilityIdentifier("ui-test.ready")
                     #if MINITI_TEST_HOST
@@ -351,8 +360,9 @@ struct AccountUITestReady: ViewModifier {
                 }
                 // Test status must not grow over the production controls under test.
                 .dynamicTypeSize(.large)
-                .allowsHitTesting(false)
+                .allowsHitTesting(ProcessInfo.processInfo.environment["MINITI_UI_TEST_SCENARIO"] == "setupUpgrade")
             }
+            #endif
         }
     }
 }

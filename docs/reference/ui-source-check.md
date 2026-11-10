@@ -86,3 +86,5 @@ The selected corrections now have independent scoped review: aggregate/filler va
 | Source enforcement | Local guard and its tests are accepted; remote CI and final-candidate validation remain separate evidence. |
 
 Next work is the required platform matrix and candidate validation. Any new concrete rendering defect found there gets a bounded correction and its own regression evidence; an accepted small slice alone does not close UI1/UI2/UI3.
+
+UI3 consent reading (CP2) replaces the two 12pt secondary-font occurrences in TermsAcceptanceView with shared reading metrics. The baseline prune removes only that existing small-fixed-font entry; no raw-colour allowance or review cue is added.

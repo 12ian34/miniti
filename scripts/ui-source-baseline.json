@@ -1270,12 +1270,6 @@
       "count": 2
     },
     {
-      "path": "Miniti/Views/TermsAcceptanceView.swift",
-      "rule": "small-fixed-font",
-      "signature": "system ( size : 12 )",
-      "count": 2
-    },
-    {
       "path": "Miniti/Views/TranscriptView.swift",
       "rule": "focus-opt-out",
       "signature": "focusable ( false )",
