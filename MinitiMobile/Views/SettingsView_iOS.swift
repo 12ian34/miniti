@@ -35,6 +35,7 @@ struct SettingsView_iOS: View {
                 compactSettings
             }
         }
+        .modifier(AccountUITestReadingScopeProbe(name: "settings"))
         .preferredColorScheme(.dark)
         .onAppear {
             let restored = SettingsDestination.fromLegacyID(appState.selectedSettingsTab)

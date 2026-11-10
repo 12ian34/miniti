@@ -33,10 +33,11 @@ final class AccountJourneys: XCTestCase {
         if let interfaceScale {
             // ScreenshotMode preserves explicit arguments in its volatile domain.
             app.launchArguments += ["-interfaceScale", String(interfaceScale)]
+            app.launchEnvironment["MINITI_UI_TEST_READING_MATRIX"] = "1"
         }
         if largeText {
             app.launchEnvironment["MINITI_UI_TEST_LARGE_TEXT"] = "1"
-        } else if ["readingMatrix", "onboardingReadingMatrix"].contains(scenario) {
+        } else if interfaceScale != nil {
             app.launchEnvironment["MINITI_UI_TEST_NORMAL_TEXT"] = "1"
         }
         app.launchEnvironment["MINITI_UI_TEST_ID"] = testID
@@ -981,14 +982,7 @@ final class AccountJourneys: XCTestCase {
     private func assertOnboardingChoicesAcrossInterfaceScales(largeText: Bool) {
         executionTimeAllowance = 180
         for scale in 0...2 {
-            if scale > 0 {
-                // Each previous case deliberately enrolled its synthetic account.
-                // Reuse the existing fixture cleanup before testing first launch again.
-                app.terminate()
-                app.launchArguments = ["-MinitiUITestCleanup"]
-                app.launch()
-                XCTAssertTrue(app.staticTexts["ui-test.ready"].waitForExistence(timeout: 10))
-            }
+            if scale > 0 { resetAccountMatrixFixture() }
             app?.terminate()
             launch("onboardingReadingMatrix", largeText: largeText, interfaceScale: scale)
             let probe = app.staticTexts["ui-test.readingMetrics"]
@@ -998,6 +992,14 @@ final class AccountJourneys: XCTestCase {
             captureAppScreen("Onboarding \(category) text, interface scale \(scale)")
             assertOnboardingChoicesRemainUsable()
         }
+    }
+
+    private func resetAccountMatrixFixture() {
+        // Each previous case deliberately enrolled its synthetic account.
+        app.terminate()
+        app.launchArguments = ["-MinitiUITestCleanup"]
+        app.launch()
+        XCTAssertTrue(app.staticTexts["ui-test.ready"].waitForExistence(timeout: 10))
     }
 
     private func assertOnboardingChoicesRemainUsable() {
@@ -1417,6 +1419,81 @@ final class AccountJourneys: XCTestCase {
         assertHomeFooterGeometry()
         let capture = XCTAttachment(screenshot: app.screenshot())
         capture.name = "Home footer at largest text size"; capture.lifetime = .keepAlways; add(capture)
+    }
+
+    func testSettingsInheritsResolvedLargestControlSize() {
+        launch("first", largeText: true, interfaceScale: 2)
+        let root = app.staticTexts["ui-test.readingMetrics"]
+        XCTAssertTrue(root.waitForExistence(timeout: 5))
+        XCTAssertEqual(root.label, "Reading scale 2, text largest")
+        app.buttons["Settings"].tap()
+        let scope = app.staticTexts["ui-test.readingScope.settings"]
+        XCTAssertTrue(scope.waitForExistence(timeout: 5))
+        captureAppScreen("Settings inherited control-size probe")
+        XCTAssertEqual(scope.label, "scale 2; reading largest; controls accessibility")
+    }
+
+    func testHomeAndGeneralSettingsAtNormalTextAcrossInterfaceScales() {
+        assertHomeAndGeneralSettingsAcrossInterfaceScales(largeText: false)
+    }
+
+    func testHomeAndGeneralSettingsAtLargestTextAcrossInterfaceScales() {
+        assertHomeAndGeneralSettingsAcrossInterfaceScales(largeText: true)
+    }
+
+    private func assertHomeAndGeneralSettingsAcrossInterfaceScales(largeText: Bool) {
+        executionTimeAllowance = 300
+        for scale in 0...2 {
+            if scale > 0 { resetAccountMatrixFixture() }
+            app?.terminate()
+            launch("calendar", largeText: largeText, interfaceScale: scale)
+            let category = largeText ? "largest" : "normal"
+            let probe = app.staticTexts["ui-test.readingMetrics"]
+            XCTAssertTrue(probe.waitForExistence(timeout: 5))
+            XCTAssertEqual(probe.label, "Reading scale \(scale), text \(category)")
+            let account = app.buttons["account.continueAnonymous"]
+            XCTAssertTrue(account.waitForExistence(timeout: 5))
+            for _ in 0..<8 where !account.isHittable { app.scrollViews.firstMatch.swipeUp() }
+            XCTAssertTrue(account.isHittable)
+            account.tap()
+            XCTAssertTrue(account.waitForNonExistence(timeout: 10))
+            XCTAssertTrue(app.buttons["calendar.section.tomorrow"].waitForExistence(timeout: 5))
+            assertHomeFooterGeometry()
+            let footer = ["setup.reopen", "home.calendar.toggle", "home.feedback"].map { app.buttons[$0].frame }.sorted { $0.minX < $1.minX }
+            for pair in zip(footer, footer.dropFirst()) {
+                XCTAssertLessThanOrEqual(pair.0.maxX, pair.1.minX + 0.001)
+            }
+            XCTAssertTrue(app.buttons["home.start"].isHittable)
+            captureAppScreen("Home \(category) text, interface scale \(scale)")
+            app.buttons["setup.reopen"].tap()
+            assertHomeFooterGeometry()
+            captureAppScreen("Home setup \(category) text, interface scale \(scale)")
+            let settings = app.buttons["Settings"]
+            XCTAssertTrue(settings.isHittable)
+            settings.tap()
+            let general = app.staticTexts["General"].firstMatch
+            XCTAssertTrue(general.waitForExistence(timeout: 5))
+            for _ in 0..<4 where !general.isHittable { app.swipeDown() }
+            XCTAssertTrue(general.isHittable)
+            captureAppScreen("Settings list \(category) text, interface scale \(scale)")
+            let settingsScope = app.staticTexts["ui-test.readingScope.settings"]
+            XCTAssertTrue(settingsScope.waitForExistence(timeout: 5))
+            XCTAssertEqual(settingsScope.label, "scale \(scale); reading \(category); controls \(largeText ? "accessibility" : "standard")")
+            general.tap()
+            XCTAssertTrue(app.navigationBars["General"].waitForExistence(timeout: 5))
+            let slider = app.sliders["Interface scale"]
+            for _ in 0..<8 where !slider.isHittable { app.swipeUp() }
+            XCTAssertTrue(slider.isHittable)
+            XCTAssertEqual(slider.value as? String, ["Compact", "Standard", "Large"][scale])
+            captureAppScreen("General Settings \(category) text, interface scale \(scale)")
+            app.navigationBars["General"].buttons.element(boundBy: 0).tap()
+            let done = app.buttons["Done"]
+            XCTAssertTrue(done.waitForExistence(timeout: 5))
+            XCTAssertTrue(done.isHittable)
+            done.tap()
+            XCTAssertTrue(app.buttons["home.start"].waitForExistence(timeout: 5))
+            XCTAssertTrue(app.buttons["home.start"].isHittable)
+        }
     }
 
     private func assertHomeFooterGeometry(file: StaticString = #filePath, line: UInt = #line) {

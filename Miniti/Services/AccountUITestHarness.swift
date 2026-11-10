@@ -33,7 +33,7 @@ enum AccountUITestHarness {
         if isActive && ProcessInfo.processInfo.environment["MINITI_UI_TEST_LARGE_TEXT"] == "1" {
             return .accessibility5
         }
-        if isActive, ["readingMatrix", "onboardingReadingMatrix"].contains(ProcessInfo.processInfo.environment["MINITI_UI_TEST_SCENARIO"] ?? ""),
+        if isActive, ProcessInfo.processInfo.environment["MINITI_UI_TEST_READING_MATRIX"] == "1",
            ProcessInfo.processInfo.environment["MINITI_UI_TEST_NORMAL_TEXT"] == "1" {
             return .large
         }
@@ -234,6 +234,40 @@ enum AccountUITestHarness {
     #endif
 }
 
+/// Inspect a presented surface without replacing its production content.
+struct AccountUITestReadingScopeProbe: ViewModifier {
+    let name: String
+    #if MINITI_TEST_HOST
+    @Environment(\.interfaceScale) private var scale
+    @Environment(\.systemReadingSize) private var readingSize
+    @Environment(\.dynamicTypeSize) private var controlSize
+    private var readingCategory: String {
+        guard let readingSize else { return "missing" }
+        if readingSize == .large { return "normal" }
+        if readingSize == .accessibility5 { return "largest" }
+        return "other"
+    }
+    #endif
+
+    func body(content: Content) -> some View {
+        #if MINITI_TEST_HOST
+        content.overlay(alignment: .bottomLeading) {
+            if AccountUITestHarness.isActive,
+               ProcessInfo.processInfo.environment["MINITI_UI_TEST_READING_MATRIX"] == "1" {
+                Text("scale \(scale.rawValue); reading \(readingCategory); controls \(controlSize.isAccessibilitySize ? "accessibility" : "standard")")
+                    .font(.caption2)
+                    .foregroundStyle(ColorPalette.Text.muted)
+                    .dynamicTypeSize(.large)
+                    .accessibilityIdentifier("ui-test.readingScope.\(name)")
+                    .allowsHitTesting(false)
+            }
+        }
+        #else
+        content
+        #endif
+    }
+}
+
 struct AccountUITestReady: ViewModifier {
     #if MINITI_TEST_HOST
     @Environment(\.interfaceScale) private var readingScale
@@ -292,7 +326,7 @@ struct AccountUITestReady: ViewModifier {
                     Text("Test ready").font(.caption2).foregroundStyle(ColorPalette.Text.muted)
                         .accessibilityIdentifier("ui-test.ready")
                     #if MINITI_TEST_HOST
-                    if ["readingMatrix", "onboardingReadingMatrix"].contains(ProcessInfo.processInfo.environment["MINITI_UI_TEST_SCENARIO"] ?? "") {
+                    if ProcessInfo.processInfo.environment["MINITI_UI_TEST_READING_MATRIX"] == "1" {
                         Text("Reading scale \(readingScale.rawValue), text \(readingCategory)")
                             .font(.caption2).foregroundStyle(ColorPalette.Text.muted)
                             .accessibilityIdentifier("ui-test.readingMetrics")
@@ -305,7 +339,10 @@ struct AccountUITestReady: ViewModifier {
                             .accessibilityIdentifier("ui-test.keyboardNavigation")
                     }
                     #endif
-                }.allowsHitTesting(false)
+                }
+                // Test status must not grow over the production controls under test.
+                .dynamicTypeSize(.large)
+                .allowsHitTesting(false)
             }
         }
     }
