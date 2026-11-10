@@ -903,7 +903,7 @@ private struct RecordingIndicatorView: View {
                     .foregroundStyle(ColorPalette.Text.primary)
             }
             .accessibilityElement(children: .ignore)
-            .accessibilityLabel("Take notes with Miniti")
+            .accessibilityLabel("Take notes with miniti")
         } else {
             Text(prompt.countdown.map {
                 "\(prompt.message) Starting the next recording in \($0)s."

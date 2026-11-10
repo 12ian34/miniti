@@ -3443,7 +3443,7 @@ struct CRMSendSheet: View {
                 .focusable(false)
             }
 
-            Text("A meeting note is added to the selected record. Transcript and coaching stay in Miniti.")
+            Text("A meeting note is added to the selected record. Transcript and coaching stay in miniti.")
                 .font(.system(size: 10, weight: .regular, design: .default))
                 .foregroundStyle(ColorPalette.Text.meta)
                 .fixedSize(horizontal: false, vertical: true)

@@ -832,7 +832,7 @@ struct AISettingsView: View {
                     }
                 }
 
-                Text("Investigations run inside Miniti with OpenAI only when you click. Web research includes clickable citations. Codebase investigation reads a bounded set of relevant excerpts from the folder you choose; OpenAI never receives unrestricted filesystem access.")
+                Text("Investigations run inside miniti with OpenAI only when you click. Web research includes clickable citations. Codebase investigation reads a bounded set of relevant excerpts from the folder you choose; OpenAI never receives unrestricted filesystem access.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -1296,7 +1296,7 @@ struct NotificationsSettingsView: View {
                             appState.requestQuestionNotificationPermission()
                         }
                     }
-                Text("Shows a floating prompt while you're using Miniti, or a system notification when your attention is elsewhere or the recording indicator is off. Limited to one every 2 minutes.")
+                Text("Shows a floating prompt while you're using miniti, or a system notification when your attention is elsewhere or the recording indicator is off. Limited to one every 2 minutes.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
 
@@ -1307,7 +1307,7 @@ struct NotificationsSettingsView: View {
                             appState.requestNudgeNotificationPermission()
                         }
                     }
-                Text("Gently alerts you if you've been talking for roughly a minute or more without interruption. Uses the floating recording surface in Miniti and a system notification elsewhere, limited to one every 3 minutes.")
+                Text("Gently alerts you if you've been talking for roughly a minute or more without interruption. Uses the floating recording surface in miniti and a system notification elsewhere, limited to one every 3 minutes.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
 
@@ -1347,7 +1347,7 @@ struct NotificationsSettingsView: View {
             }
 
             Section("Meeting Decisions") {
-                Text("Smart meeting start, ending, and handoff decisions raise the floating recording surface. When Miniti is behind another app or the surface is turned off, an actionable system notification is used when notification permission is available.")
+                Text("Smart meeting start, ending, and handoff decisions raise the floating recording surface. When miniti is behind another app or the surface is turned off, an actionable system notification is used when notification permission is available.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -1579,7 +1579,7 @@ struct IntegrationsSettingsView: View {
                         }
                     }
                     
-                    Text("Read-only access to calendar events. Miniti never modifies your calendar.")
+                    Text("Read-only access to calendar events. miniti never modifies your calendar.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                     

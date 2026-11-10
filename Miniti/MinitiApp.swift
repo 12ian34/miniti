@@ -527,12 +527,12 @@ struct MinitiApp: App {
             #endif
 
             CommandGroup(replacing: .help) {
-                Button("Miniti Docs") {
+                Button("miniti Docs") {
                     if let url = URL(string: "https://miniti.app/docs") {
                         NSWorkspace.shared.open(url)
                     }
                 }
-                Button("Miniti Support") {
+                Button("miniti Support") {
                     if let url = URL(string: "https://miniti.app/support") {
                         NSWorkspace.shared.open(url)
                     }
@@ -956,7 +956,7 @@ struct MenuBarView: View {
             Button {
                 AppDelegate.shared?.openOrRestoreMainWindow()
             } label: {
-                Label("Open Miniti", systemImage: "macwindow")
+                Label("Open miniti", systemImage: "macwindow")
             }
             .keyboardShortcut("o", modifiers: .command)
             

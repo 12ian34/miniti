@@ -699,7 +699,7 @@ private struct SettingsDetailView_iOS: View {
                 }
 
                 Section("Meeting Investigations") {
-                    Text("Web investigations run inside Miniti using OpenAI only when you tap Investigate. Results include clickable source citations; nothing runs automatically.")
+                    Text("Web investigations run inside miniti using OpenAI only when you tap Investigate. Results include clickable source citations; nothing runs automatically.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
@@ -908,14 +908,14 @@ private struct SettingsDetailView_iOS: View {
                             }
                         }
 
-                        Text("Read-only access to calendar events. Miniti never modifies your calendar.")
+                        Text("Read-only access to calendar events. miniti never modifies your calendar.")
                             .font(.caption)
                             .foregroundStyle(.secondary)
 
                         if appState.isGoogleCalendarConnected {
                             Toggle("Auto-start recording", isOn: $appState.autoStartFromCalendar)
                                 .id("integrations.autoStart")
-                            Text("Show a 15-second countdown when a calendar meeting starts. Dismiss to skip. Only fires while Miniti is open in the foreground.")
+                            Text("Show a 15-second countdown when a calendar meeting starts. Dismiss to skip. Only fires while miniti is open in the foreground.")
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
 
