@@ -1481,6 +1481,7 @@ final class AccountJourneys: XCTestCase {
             scope.tap()
             XCTAssertTrue(scope.waitForNonExistence(timeout: 5))
             captureAppScreen("\(name) \(category) text, scale \(scale)")
+            if debugLog { assertDebugLogHeaderFits() }
             let close = debugLog ? app.buttons["close"] : app.navigationBars["Filter"].buttons["Done"]
             XCTAssertTrue(close.isHittable)
             close.tap()
@@ -1490,6 +1491,58 @@ final class AccountJourneys: XCTestCase {
                 XCTAssertTrue(app.buttons["Filter meetings by person or date"].isHittable)
             }
         }
+    }
+
+    func testDebugLogOptionsKeepFilterAndDisplayActions() {
+        openDebugLog(largeText: false, scale: 2)
+        let scope = app.buttons["ui-test.readingScope.debugLog"]
+        XCTAssertTrue(scope.waitForExistence(timeout: 5))
+        scope.tap()
+        XCTAssertTrue(scope.waitForNonExistence(timeout: 5))
+        assertDebugLogHeaderFits()
+        let options = app.buttons["debugLog.options"]
+        XCTAssertEqual(options.value as? String, "all categories, routine hidden, pretty")
+        options.tap()
+        for name in ["audio", "deepgram", "app", "show routine", "raw", "copy", "clear"] {
+            XCTAssertTrue(app.buttons[name].waitForExistence(timeout: 5))
+        }
+        app.buttons["audio"].tap()
+        XCTAssertEqual(options.value as? String, "audio, routine hidden, pretty")
+        options.tap()
+        captureAppScreen("Debug Log options with audio selected")
+        app.buttons["audio"].tap()
+        XCTAssertEqual(options.value as? String, "all categories, routine hidden, pretty")
+        options.tap()
+        app.buttons["show routine"].tap()
+        XCTAssertEqual(options.value as? String, "all categories, routine shown, pretty")
+        options.tap()
+        app.buttons["hide routine"].tap()
+        options.tap()
+        app.buttons["raw"].tap()
+        XCTAssertEqual(options.value as? String, "all categories, routine hidden, raw")
+        options.tap()
+        app.buttons["pretty"].tap()
+        XCTAssertEqual(options.value as? String, "all categories, routine hidden, pretty")
+        captureAppScreen("Debug Log after options round trip")
+        app.buttons["close"].tap()
+        XCTAssertTrue(app.navigationBars["About"].waitForExistence(timeout: 5))
+    }
+
+    private func assertDebugLogHeaderFits() {
+        let title = app.staticTexts["debugLog.title"]
+        XCTAssertTrue(title.waitForExistence(timeout: 5))
+        // The short title must have a wide text frame, not a column of broken words.
+        XCTAssertGreaterThan(title.frame.width, title.frame.height * 2)
+        let options = app.buttons["debugLog.options"]
+        let close = app.buttons["close"]
+        XCTAssertTrue(options.waitForExistence(timeout: 5))
+        for button in [options, close] {
+            XCTAssertTrue(button.isHittable)
+            XCTAssertGreaterThanOrEqual(button.frame.width, 44 - 0.001)
+            XCTAssertGreaterThanOrEqual(button.frame.height, 44 - 0.001)
+            XCTAssertLessThanOrEqual(title.frame.maxY, button.frame.minY)
+        }
+        XCTAssertFalse(options.frame.intersects(close.frame))
     }
 
     private func openHistoryFilters(largeText: Bool, scale: Int) {

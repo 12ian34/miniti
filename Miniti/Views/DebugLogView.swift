@@ -107,20 +107,84 @@ struct DebugLogView: View {
     }
 
     private var header: some View {
-        HStack(spacing: 10) {
-            Text("debug log")
-                .font(.system(.headline, design: .default))
-                .foregroundStyle(ColorPalette.Text.primary)
+        Group {
+#if os(iOS)
+            VStack(alignment: .leading, spacing: MinitiDesignSystem.Spacing.standard) {
+                headerTitle
+                    .fixedSize(horizontal: false, vertical: true)
+                headerCount
+                    .fixedSize(horizontal: false, vertical: true)
+                ViewThatFits(in: .horizontal) {
+                    HStack(spacing: MinitiDesignSystem.Spacing.section) {
+                        optionsMenu.fixedSize()
+                        Spacer()
+                        closeButton.fixedSize()
+                    }
+                    VStack(alignment: .leading, spacing: MinitiDesignSystem.Spacing.standard) {
+                        optionsMenu.fixedSize()
+                        closeButton.fixedSize()
+                    }
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+#else
+            HStack(spacing: 10) {
+                headerTitle
+                headerCount
+                Spacer()
+                headerControls
+                closeButton
+            }
+#endif
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+    }
 
-            Text(includeRoutine ? "\(filtered.count)/\(logger.entries.count)" : "\(filtered.count)/\(importantCount) important")
+    private var headerTitle: some View {
+        Text("debug log")
+            .accessibilityIdentifier("debugLog.title")
+            .font(.system(.headline, design: .default))
+            .foregroundStyle(ColorPalette.Text.primary)
+    }
+
+    private var headerCount: some View {
+        Text(includeRoutine ? "\(filtered.count)/\(logger.entries.count)" : "\(filtered.count)/\(importantCount) important")
+            .font(.system(.caption, design: .default))
+            .foregroundStyle(ColorPalette.Text.meta)
+    }
+
+#if os(iOS)
+    private var optionsMenu: some View {
+        Menu {
+            headerControls
+        } label: {
+            Text("options")
                 .font(.system(.caption, design: .default))
                 .foregroundStyle(ColorPalette.Text.meta)
+                .minitiMinimumControlTarget()
+        }
+        .buttonStyle(.plain)
+        .accessibilityIdentifier("debugLog.options")
+        .accessibilityValue("\(filter?.rawValue ?? "all categories"), \(includeRoutine ? "routine shown" : "routine hidden"), \(viewMode == .pretty ? "pretty" : "raw")")
+    }
+#endif
 
-            Spacer()
-
+    private var headerControls: some View {
+        Group {
             ForEach(DebugLogger.Category.allCases, id: \.self) { cat in
-                Button(cat.rawValue) {
+                Button {
                     filter = filter == cat ? nil : cat
+                } label: {
+#if os(iOS)
+                    if filter == cat {
+                        Label(cat.rawValue, systemImage: "checkmark")
+                    } else {
+                        Text(cat.rawValue)
+                    }
+#else
+                    Text(cat.rawValue)
+#endif
                 }
                 .font(.system(.caption, design: .default))
                 .buttonStyle(.plain)
@@ -161,15 +225,18 @@ struct DebugLogView: View {
                 .font(.system(.caption, design: .default))
                 .buttonStyle(.plain)
                 .foregroundStyle(ColorPalette.Text.meta)
-
-            Button("close") { dismiss() }
-                .font(.system(.caption, design: .default))
-                .buttonStyle(.plain)
-                .foregroundStyle(ColorPalette.Text.meta)
-                .keyboardShortcut(.cancelAction)
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 8)
+    }
+
+    private var closeButton: some View {
+        Button("close") { dismiss() }
+            .font(.system(.caption, design: .default))
+            .buttonStyle(.plain)
+            .foregroundStyle(ColorPalette.Text.meta)
+            .keyboardShortcut(.cancelAction)
+#if os(iOS)
+            .minitiMinimumControlTarget()
+#endif
     }
 
     private var logList: some View {
