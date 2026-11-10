@@ -421,12 +421,18 @@ struct LiveTranscriptTextPaneMac: NSViewRepresentable {
                     textView: textView
                 )
             } else {
+                // Reading-size changes replace attributes on the same finalized
+                // characters. Keep the selection instead of treating that refresh
+                // as a text edit intersecting the selected words.
+                let previousSelection = pendingSelection
+                let preservesSelection = storage.string == parent.finalizedAttributed.string
                 replace(
                     range: NSRange(location: 0, length: storage.length),
                     with: parent.finalizedAttributed,
                     storage: storage,
                     textView: textView
                 )
+                if preservesSelection { pendingSelection = previousSelection }
             }
             finalizedLength = storage.length
             if parent.isAutoScrollEnabled {

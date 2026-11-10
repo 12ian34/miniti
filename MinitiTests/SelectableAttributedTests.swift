@@ -767,6 +767,65 @@ final class SelectableAttributedTests: XCTestCase {
     }
 
     @MainActor
+    func testAttributeOnlyRefreshDeliversRestoredSelectionToItsOwner() async throws {
+        let original = SelectableAttributed.body("Prefix. Selected words remain here.", fontSize: 13)
+        let resized = SelectableAttributed.body(original.string, fontSize: 16)
+        var delivered: [NSRange?] = []
+        let container = _SelectableTextContainer(attributed: original, mutation: nil,
+            onSelectionChange: { delivered.append($0) }, onDeleteSelection: nil)
+        let native = try XCTUnwrap(container.subviews.compactMap { $0 as? NSTextView }.first)
+        let selection = (original.string as NSString).range(of: "Selected words")
+        native.setSelectedRange(selection)
+        try await TestSupport.waitUntil { delivered.last == selection }
+        delivered.removeAll()
+        container.apply(resized, mutation: nil, onSelectionChange: { delivered.append($0) }, onDeleteSelection: nil)
+        try await TestSupport.waitUntil { !delivered.isEmpty && delivered.last == selection }
+        XCTAssertEqual(native.selectedRange(), selection)
+        print("SELECTION_CALLBACK values=\(delivered.map { $0.map(NSStringFromRange) ?? "nil" })")
+    }
+
+    @MainActor
+    func testLiveTranscriptKeepsFinalizedSelectionWhenInterfaceScaleChanges() async throws {
+        let state = AppState()
+        state.liveSegments = (1...80).map { index in
+            .init(id: UUID(), text: "Live anchor \(index). Clear ownership helps the project team make steady progress.",
+                  speaker: index % 2, timestamp: Double(index * 10), isFinal: true)
+        }
+        func root(_ scale: InterfaceScale) -> some View {
+            TranscriptView().environmentObject(state).environment(\.interfaceScale, scale)
+                .dynamicTypeSize(scale.dynamicTypeSize(from: .large))
+                .preferredColorScheme(.dark)
+        }
+        let host = NSHostingView(rootView: root(.standard))
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 700, height: 500),
+            styleMask: [.borderless], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false; window.contentView = host; window.orderFront(nil)
+        defer { window.orderOut(nil); window.close() }
+        func descendants(_ view: NSView) -> [NSView] { [view] + view.subviews.flatMap { descendants($0) } }
+        var firstView: NSTextView?
+        var selection: NSRange?
+        for scale: InterfaceScale in [.standard, .large, .compact, .standard] {
+            host.rootView = root(scale)
+            try await TestSupport.waitUntil {
+                host.layoutSubtreeIfNeeded()
+                guard let native = descendants(host).compactMap({ $0 as? NSTextView }).first(where: { $0.string.contains("Live anchor 1.") }) else { return false }
+                let text = native.attributedString(), range = (text.string as NSString).range(of: "Live anchor 1.")
+                return (text.attribute(.font, at: range.location, effectiveRange: nil) as? NSFont)?.pointSize == scale.transcriptBodySize
+            }
+            let native = try XCTUnwrap(descendants(host).compactMap { $0 as? NSTextView }.first { $0.string.contains("Live anchor 1.") })
+            XCTAssertTrue(native.string.contains("Live anchor 80."))
+            if let selection, let firstView {
+                XCTAssertTrue(native === firstView)
+                XCTAssertEqual(native.selectedRange(), selection)
+            } else {
+                firstView = native
+                selection = (native.string as NSString).range(of: "Live anchor 1.")
+                native.setSelectedRange(try XCTUnwrap(selection))
+            }
+        }
+    }
+
+    @MainActor
     func testAttributeOnlyNativeRefreshPreservesSelectionWithAndWithoutMutation() throws {
         let original = SelectableAttributed.body("First paragraph. Selected words stay here.", fontSize: 13)
         let resized = SelectableAttributed.body(original.string, fontSize: 15)
@@ -1569,6 +1628,60 @@ private struct SavedInsightScreenBenchmarkRoot: View {
             .environment(\.interfaceScale, scale)
             .dynamicTypeSize(scale.dynamicTypeSize(from: .large))
             .preferredColorScheme(.dark)
+    }
+}
+#endif
+
+#if os(macOS)
+final class CoachingHistoryScreenPerformanceTests: XCTestCase {
+    @MainActor
+    func testLongCoachingHistoryLayout() async throws {
+        let container = try TestSupport.makeInMemoryContainer()
+        let meetings = (1...500).map { index in
+            Meeting(title: String(format: "History %03d: synthetic project review", index),
+                startTime: Date(timeIntervalSince1970: 1_700_000_000 + Double(index * 3600)),
+                endTime: Date(timeIntervalSince1970: 1_700_000_600 + Double(index * 3600)),
+                segments: (0..<6).map { turn in
+                    TranscriptSegment(text: "We reviewed the project plan and agreed the next delivery milestone. What should the team validate next?",
+                        speaker: turn % 2, timestamp: Double(turn * 60), isFinal: true)
+                })
+        }
+        for meeting in meetings { container.mainContext.insert(meeting) }
+        let store = CoachingOverviewStore()
+        let computeStart = ProcessInfo.processInfo.systemUptime
+        store.refreshIfNeeded(meetings: meetings)
+        try await TestSupport.waitUntil(timeout: 60) { store.rows.count == meetings.count && !store.isComputing }
+        let computeTime = ProcessInfo.processInfo.systemUptime - computeStart
+        XCTAssertEqual(Set(store.rows.map(\.id)), Set(meetings.map(\.id)))
+        // Coaching duration ends at the last spoken timestamp (300s), not the 600s meeting end.
+        XCTAssertTrue(store.rows.allSatisfy { $0.durationMinutes == 5 && $0.pace > 0 })
+        let host = NSHostingView(rootView: TrainingMainView(meetings: meetings, store: store, initialTabForTesting: .history)
+            .modelContainer(container).preferredColorScheme(.dark))
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1000, height: 740),
+            styleMask: [.borderless], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false; window.contentView = host; window.orderFront(nil)
+        defer { window.orderOut(nil); window.close() }
+        func descendants(_ view: NSView) -> [NSView] { [view] + view.subviews.flatMap { descendants($0) } }
+        for width: CGFloat in [1000, 760, 1200] {
+            let start = ProcessInfo.processInfo.systemUptime
+            window.setContentSize(NSSize(width: width, height: 740))
+            host.layoutSubtreeIfNeeded()
+            let scroll = try XCTUnwrap(descendants(host).compactMap { $0 as? NSScrollView }.first)
+            let document = try XCTUnwrap(scroll.documentView)
+            XCTAssertGreaterThan(document.frame.height, CGFloat(meetings.count * 10))
+            document.scroll(NSPoint(x: 0, y: max(0, document.frame.height - scroll.contentView.bounds.height)))
+            scroll.reflectScrolledClipView(scroll.contentView)
+            host.layoutSubtreeIfNeeded()
+            let bitmap = try XCTUnwrap(host.bitmapImageRepForCachingDisplay(in: host.bounds))
+            host.cacheDisplay(in: host.bounds, to: bitmap)
+            let elapsed = ProcessInfo.processInfo.systemUptime - start
+            XCTAssertEqual(store.rows.count, 500)
+            print("COACHING_SCREEN width=\(width) rows=\(store.rows.count) height=\(document.frame.height) pixels=\(bitmap.pixelsWide * bitmap.pixelsHigh) seconds=\(elapsed) computeSeconds=\(computeTime)")
+            if width == 760 {
+                let attachment = XCTAttachment(image: NSImage(cgImage: try XCTUnwrap(bitmap.cgImage), size: host.bounds.size))
+                attachment.name = "Long Coaching history at end"; attachment.lifetime = .keepAlways; add(attachment)
+            }
+        }
     }
 }
 #endif

@@ -2393,6 +2393,17 @@ struct TrainingMainView: View {
     @State private var sortAscending = false
     @State private var selectedTab: CoachingOverviewTab = ScreenshotMode.current?.coachingOverviewTab ?? .focus
 
+    #if MINITI_TEST_HOST
+    // Exercise the production history layout without timing synthetic tab input.
+    init(meetings: [Meeting], store: CoachingOverviewStore,
+         onSelectMeeting: ((UUID) -> Void)? = nil, initialTabForTesting: CoachingOverviewTab? = nil) {
+        self.meetings = meetings
+        self.store = store
+        self.onSelectMeeting = onSelectMeeting
+        _selectedTab = State(initialValue: initialTabForTesting ?? ScreenshotMode.current?.coachingOverviewTab ?? .focus)
+    }
+    #endif
+
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 24) {

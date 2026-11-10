@@ -383,8 +383,12 @@ final class _SelectableTextContainer: NSView, NSTextViewDelegate {
         lastMeasuredHeight = measuredHeight
         measurementContentChanged = false
         pendingMeasurementMutations.removeAll(keepingCapacity: true)
-        if measuredHeights.count == 4 { measuredHeights.removeFirst() }
-        measuredHeights.append((width, lastMeasuredHeight))
+        // Tail validation permits a small existing tolerance. Do not retain that
+        // approximation across width changes; switching back must remeasure it.
+        if !canValidateIncrementalHeight {
+            if measuredHeights.count == 4 { measuredHeights.removeFirst() }
+            measuredHeights.append((width, lastMeasuredHeight))
+        }
         return lastMeasuredHeight
     }
 
