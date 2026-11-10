@@ -1790,6 +1790,14 @@ final class AccountJourneys: XCTestCase {
             form.swipeUp(velocity: .slow)
         }
         XCTAssertTrue(menu.isHittable, app.debugDescription)
+        if largeText && move {
+            // The sheets are hosted on the first Section header. Prove they still present
+            // after that header has scrolled out of view (review F3, 3.9.0). The restore
+            // layout is short enough that its header never leaves the screen.
+            let header = app.staticTexts["Your account"].firstMatch
+            XCTAssertFalse(header.exists && header.isHittable,
+                           "First Section header must be off screen for this check")
+        }
         // Form exposes the whole row plus the actual Menu label as a child button.
         // Tap that label, not the empty middle of the row's accessibility frame.
         let menuLabel = menu.buttons.firstMatch
