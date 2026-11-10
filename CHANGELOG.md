@@ -31,6 +31,8 @@
 - improvement: (macOS) clearer recording and ending text in the menu bar
 - improvement: (macOS and iOS) blank device names use a fallback, and new Macs keep their automatic name up to date
 - fix: (macOS and iOS) billing updates with differently formatted dates no longer reset used minutes
+- fix: (macOS) open meeting in the floating panel and Open miniti in the menu bar bring the main window forward when miniti is behind other apps, minimised or another app is full screen
+- fix: (macOS and iOS) long meeting titles no longer squeeze Coaching example quotes into a narrow column
 - fix: (macOS and iOS) switching accounts accepts a shared subscription and blocks different subscriptions from the same payment provider
 - fix: (macOS) selected transcript text stays selected when you change the interface text size
 - fix: (macOS and iOS) custom date filters keep both the start and end dates

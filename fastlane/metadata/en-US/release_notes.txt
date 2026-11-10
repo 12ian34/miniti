@@ -1,22 +1,17 @@
-NEW
-- Editable folders group meetings automatically, with a preview before organizing history.
-- An optional Home setup checklist helps configure miniti and organize meetings, with progress and tasks you can hide and restore in Settings.
-- Choose to sign in or continue without signing in when setting up miniti.
-- Rename devices in Settings, Account.
-
 IMPROVED
-- Home keeps language and recording above one row of setup, calendar and feedback controls.
-- Upcoming meetings are grouped into Today, Tomorrow and Later, with sections you can collapse.
-- Info buttons explain calendar automation and audio settings, with links to the docs.
-- Recording status distinguishes startup from reconnection.
-- Live words stay visible as they move into the finished transcript.
-- Stopping completes the meeting without a Done action. Final insights finish in place.
-- Clearer recovery choices and retry times when sign-in is unavailable.
+- Transcript, insight, sign-in and recovery key text follow the system text size, including accessibility sizes.
+- Settings, History filters, meeting preparation and permission text follow your interface text size.
+- Sign-in actions stay above the keyboard, and meeting preparation keeps notes and actions within reach.
+- Debug Log, History folders, email editing, recovery key and device controls stay readable with larger text.
+- Live and saved meetings share the same transcript, insights and notes tabs, section names, colours, Copy and Update buttons.
+- Saved discussion, actions and decisions use selectable lists with consistent spacing.
+- Larger tap areas for Coaching tabs, history sorting, Update, Copy, help, the Deepgram and OpenAI choice and billing links.
+- Hold compact tabs to see larger labels at accessibility text sizes.
+- Clearer speaker labels, rename guidance, question context, plan status and guidance while waiting for insights.
 
 FIXED
-- Putting a meeting back on cloud before its removal syncs no longer deletes it.
-- Calendar events can link to your recording without automatically splitting a continuing call.
-- Discarding while a recording is resuming cancels the pending start.
-- Interrupted Watch imports keep their audio and completed transcriptions for retry.
-- Older installs are recognized correctly during account migration.
-- Signing out keeps miniti signed out until you choose how to continue.
+- Billing updates with differently formatted dates no longer reset used minutes.
+- Switching accounts accepts a shared subscription and blocks different subscriptions from the same payment provider.
+- Custom date filters keep both the start and end dates.
+- Playbook answers collapse and reopen while keeping text selectable.
+- Long meeting titles no longer squeeze Coaching example quotes into a narrow column.
