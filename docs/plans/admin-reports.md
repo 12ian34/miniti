@@ -1,6 +1,23 @@
 # Admin reports: hourly saved reports and a tabbed panel
 
-Status: proposed 2026-11-10, not implemented, version unassigned, not yet in [the roadmap](../roadmap.md). Backend only (`../miniti-api`). Do not start until the 3.9.0 release thread has pushed and deployed its backend commits. Confirm the open decisions below first.
+Status: implemented locally 2026-11-11 in `miniti-api` commits `deab05e`, `9b60e7d`, `7cc625b` and `26d2c6f` (review fixes); not pushed or deployed. Backend only, no app release. Priority is in [the roadmap](../roadmap.md#operator-reporting-backend-only). Current route and storage contracts live in `../miniti-api/docs/agents/04-api-reference.md` (saved admin reports) and `03-patterns.md` (counter keys); this plan keeps the reasoning.
+
+### As built, and where it differs from the design below
+
+- Counters: `insights_daily:{date}` field `{installation}|{mode}|{language}|{platform}` and `recording_language_daily:{date}` field `{installation}|{language}|{platform}`. The installation is in the field, so exclusions are exact and one write replaces the separate per-device hash. Raw daily counters follow the existing no-expiry policy rather than 400 days.
+- Devices: the hourly job rebuilds the full devices report (779 records today, about $1 a month of KV reads) instead of the incremental active-set reads. Revisit when the device count grows a lot. Account emails and Polar billing emails are attached on read, never stored.
+- Usage chart: days three or more days old are cached per day (refreshed daily for 35 days, then every 30 days); the hourly chart went from 472 ms to 25 ms in a local run. Snapshots are gzip in KV with a 900 KB guard.
+- Provider caches (ledger, costs) are refreshed by the job only when older than 55 minutes.
+- Overview shows last 7 days vs the previous 7, top languages and report problems. Money is the former costs modal, inline. Health shows the job status.
+- Not built yet: Accounts quick filters (near limit, old clients, inactive paying), a one-off Deepgram request-history language backfill, and an `admin-stats.mjs` `fresh=1` flag. Exclusions start empty.
+
+### Validation
+
+945 backend tests, types, lint and a production build pass. The page was checked in a local dev server against a throwaway Redis with fake data (all five tabs rendered, no new console warnings; one existing style warning predates this work). An independent Fable review found no customer-path or compatibility issues; its seven small findings are fixed in `26d2c6f`.
+
+### Deploy
+
+Pushing `miniti-api` main deploys. After deploy: run the cron once (or Refresh now), check Health shows every part ok, seed exclusions with Ian's installations, then compare `/api/insights` and `/api/session` p95 latency over 24 hours. Rollback switches: `ADMIN_REPORTS_SNAPSHOTS=off`, `REPORT_COUNTERS=off`.
 
 ## Goal
 
@@ -114,7 +131,7 @@ Each step is a separate commit, reviewed before the next, and deployable on its 
 - Measured cost and cache economics ([usage cost plan](usage-cost-and-cache.md)). The Money tab displays the existing figures and does not change prices or budgets.
 - Alerting changes. Health only displays the existing checks.
 
-## Open decisions for Ian
+## Open decisions for Ian (defaults used in the build)
 
 1. Exclusion list: confirm it starts with your own devices and accounts only, or name other internal or test installations.
 2. Retention definition: confirm "active" means recorded or used insights, not just opened the app.

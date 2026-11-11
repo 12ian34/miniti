@@ -250,6 +250,10 @@ SG1 is also selected for 3.8.0: the [Home setup guide](plans/home-setup-guide.md
 
 The [current release checklist](releases/3.8.0.md) owns remaining release gates; this list does not waive them. Device-name refresh/blank-label polish is moved to selected 3.9.0 (AO4), preserving manual labels. Other deliberately deferred review suggestions remain without a version commitment: queued sync rerun latency and compaction/launch-save optimization, browser error-page and alert presentation, unreadable Watch-part salvage UI, pre-grant Watch owner assignment, and automatic reuse of an audio worker only after verified cleanup. Version-parser boundary coverage belongs with future mixed-version compatibility work. B0–B5 ownership migrations follow the current scope amendment above; this historical follow-up list does not override it. No new feature or follow-up is silently folded into the candidate.
 
+### Operator reporting (backend only)
+
+[Admin reports](plans/admin-reports.md): hourly saved admin reports, a tabbed dashboard, and language and AI-mode counters, with no new app tracking. Implemented locally in `miniti-api` on 2026-11-11, awaiting Ian's go-ahead to push (a push deploys). Independent of app releases and account ownership.
+
 ### Backend device-ID audit follow-ups
 
 Claude's read-only audit on 2026-11-06 found no required pre-3.8.0 change; its disposition is in the [retrospective decisions](releases/3.8.0-retro.md#decisions). The following bounded device fixes are selected for 3.9.0. Their phase lifetime is explicit; the full registration/registry project stays later:
