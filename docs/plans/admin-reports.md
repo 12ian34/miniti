@@ -1,6 +1,6 @@
 # Admin reports: hourly saved reports and a tabbed panel
 
-Status: implemented locally 2026-11-11 in `miniti-api` commits `deab05e`, `9b60e7d`, `7cc625b` and `26d2c6f` (review fixes); not pushed or deployed. Backend only, no app release. Priority is in [the roadmap](../roadmap.md#operator-reporting-backend-only). Current route and storage contracts live in `../miniti-api/docs/agents/04-api-reference.md` (saved admin reports) and `03-patterns.md` (counter keys); this plan keeps the reasoning.
+Status: deployed to production 2026-11-11 (`miniti-api` commits `deab05e`, `9b60e7d`, `7cc625b` and `26d2c6f`, review fixes in the last). First manual run at 13:27 UTC: every part ok in 21.3 s with cold caches (787 device records, 365-day chart 12.8 s). First scheduled run at 13:30 UTC: every part ok in 5.1 s, provider caches kept. No 5xx since the deploy. Open: Ian's installations in the exclusion list (empty so far) and the 24-hour `/api/insights` and `/api/session` p95 comparison. Backend only, no app release. Priority is in [the roadmap](../roadmap.md#operator-reporting-backend-only). Current route and storage contracts live in `../miniti-api/docs/agents/04-api-reference.md` (saved admin reports) and `03-patterns.md` (counter keys); this plan keeps the reasoning.
 
 ### As built, and where it differs from the design below
 

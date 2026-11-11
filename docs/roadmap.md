@@ -252,7 +252,7 @@ The [current release checklist](releases/3.8.0.md) owns remaining release gates;
 
 ### Operator reporting (backend only)
 
-[Admin reports](plans/admin-reports.md): hourly saved admin reports, a tabbed dashboard, and language and AI-mode counters, with no new app tracking. Implemented locally in `miniti-api` on 2026-11-11, awaiting Ian's go-ahead to push (a push deploys). Independent of app releases and account ownership.
+[Admin reports](plans/admin-reports.md): hourly saved admin reports, a tabbed dashboard, and language and AI-mode counters, with no new app tracking. Deployed to production on 2026-11-11; the hourly job runs at half past each hour. Independent of app releases and account ownership.
 
 ### Backend device-ID audit follow-ups
 
