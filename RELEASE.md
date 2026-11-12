@@ -1,6 +1,6 @@
 # Release Process
 
-Released on Mac, 2026-11-10: 3.9.0 build 165 is public through the verified DMG and Sparkle feed. iOS 3.9.0 build 165 is submitted for App Review with automatic release; iOS 3.8.0 build 164 is the current App Store version (confirmed 2026-11-10). Full Mac/iOS hosted suites, backend suites and signed-package checks pass; the backend, website, public docs and Linux tracking are deployed. Owner device checks of the new Home, History, sidebar and setup changes remain open. See the [3.9.0 checklist](docs/releases/3.9.0.md).
+Released on Mac, 2026-11-10: 3.9.0 build 165 is public through the verified DMG and Sparkle feed. iOS 3.9.0 build 165 is live on the App Store from 2026-11-11 (confirmed 2026-11-12); `IOS_LATEST_VERSION` 3.9.0 is deployed (backend `196fe8d`). Full Mac/iOS hosted suites, backend suites and signed-package checks pass; the backend, website, public docs and Linux tracking are deployed. Owner device checks of the new Home, History, sidebar and setup changes remain open. See the [3.9.0 checklist](docs/releases/3.9.0.md).
 
 Authoritative 10-step runbook for shipping Miniti. For repo context, start with [AGENTS.md](AGENTS.md). For distribution detail, see [docs/reference/distribution.md](docs/reference/distribution.md). For per-lane detail, see [fastlane/RUNBOOK.md](fastlane/RUNBOOK.md).
 
@@ -17,7 +17,7 @@ Authoritative 10-step runbook for shipping Miniti. For repo context, start with 
 
 ## Current release: 3.9.0
 
-Mac 3.9.0 build 165 is public from 2026-11-10: GitHub release asset, website redirects and Sparkle feed verified byte-for-byte (181,922,423 bytes), `MACOS_LATEST_VERSION` 3.9.0. iOS 3.9.0 build 165 is uploaded and submitted for App Review with automatic release; iOS 3.8.0 is the current App Store version (`IOS_LATEST_VERSION` 3.8.0). The [3.9.0 checklist](docs/releases/3.9.0.md) owns scope, evidence and review dispositions.
+Mac 3.9.0 build 165 is public from 2026-11-10: GitHub release asset, website redirects and Sparkle feed verified byte-for-byte (181,922,423 bytes), `MACOS_LATEST_VERSION` 3.9.0. iOS 3.9.0 build 165 was approved and released automatically on 2026-11-11 (App Store lookup, 18:35 UTC); `IOS_LATEST_VERSION` 3.9.0. The [3.9.0 checklist](docs/releases/3.9.0.md) owns scope, evidence and review dispositions.
 
 - Final source `2c65b010` (plus release-record docs). Full hosted suites pass: Mac 1440 tests / 9 skipped, iOS 1339 / 5 skipped. Backend 911 / 5 skipped and 46/46 disposable storage, types, lint and production build. UI source guard passes.
 - Scope: UI1–UI3, device count/name fixes and the S0 subscription-conflict guard, 2026-11-10 field fixes, all of Charlie's 3.8.0 feedback (Mac History page, resizable sidebar, series-based filing, setup guide highlight and single audio choice, two-column Coaching), hideable Mac Home stats and a local Coaching row cache. Account ownership B0–B5 moved to 3.10.0.
