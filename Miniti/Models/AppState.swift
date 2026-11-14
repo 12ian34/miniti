@@ -481,7 +481,7 @@ enum SettingsSearchCatalog {
         .init("about.acknowledgements", "Acknowledgements", section: "About", destination: .about, keywords: ["licenses", "licences", "open source", "nemotron", "fluidaudio", "sparkle", "credits"]),
         .init("about.docs", "miniti Docs", section: "Help", destination: .about, keywords: ["documentation", "learn"]),
         .init("about.support", "Support website", section: "Help", destination: .help, keywords: ["help", "contact"]),
-        .init("about.legal", "Privacy & Terms", section: "About", destination: .about, keywords: ["policy", "legal"])
+        .init("about.legal", "Privacy and terms", section: "About", destination: .about, keywords: ["policy", "legal"])
     ]
 
     static func availableItems(on platform: SettingsPlatform, appMode: AppMode) -> [SettingsSearchItem] {
@@ -12970,7 +12970,7 @@ final class AppState: ObservableObject {
     static func registerSmartMeetingNotificationCategory() {
         let endAndStart = UNNotificationAction(
             identifier: smartMeetingEndAndStartAction,
-            title: "End & start next"
+            title: "End and start next"
         )
         let end = UNNotificationAction(
             identifier: smartMeetingEndAction,

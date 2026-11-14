@@ -1904,6 +1904,18 @@
       "rule": "small-fixed-font",
       "signature": "system ( size : 12 )",
       "count": 1
+    },
+    {
+      "path": "Miniti/Services/MeetingFolders.swift",
+      "rule": "ampersand",
+      "signature": "\"Product & engineering\"",
+      "count": 1
+    },
+    {
+      "path": "Miniti/Services/MeetingFolders.swift",
+      "rule": "ampersand",
+      "signature": "\"Partners & suppliers\"",
+      "count": 1
     }
   ]
 }

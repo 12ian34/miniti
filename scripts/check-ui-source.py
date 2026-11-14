@@ -15,7 +15,11 @@ BASELINE = Path('scripts/ui-source-baseline.json')
 SOURCE_ROOTS = ('Miniti', 'MinitiMobile')
 # Palette definitions are the sole raw-colour authority in the main apps.
 EXCLUDED = {'Miniti/Models/ColorPalette.swift'}
-RULES = {'raw-color', 'focus-opt-out', 'small-fixed-font', 'local-chrome'}
+RULES = {'raw-color', 'focus-opt-out', 'small-fixed-font', 'local-chrome', 'ampersand'}
+# New occurrences of these rules fail; the others are review cues.
+HARD_RULES = {'raw-color', 'ampersand'}
+# Apple's own System Settings pane names stay exactly as Apple writes them.
+APPLE_AMPERSAND_NAMES = ('Privacy & Security', 'Screen & System Audio Recording')
 COLOR_TYPES = {'Color', 'NSColor', 'UIColor', 'CGColor'}
 RAW_LABELS = {'hex', 'red', 'green', 'blue', 'white', 'gray', 'hue', 'saturation',
               'brightness', 'cyan', 'magenta', 'yellow', 'black', 'components',
@@ -155,6 +159,15 @@ def arguments(tokens):
 def scan(path: str, source: str) -> list[Finding]:
     tokens = tokenize(source)
     found = []
+    for token in tokens:
+        # Product copy never uses an ampersand (3.10.0 CP1). Every string literal
+        # is checked, since the guard cannot tell copy from other strings.
+        if token.kind == 'string':
+            text = token.value
+            for allowed in APPLE_AMPERSAND_NAMES:
+                text = text.replace(allowed, '')
+            if re.search(r'\s&\s', text):
+                found.append(Finding(path, source.count('\n', 0, token.offset) + 1, 'ampersand', token.value))
     for start, end, name, args in calls(tokens):
         labels = arguments(args)
         rule = None
@@ -244,14 +257,14 @@ def main(argv=None):
     parser.add_argument('--root', type=Path, default=ROOT)
     parser.add_argument('--baseline', type=Path, default=BASELINE, help='Relative to root, or absolute')
     parser.add_argument('--inventory', action='store_true', help='Print every occurrence with current line numbers')
-    parser.add_argument('--prune-baseline', action='store_true', help='Remove stale allowances only; refuses new raw colours')
+    parser.add_argument('--prune-baseline', action='store_true', help='Remove stale allowances only; refuses new raw colours and ampersands')
     args = parser.parse_args(argv)
     try:
         files, findings = inventory(args.root)
         baseline_path = args.root / args.baseline
         data, baseline = load_baseline(baseline_path)
         added, stale = compare(findings, baseline)
-        hard = {key: count for key, count in added.items() if key[1] == 'raw-color'}
+        hard = {key: count for key, count in added.items() if key[1] in HARD_RULES}
         if args.prune_baseline and not hard:
             data = prune(data, Counter(f.key for f in findings))
             baseline_path.write_text(json.dumps(data, indent=2) + '\n')
@@ -263,15 +276,17 @@ def main(argv=None):
                 print(f'{finding.path}:{finding.line}: {finding.rule}: {finding.signature}')
         for key, count in sorted(added.items()):
             path, rule, signature = key
-            level = 'ERROR' if rule == 'raw-color' else 'REVIEW'
+            level = 'ERROR' if rule in HARD_RULES else 'REVIEW'
             lines = ','.join(str(line) for line in locations[key])
             print(f'{level}: {path}:{lines}: {rule}: +{count} (all matching lines): {signature}')
         for (path, rule, signature), count in sorted(stale.items()):
             print(f'STALE: {path}: {rule}: -{count}: {signature}')
-        print(f'{len(files)} Swift files; {len(findings)} occurrences; {sum(hard.values())} new raw colours; '
+        colours = sum(count for key, count in hard.items() if key[1] == 'raw-color')
+        print(f'{len(files)} Swift files; {len(findings)} occurrences; {colours} new raw colours; '
+              f'{sum(hard.values()) - colours} new ampersands; '
               f'{sum(added.values()) - sum(hard.values())} review cues; {sum(stale.values())} stale allowances')
         if hard or stale:
-            print('FAIL: use palette roles for new colours; prune removed debt with --prune-baseline.')
+            print('FAIL: use palette roles for new colours and write "and" in copy; prune removed debt with --prune-baseline.')
             return 1
         print('PASS' + (' (review new cues before accepting the change)' if added else ''))
         return 0

@@ -8,7 +8,7 @@ import SwiftData
 #endif
 
 #if os(macOS)
-/// Field report (2026-10-02): "End & start next" between back-to-back calls left the new
+/// Field report (2026-10-02): "End and start next" between back-to-back calls left the new
 /// meeting saying it was recording while nothing reached the transcript; stop + resume
 /// fixed it. These drive the real AppState handoff in BYOK mode (no backend) and check
 /// the capture pipeline is actually live on the second meeting.

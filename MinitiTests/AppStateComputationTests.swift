@@ -3535,7 +3535,7 @@ final class LiveInsightsBackoffTests: XCTestCase {
 final class RecordingIndicatorLayoutTests: XCTestCase {
     private func row() -> some View {
         WrappingRow(spacing: 6) {
-            ForEach(["join next", "end & start next", "end meeting", "keep recording"], id: \.self) { title in
+            ForEach(["join next", "end and start next", "end meeting", "keep recording"], id: \.self) { title in
                 MinitiControlLabel(role: .secondary, isEmphasized: false, height: 28, horizontalPadding: 9) {
                     Label(title, systemImage: "record.circle")
                         .font(.system(size: 11, weight: .semibold))
@@ -3558,7 +3558,7 @@ final class RecordingIndicatorLayoutTests: XCTestCase {
 
         // Every label keeps its full width: the widest one alone is wider than a quarter of the panel.
         let single = NSHostingView(rootView: MinitiControlLabel(role: .secondary, isEmphasized: false, height: 28, horizontalPadding: 9) {
-            Label("end & start next", systemImage: "arrow.right").font(.system(size: 11, weight: .semibold)).lineLimit(1).fixedSize()
+            Label("end and start next", systemImage: "arrow.right").font(.system(size: 11, weight: .semibold)).lineLimit(1).fixedSize()
         })
         XCTAssertGreaterThan(single.fittingSize.width, 340 / 4, "which is why a single row truncated")
     }

@@ -486,7 +486,7 @@ struct MinitiApp: App {
         .defaultSize(width: 1000, height: 650)
         .commands {
             CommandGroup(replacing: .newItem) {
-                Button(appState.currentMeeting == nil ? "New Meeting" : "End & Start New Meeting") {
+                Button(appState.currentMeeting == nil ? "New Meeting" : "End and Start New Meeting") {
                     if let onNewSession = keyboardService.onNewSession {
                         onNewSession()
                     } else {
@@ -803,7 +803,7 @@ struct MenuBarView: View {
                         switch prompt.kind {
                         case .calendar:
                             if let eventID = prompt.eventID {
-                                Button("End & start") {
+                                Button("End and start") {
                                     appState.endAndStartCalendarMeeting(eventID: eventID)
                                 }
                                 Button("End") {
@@ -832,7 +832,7 @@ struct MenuBarView: View {
                                 appState.dismissDetectedCallStartPrompt()
                             }
                         case .callTransition:
-                            Button("End & start next") {
+                            Button("End and start next") {
                                 appState.endAndStartNewMeeting()
                             }
                             Button("Keep") {
@@ -936,7 +936,7 @@ struct MenuBarView: View {
                 Button {
                     appState.endAndStartNewMeeting()
                 } label: {
-                    Label("End & Start New Meeting", systemImage: "plus.square.on.square")
+                    Label("End and Start New Meeting", systemImage: "plus.square.on.square")
                 }
             }
             

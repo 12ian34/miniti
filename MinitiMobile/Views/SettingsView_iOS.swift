@@ -853,7 +853,7 @@ private struct SettingsDetailView_iOS: View {
                 }
 
                 if category == .calendar {
-                Section("Calendar & Meeting Automation") {
+                Section("Calendar and automation") {
                     HStack {
                         Toggle("Smart meetings", isOn: $appState.smartMeetingsEnabled)
                         MinitiDocumentationLink(topic: .smartMeetings)

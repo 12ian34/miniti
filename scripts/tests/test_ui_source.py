@@ -72,6 +72,20 @@ class SwiftFixtures(unittest.TestCase):
         '''
         self.assertEqual(self.findings(source), [])
 
+    def test_ampersand_in_copy_fails_except_apple_pane_names(self):
+        source = r'''
+        Button("End & start next") {}
+        let multi = """
+        Calendar & automation
+        """
+        let apple = "Open System Settings, Privacy & Security, Screen & System Audio Recording."
+        let mixed = "Privacy & Security and Terms & Conditions"
+        let code = a && b ? "Q&A" : "x=1&y=2"
+        // "Comment & prose"
+        '''
+        found = self.findings(source)
+        self.assertEqual([(f.rule, f.line) for f in found], [('ampersand', 2), ('ampersand', 3), ('ampersand', 7)])
+
     def test_interpolation_code_is_checked_in_normal_and_raw_strings(self):
         fixtures = [
             r'"value \(Color(hex: "123456"))"',
@@ -191,6 +205,14 @@ class BaselinePolicy(unittest.TestCase):
         self.source.write_text('Color(hex: "71717A")')
         self.assertEqual(self.run_guard('--prune-baseline')[0], 0)
         self.assertEqual(json.loads(self.baseline.read_text())['entries'][0]['count'], 1)
+
+    def test_new_ampersand_fails_and_prune_never_accepts_it(self):
+        self.source.write_text(self.source.read_text() + '\nText("Privacy & Terms")')
+        for args in [(), ('--prune-baseline',)]:
+            code, output = self.run_guard(*args)
+            self.assertEqual(code, 1, output)
+            self.assertIn('1 new ampersands', output)
+        self.assertEqual(len(json.loads(self.baseline.read_text())['entries']), 1)
 
     def test_review_cues_are_visible_but_do_not_fail_or_auto_baseline(self):
         self.source.write_text(self.source.read_text() + '\n.focusable(false).font(.system(size: 9)).cornerRadius(6)')

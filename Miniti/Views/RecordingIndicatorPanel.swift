@@ -780,7 +780,7 @@ private struct RecordingIndicatorView: View {
     @ViewBuilder
     private func promptActions(_ prompt: AppState.SmartMeetingPrompt) -> some View {
         // Up to four actions on a 360 pt panel: they wrap onto a second line rather than
-        // truncating their labels (a field report on 2026-10-27 showed "join…", "end &…").
+        // truncating their labels (a field report on 2026-10-27 showed "join…", "end…").
         WrappingRow(spacing: 6) {
             switch prompt.kind {
             case .callStart:
@@ -845,7 +845,7 @@ private struct RecordingIndicatorView: View {
                         }
                     }
                     indicatorActionButton(
-                        "end & start next",
+                        "end and start next",
                         systemImage: "arrow.right",
                         role: .positive,
                         isEmphasized: !nextHasLink
@@ -862,7 +862,7 @@ private struct RecordingIndicatorView: View {
                     )
                 } else if prompt.kind == .callTransition {
                     indicatorActionButton(
-                        "end & start next",
+                        "end and start next",
                         systemImage: "arrow.right",
                         role: .positive,
                         isEmphasized: true,

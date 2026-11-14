@@ -668,7 +668,7 @@ private struct SmartMeetingBanner_iOS: View {
                     .frame(maxWidth: .infinity)
                 }
 
-                Button("End & start next") {
+                Button("End and start next") {
                     appState.endAndStartCalendarMeeting(eventID: eventID)
                 }
                 .buttonStyle(.borderedProminent)

@@ -294,7 +294,7 @@ private struct SmartMeetingBanner: View {
                     .tint(ColorPalette.Accent.green)
                 }
 
-                Button("End & start next") {
+                Button("End and start next") {
                     appState.endAndStartCalendarMeeting(eventID: eventID)
                 }
                 .buttonStyle(.borderedProminent)
@@ -339,7 +339,7 @@ private struct SmartMeetingBanner: View {
             .buttonStyle(.bordered)
 
         case .callTransition:
-            Button("End & start next") {
+            Button("End and start next") {
                 appState.endAndStartNewMeeting()
             }
             .buttonStyle(.borderedProminent)

@@ -254,7 +254,7 @@ struct AccountSettingsView: View {
                      ? (appState.isPro
                         ? "Pro subscription active. \(Int(appState.usageInfo?.minutesLimit ?? 5000)) minutes per month."
                         : "API calls routed through Miniti's backend. 500 free minutes per month.")
-                     : "Use your own Deepgram & OpenAI API keys. No limits, no tracking.")
+                     : "Use your own Deepgram and OpenAI API keys. No limits, no tracking.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -1525,7 +1525,7 @@ struct IntegrationsSettingsView: View {
             }
 
             if content == .calendar {
-            Section("Calendar & Meeting Automation") {
+            Section("Calendar and automation") {
                 HStack {
                     Toggle("Smart meetings", isOn: $appState.smartMeetingsEnabled)
                     MinitiDocumentationLink(topic: .smartMeetings)
