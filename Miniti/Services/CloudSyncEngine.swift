@@ -224,10 +224,14 @@ final class CloudSyncEngine: ObservableObject {
     /// When this engine last finished downloading changes. In memory only: nil after
     /// launch, an account change or a bookkeeping reset.
     private var lastDownloadCompletedAt: Date?
+    /// Old baselines that did not match their meeting's content, keyed by what was tried.
+    private var unmatchedLegacyBaselines: [UUID: String] = [:]
     /// No completed download within the last two poll intervals.
     private var isBehindOnDownloads: Bool {
         guard let last = lastDownloadCompletedAt else { return true }
-        return now().timeIntervalSince(last) > 2 * Self.pollInterval
+        // A clock that moved backwards says nothing about freshness.
+        let age = now().timeIntervalSince(last)
+        return age < 0 || age > 2 * Self.pollInterval
     }
 
     private func rememberProtectedIncoming(id: UUID, revision: Int, deleted: Bool, host: CloudSyncHost) {
@@ -336,6 +340,8 @@ final class CloudSyncEngine: ObservableObject {
         if let reason = effectivePause() {
             if phase != .paused(reason) { DiagnosticTimeline.shared.record(.cloudPaused, fields: ["reason": reason.diagnosticReason]) }
             phase = .paused(reason)
+            // Whatever stopped sync, the next pass starts as a device that is behind.
+            lastDownloadCompletedAt = nil
         } else if case .paused = phase {
             phase = .idle
             // Gates just opened (switch, tier, enrollment): do not wait for the poll.
@@ -531,9 +537,9 @@ final class CloudSyncEngine: ObservableObject {
             if shouldScan, pendingUploadCount > 0, isBehindOnDownloads {
                 phase = .pulling
                 do {
-                    try await pull(host: host, transport: transport, context: context)
+                    let finished = try await pull(host: host, transport: transport, context: context)
                     try check(context)
-                    lastDownloadCompletedAt = now()
+                    if finished { lastDownloadCompletedAt = now() }
                 } catch PassDeferral.localEdits {
                     DebugLogger.shared.log(.app, "Cloud sync: download-first deferred for unsaved local edits, uploading")
                 }
@@ -543,9 +549,9 @@ final class CloudSyncEngine: ObservableObject {
             try await pushTombstones(host: host, transport: transport, context: context)
             guard stillAllowed else { refreshPause(); return }
             phase = .pulling
-            try await pull(host: host, transport: transport, context: context)
+            let finished = try await pull(host: host, transport: transport, context: context)
             try check(context)
-            lastDownloadCompletedAt = now()
+            if finished { lastDownloadCompletedAt = now() }
             await host.cloudSyncFolders()
             try check(context)
             guard stillAllowed else { refreshPause(); return }
@@ -723,7 +729,12 @@ final class CloudSyncEngine: ObservableObject {
             // A 3.8.0 or 3.9.0 baseline that still describes this meeting's content is
             // rewritten in the current form now, while it can still be recognised. After a
             // later edit (a rename of a title the server had cut, say) it could not be.
-            if let rebased = MeetingSyncDocument.currentContentBaseline(replacingLegacy: meeting) { rebasedBaselines.append((meeting, rebased)) }
+            if let baseline = meeting.syncedContentFingerprint, !baseline.hasPrefix(MeetingSyncDocument.contentFormPrefix),
+               unmatchedLegacyBaselines[meeting.id] != baseline + fingerprint {
+                if let rebased = MeetingSyncDocument.currentContentBaseline(replacingLegacy: meeting) { rebasedBaselines.append((meeting, rebased)) }
+                // Tried once for this baseline and this content: do not hash again every scan.
+                else { unmatchedLegacyBaselines[meeting.id] = baseline + fingerprint }
+            }
             if meeting.syncStateRaw == "pending_folder_refresh" { continue }
             if meeting.cloudRestoreRequested || (fingerprint != meeting.syncFingerprint && meeting.syncStateRaw == nil) { dirty.append(meeting) }
             else if fingerprint != meeting.syncFingerprint && meeting.syncStateRaw != nil && fingerprint != meeting.localFingerprint {
@@ -986,12 +997,15 @@ final class CloudSyncEngine: ObservableObject {
 
     // MARK: Pull
 
-    private func pull(host: CloudSyncHost, transport: CloudSyncTransport, context: PassContext) async throws {
-        guard cursor > 0 else { return }
+    /// True when every waiting change was downloaded. False when there was nothing to
+    /// start from, sync stopped being allowed, or the page cap was reached.
+    @discardableResult
+    private func pull(host: CloudSyncHost, transport: CloudSyncTransport, context: PassContext) async throws -> Bool {
+        guard cursor > 0 else { return false }
         var pages = 0
         while pages < 200 {
             pages += 1
-            guard stillAllowed else { return }
+            guard stillAllowed else { return false }
             let localGeneration = localChangeGeneration
             let page = try await transport.changes(since: cursor, limit: Self.pullPageSize)
             try check(context)
@@ -1009,8 +1023,9 @@ final class CloudSyncEngine: ObservableObject {
             if !page.changes.isEmpty { statusDirty = true }
             try apply(page.changes, host: host)
             setCursor(max(cursor, page.nextSince), for: context)
-            if !page.hasMore { break }
+            if !page.hasMore { return true }
         }
+        return false
     }
 
     private func apply(_ changes: [CloudChange], host: CloudSyncHost) throws {
@@ -1288,7 +1303,10 @@ final class CloudSyncEngine: ObservableObject {
         // Independent of any baseline: a meeting with nothing to upload, or only a folder
         // move since it was last in step, has not changed its content. This also covers an
         // old baseline taken from a copy in another client's shape, which no local form matches.
-        let inStep = meeting.syncFingerprint == MeetingSyncDocument.fingerprint(of: meeting) || MeetingSyncDocument.hasOnlyPendingFolderEdit(meeting)
+        // A skipped upload (too large, duplicate) also stores the fingerprint of what it
+        // tried to send, so a meeting with a sync state is never taken as in step.
+        let inStep = meeting.syncStateRaw == nil &&
+            (meeting.syncFingerprint == MeetingSyncDocument.fingerprint(of: meeting) || MeetingSyncDocument.hasOnlyPendingFolderEdit(meeting))
         let localChanged = !inStep && !MeetingSyncDocument.content(of: local, matches: baseContent)
         let remoteChanged = !MeetingSyncDocument.content(ofRemote: remote, matches: baseContent, local: local, in: context)
         let localFolder = MeetingSyncDocument.folderFingerprint(document: local)

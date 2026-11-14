@@ -2376,15 +2376,65 @@ final class SyncMergeFormTests: XCTestCase {
     /// A download that must wait for unsaved local changes (a recording in progress) does
     /// not hold finished meetings back.
     func testADeferredDownloadDoesNotHoldUploadsBack() async throws {
-        let (a, _, id) = try await pairWithOneMerge()
+        let (a, b, id) = try await pairWithOneMerge()
+        move(id, on: b, to: UUID())
+        await sync(b)
         clock = clock.addingTimeInterval(3600)
         a.host.meeting(id)?.notes = "Finished meeting edit"
         try a.host.context.save()
-        // Something unsaved in the same store, as live transcript rows are during a recording.
-        let live = Meeting(title: "Live", startTime: clock)
-        a.host.context.insert(live)
         let relaunched = try Device(transport, clock: { [unowned self] in self.clock }, host: a.host, defaults: a.engine.defaults)
-        await sync(relaunched, passes: 1)
-        XCTAssertEqual(transport.rows[id]?.document["notes"] as? String, "Finished meeting edit", "Uploaded within one pass")
+        // Hold the download, then leave something unsaved in the store while it waits, as
+        // live transcript rows are during a recording.
+        transport.gate.holdNames = ["changes"]
+        transport.calls = []
+        let pass = Task { await relaunched.engine.sync(reason: "test") }
+        for _ in 0..<400 where transport.gate.held == 0 { try? await Task.sleep(nanoseconds: 5_000_000) }
+        XCTAssertEqual(transport.gate.held, 1, "The pass downloads first")
+        XCTAssertFalse(transport.calls.contains("put"))
+        a.host.context.insert(Meeting(title: "Live", startTime: clock))
+        XCTAssertTrue(a.host.context.hasChanges)
+        transport.gate.release()
+        await pass.value
+        XCTAssertTrue(transport.calls.contains("put"), "The deferred download did not stop the upload: \(transport.calls)")
+        XCTAssertEqual(transport.rows[id]?.document["notes"] as? String, "Finished meeting edit")
+    }
+
+    /// A rejected upload (too large) stores the fingerprint of what it tried to send. That
+    /// must not make the meeting look in step: its unsynced notes survive another
+    /// device's folder change.
+    func testARejectedUploadIsNotInStepAndKeepsItsEdit() async throws {
+        let (a, b, id) = try await pairWithOneMerge()
+        let meeting = try XCTUnwrap(a.host.meeting(id))
+        meeting.notes = "Long unsynced notes"
+        try a.host.context.save()
+        transport.tooLargeTitles = [meeting.title]
+        await sync(a)
+        XCTAssertEqual(meeting.syncStateRaw, "skipped_too_large")
+        let folder = UUID()
+        move(id, on: b, to: folder)
+        await sync(b)
+        await sync(a)
+        XCTAssertEqual(meeting.notes, "Long unsynced notes", "The rejected edit is still here")
+        // A folder move made while skipped is no witness either.
+        MeetingSyncDocument.prepareFolderEdit(meeting)
+        XCTAssertNil(meeting.folderEditContentFingerprint)
+    }
+
+    /// A download cut short (sync switched off part way) does not count as up to date.
+    func testAnInterruptedDownloadLeavesTheDeviceBehind() async throws {
+        let (a, b, id) = try await pairWithOneMerge()
+        move(id, on: b, to: UUID())
+        await sync(b)
+        // A pauses, then resumes with an edit: the resumed pass must download first.
+        a.host.pause = .off
+        a.engine.refreshPause()
+        a.host.meeting(id)?.notes = "Edit while paused"
+        try a.host.context.save()
+        a.host.pause = nil
+        transport.calls = []
+        await sync(a, passes: 1)
+        let order = transport.calls.filter { $0 == "put" || $0.hasPrefix("changes") }
+        XCTAssertTrue(order.first?.hasPrefix("changes") == true, "\(transport.calls)")
+        XCTAssertEqual(order.filter { $0 == "put" }.count, 1, "One upload, accepted first time")
     }
 }

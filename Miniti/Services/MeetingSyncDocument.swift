@@ -341,7 +341,9 @@ enum MeetingSyncDocument {
     }
 
     static func prepareFolderEdit(_ meeting: Meeting) {
-        if meeting.syncFingerprint == fingerprint(of: meeting) {
+        // A skipped upload stores the fingerprint of what it tried to send; that is not a
+        // synced state, so it cannot witness that only the folder changed.
+        if meeting.syncStateRaw == nil, meeting.syncFingerprint == fingerprint(of: meeting) {
             meeting.folderEditContentFingerprint = fingerprint(of: meeting, includingFolder: false)
         }
     }
