@@ -420,7 +420,7 @@ private struct SettingsDetailView_iOS: View {
                             if appState.shouldShowManagedSubscriptionPlaceholder {
                                 Text("Checking…")
                                     .foregroundStyle(.secondary)
-                            } else if appState.isPro {
+                            } else if appState.planShowsPro {
                                 Text(appState.compPro.map { PlanCopy.compPlan($0) }
                                      ?? "Pro, \(Int(appState.displayMinutesLimit)) min/month")
                                     .foregroundStyle(.purple)
@@ -432,16 +432,23 @@ private struct SettingsDetailView_iOS: View {
                             }
                         }
                         
+                        if let ended = appState.endedCompPro, !appState.shouldShowManagedSubscriptionPlaceholder {
+                            Text(PlanCopy.compEnded(ended))
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                                .accessibilityIdentifier("billing.plan.compEnded")
+                        }
+
                         if appState.shouldShowManagedSubscriptionPlaceholder {
                             HStack(spacing: 8) {
                                 ProgressView()
                                 Text("Checking subscription status…")
                                     .foregroundStyle(.secondary)
                             }
-                        } else if appState.isPro {
-                            if let comp = appState.compPro {
+                        } else if appState.planShowsPro {
+                            if appState.compPro != nil {
                                 // Complimentary Pro has no subscription behind it: nothing to manage.
-                                Text(PlanCopy.compNote(comp))
+                                Text(PlanCopy.compCaption)
                                     .font(.caption)
                                     .foregroundStyle(.secondary)
                                     .accessibilityIdentifier("billing.plan.comp")
@@ -482,7 +489,7 @@ private struct SettingsDetailView_iOS: View {
                             .accessibilityIdentifier("billing.purchase")
                         }
 
-                        if !appState.shouldShowManagedSubscriptionPlaceholder && !appState.isPro {
+                        if !appState.shouldShowManagedSubscriptionPlaceholder && !appState.planShowsPro {
                             VStack(alignment: .leading, spacing: 4) {
                                 Text("Miniti Pro Monthly")
                                     .accessibilityIdentifier("billing.product")
@@ -605,7 +612,7 @@ private struct SettingsDetailView_iOS: View {
                     Text(appState.appMode == .managed
                          ? (appState.shouldShowManagedSubscriptionPlaceholder
                             ? "Checking subscription status…"
-                            : (appState.isPro
+                            : (appState.planShowsPro
                                ? (appState.compPro.map { PlanCopy.compSummary($0, minutesLimit: Int(appState.displayMinutesLimit)) }
                                   ?? "Pro subscription active. \(Int(appState.displayMinutesLimit)) minutes per month.")
                                : "500 free minutes per month via Miniti's backend."))

@@ -365,8 +365,10 @@ extension AppState: CloudSyncHost {
             DebugLogger.shared.log(.app, "Cloud switch \(on ? "on" : "off") written, with a newer choice still to send")
         case .dropped:
             DebugLogger.shared.log(.app, "Cloud switch write dropped: the account or sign-in changed before it was sent")
+        case .failed(let error as AccountCloudWriteStale):
+            DebugLogger.shared.log(.app, "Cloud switch write refused: the server already holds a later one from this device (\(error.lastIntent))")
         case .failed(let error):
-            DebugLogger.shared.log(.app, "Cloud switch not written to the account yet (\(error)); retrying at the next usage check", level: .warning)
+            DebugLogger.shared.log(.app, "Cloud switch not written to the account yet (\(error)); a choice still pending is sent again at the next usage check", level: .warning)
         }
     }
 

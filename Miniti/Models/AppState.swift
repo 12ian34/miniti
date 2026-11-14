@@ -12108,16 +12108,35 @@ final class AppState: ObservableObject {
     var isProViaAccount: Bool { usageInfo?.isProViaAccount ?? false }
 
     /// Complimentary Pro (3.10.0): miniti's own grant of Pro, while that grant is what makes
-    /// this device Pro. On iOS a local App Store subscription comes first.
+    /// this device Pro and has not reached its end. On iOS a local App Store subscription
+    /// comes first.
     var compPro: CompProStatus? {
+        guard let comp = lastAnsweredCompPro, !comp.hasEnded() else { return nil }
+        return comp
+    }
+
+    /// A grant whose end has passed while the last usage answer still described it. The
+    /// plan shows as free, with the upgrade path, until the next answer arrives.
+    var endedCompPro: CompProStatus? {
+        guard let comp = lastAnsweredCompPro, comp.hasEnded() else { return nil }
+        return comp
+    }
+
+    private var lastAnsweredCompPro: CompProStatus? {
         #if os(iOS)
         if hasActiveAppStoreSubscription { return nil }
         #endif
         return usageInfo?.compPro
     }
 
+    /// What Settings shows as the plan. Pro, except for a complimentary grant whose end has
+    /// passed: the server will say free at the next answer, and the reader must not be left
+    /// without a way to upgrade while that answer is missing.
+    var planShowsPro: Bool { isPro && endedCompPro == nil }
+
     /// Read the plan again when a complimentary grant reaches its end, so Settings left open
-    /// past that moment does not keep showing it. One timer per end date.
+    /// past that moment does not keep showing it. One timer per end date; if the read fails
+    /// it is tried again a few times.
     func scheduleCompEndRefresh() {
         let until = usageInfo?.compPro?.until
         guard until != compEndRefreshDate else { return }
@@ -12126,14 +12145,26 @@ final class AppState: ObservableObject {
         compEndRefreshTask = nil
         guard let until else { return }
         compEndRefreshTask = Task { [weak self] in
-            let wait = max(0, until.timeIntervalSinceNow) + 2
-            try? await Task.sleep(nanoseconds: UInt64(min(wait, 86_400 * 30) * 1_000_000_000))
-            guard !Task.isCancelled, let self else { return }
-            // Views that show the grant read the clock when they draw; ask them to draw again.
-            self.objectWillChange.send()
-            await self.refreshUsage()
+            // Sleep in steps of at most a day: one long sleep cannot be relied on.
+            while until.timeIntervalSinceNow > 0 {
+                let step = min(until.timeIntervalSinceNow, 86_400)
+                try? await Task.sleep(nanoseconds: UInt64(max(step, 0.05) * 1_000_000_000))
+                if Task.isCancelled { return }
+            }
+            for delay in Self.compEndRefreshDelays {
+                try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
+                guard !Task.isCancelled, let self else { return }
+                // Views that show the grant read the clock when they draw; ask them to draw again.
+                self.objectWillChange.send()
+                await self.refreshUsage()
+                // A new answer either drops the grant or carries a new end date.
+                if self.usageInfo?.compPro?.until != until { return }
+            }
         }
     }
+
+    /// Seconds before each plan read at a grant's end: at once, then spaced out.
+    nonisolated static let compEndRefreshDelays: [TimeInterval] = [1, 30, 120, 600, 3600]
 
     func revealRecoveryKey() -> String? {
         clientAuthManager.revealRecoveryKey()

@@ -251,7 +251,7 @@ struct AccountSettingsView: View {
                 }
                 
                 Text(appState.appMode == .managed
-                     ? (appState.isPro
+                     ? (appState.planShowsPro
                         ? (appState.compPro.map { PlanCopy.compSummary($0, minutesLimit: Int(appState.usageInfo?.minutesLimit ?? 5000)) }
                            ?? "Pro subscription active. \(Int(appState.usageInfo?.minutesLimit ?? 5000)) minutes per month.")
                         : "API calls routed through Miniti's backend. 500 free minutes per month.")
@@ -265,7 +265,7 @@ struct AccountSettingsView: View {
 
                 Section("Plan and billing") {
                     PurchaseReturnStatusView(controller: appState.purchaseReturn)
-                    if appState.isPro {
+                    if appState.planShowsPro {
                         HStack {
                             Text("Plan")
                             Spacer()
@@ -277,9 +277,9 @@ struct AccountSettingsView: View {
                         .accessibilityElement(children: .combine)
                         .accessibilityIdentifier("billing.plan")
                         
-                        if let comp = appState.compPro {
+                        if appState.compPro != nil {
                             // Complimentary Pro has no subscription behind it: nothing to manage.
-                            Text(PlanCopy.compNote(comp))
+                            Text(PlanCopy.compCaption)
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
                                 .accessibilityIdentifier("billing.plan.comp")
@@ -299,6 +299,13 @@ struct AccountSettingsView: View {
                             Spacer()
                             Text("Free, 500 min/month")
                                 .foregroundStyle(.secondary)
+                        }
+
+                        if let ended = appState.endedCompPro {
+                            Text(PlanCopy.compEnded(ended))
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                                .accessibilityIdentifier("billing.plan.compEnded")
                         }
                         
                         Button("Upgrade to Pro ($5/month, 5,000 min)") {

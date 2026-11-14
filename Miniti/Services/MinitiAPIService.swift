@@ -2702,7 +2702,8 @@ struct CompProStatus: Equatable {
     /// When the grant ends. Nil when the server's date could not be read.
     let until: Date?
 
-    /// The answer is older than the grant: it has ended, and the plan is being checked again.
+    /// The answer is older than the grant: it has ended. Settings then shows the free plan
+    /// with its upgrade path, and the plan is read again.
     func hasEnded(now: Date = Date()) -> Bool {
         guard let until else { return false }
         return now >= until
@@ -2713,8 +2714,6 @@ struct CompProStatus: Equatable {
 enum PlanCopy {
     /// Under the plan row for complimentary Pro: there is no subscription and no charge.
     static let compCaption = "Added by miniti. Nothing to pay."
-    /// Under the plan row once the grant's date has passed and the plan is being read again.
-    static let compEndedCaption = "Complimentary Pro has ended. Checking your plan."
 
     private static func day(_ date: Date, locale: Locale, timeZone: TimeZone) -> String {
         var style = Date.FormatStyle(date: .abbreviated, time: .omitted)
@@ -2723,21 +2722,22 @@ enum PlanCopy {
         return date.formatted(style)
     }
 
-    /// "Pro until 31 Dec 2026" in the reader's own date style and time zone, "Pro ended
-    /// 31 Dec 2026" once that has passed, and plain "Pro" when the date is unknown.
-    static func compPlan(_ comp: CompProStatus, now: Date = Date(), locale: Locale = .current, timeZone: TimeZone = .current) -> String {
+    /// "Pro until 31 Dec 2026" in the reader's own date style and time zone, or plain "Pro"
+    /// when the date is unknown. For a grant that is still running.
+    static func compPlan(_ comp: CompProStatus, locale: Locale = .current, timeZone: TimeZone = .current) -> String {
         guard let until = comp.until else { return "Pro" }
-        return "\(comp.hasEnded(now: now) ? "Pro ended" : "Pro until") \(day(until, locale: locale, timeZone: timeZone))"
+        return "Pro until \(day(until, locale: locale, timeZone: timeZone))"
     }
 
-    static func compNote(_ comp: CompProStatus, now: Date = Date()) -> String {
-        comp.hasEnded(now: now) ? compEndedCaption : compCaption
-    }
-
-    /// The line under the mode picker for complimentary Pro.
-    static func compSummary(_ comp: CompProStatus, minutesLimit: Int, now: Date = Date(), locale: Locale = .current, timeZone: TimeZone = .current) -> String {
-        if comp.hasEnded(now: now) { return compEndedCaption }
+    /// The line under the mode picker for a grant that is still running.
+    static func compSummary(_ comp: CompProStatus, minutesLimit: Int, locale: Locale = .current, timeZone: TimeZone = .current) -> String {
         guard comp.until != nil else { return "Pro, added by miniti. \(minutesLimit) minutes per month." }
-        return "\(compPlan(comp, now: now, locale: locale, timeZone: timeZone)). \(minutesLimit) minutes per month."
+        return "\(compPlan(comp, locale: locale, timeZone: timeZone)). \(minutesLimit) minutes per month."
+    }
+
+    /// Under the free plan row once a grant's date has passed.
+    static func compEnded(_ comp: CompProStatus, locale: Locale = .current, timeZone: TimeZone = .current) -> String {
+        guard let until = comp.until else { return "Complimentary Pro has ended." }
+        return "Complimentary Pro ended \(day(until, locale: locale, timeZone: timeZone))."
     }
 }

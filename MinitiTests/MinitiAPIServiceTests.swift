@@ -129,28 +129,27 @@ final class MinitiAPIServiceTests: XCTestCase {
         let london = try XCTUnwrap(TimeZone(identifier: "Europe/London"))
         let gb = Locale(identifier: "en_GB")
         let comp = CompProStatus(until: until)
-        XCTAssertEqual(PlanCopy.compPlan(comp, now: before, locale: gb, timeZone: london), "Pro until 31 Dec 2026")
-        XCTAssertEqual(PlanCopy.compPlan(comp, now: before, locale: Locale(identifier: "en_US"), timeZone: london), "Pro until Dec 31, 2026")
-        XCTAssertEqual(PlanCopy.compSummary(comp, minutesLimit: 5000, now: before, locale: gb, timeZone: london), "Pro until 31 Dec 2026. 5000 minutes per month.")
-        XCTAssertEqual(PlanCopy.compNote(comp, now: before), "Added by miniti. Nothing to pay.")
+        XCTAssertEqual(PlanCopy.compPlan(comp, locale: gb, timeZone: london), "Pro until 31 Dec 2026")
+        XCTAssertEqual(PlanCopy.compPlan(comp, locale: Locale(identifier: "en_US"), timeZone: london), "Pro until Dec 31, 2026")
+        XCTAssertEqual(PlanCopy.compSummary(comp, minutesLimit: 5000, locale: gb, timeZone: london), "Pro until 31 Dec 2026. 5000 minutes per month.")
+        XCTAssertEqual(PlanCopy.compCaption, "Added by miniti. Nothing to pay.")
 
-        // At the end second the cached answer is out of date: say so, and never "until".
+        // At the end second the cached answer is out of date. The plan then shows as free
+        // with this line under it.
         XCTAssertFalse(comp.hasEnded(now: before))
         XCTAssertTrue(comp.hasEnded(now: until))
-        XCTAssertEqual(PlanCopy.compPlan(comp, now: until, locale: gb, timeZone: london), "Pro ended 31 Dec 2026")
-        XCTAssertEqual(PlanCopy.compNote(comp, now: until), "Complimentary Pro has ended. Checking your plan.")
-        XCTAssertEqual(PlanCopy.compSummary(comp, minutesLimit: 5000, now: until, locale: gb, timeZone: london), "Complimentary Pro has ended. Checking your plan.")
+        XCTAssertEqual(PlanCopy.compEnded(comp, locale: gb, timeZone: london), "Complimentary Pro ended 31 Dec 2026.")
 
         // A comp whose date could not be read is still a comp, with no date claimed.
         let undated = CompProStatus(until: nil)
         XCTAssertFalse(undated.hasEnded(now: until))
-        XCTAssertEqual(PlanCopy.compPlan(undated, now: before, locale: gb, timeZone: london), "Pro")
-        XCTAssertEqual(PlanCopy.compNote(undated, now: before), "Added by miniti. Nothing to pay.")
-        XCTAssertEqual(PlanCopy.compSummary(undated, minutesLimit: 5000, now: before, locale: gb, timeZone: london), "Pro, added by miniti. 5000 minutes per month.")
+        XCTAssertEqual(PlanCopy.compPlan(undated, locale: gb, timeZone: london), "Pro")
+        XCTAssertEqual(PlanCopy.compSummary(undated, minutesLimit: 5000, locale: gb, timeZone: london), "Pro, added by miniti. 5000 minutes per month.")
+        XCTAssertEqual(PlanCopy.compEnded(undated), "Complimentary Pro has ended.")
 
-        for text in [PlanCopy.compCaption, PlanCopy.compEndedCaption,
-                     PlanCopy.compSummary(comp, minutesLimit: 5000, now: before, locale: gb, timeZone: london),
-                     PlanCopy.compSummary(undated, minutesLimit: 5000, now: before, locale: gb, timeZone: london)] {
+        for text in [PlanCopy.compCaption, PlanCopy.compEnded(comp, locale: gb, timeZone: london), PlanCopy.compEnded(undated),
+                     PlanCopy.compSummary(comp, minutesLimit: 5000, locale: gb, timeZone: london),
+                     PlanCopy.compSummary(undated, minutesLimit: 5000, locale: gb, timeZone: london)] {
             XCTAssertFalse(text.contains("&"))
             XCTAssertFalse(text.contains("\u{2014}"))
             XCTAssertFalse(text.contains("Miniti"))

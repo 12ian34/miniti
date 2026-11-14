@@ -3363,6 +3363,51 @@ final class AccountEmailStateTests: XCTestCase {
         XCTAssertFalse(app.isDeviceDisabled, "A's disabled answer must not stick to B")
     }
 
+    /// A complimentary grant that reaches its end while the app is open: the plan stops
+    /// showing as Pro at that moment, keeps a way to upgrade, and is read again, with
+    /// another try when the first read fails (3.10.0 CM1.4).
+    func testAComplimentaryGrantThatEndsShowsAsFreeAndThePlanIsReadAgain() async throws {
+        let app = await makeApp(account: "acct_a")
+        app.managedEnrollmentTestResult = true
+        let originalHandler = try XCTUnwrap(StubURLProtocol.handler)
+        let until = Date().addingTimeInterval(0.6)
+        let stamp = ISO8601DateFormatter()
+        stamp.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        let comp = Data(#"{"minutes_used": 10, "minutes_limit": 5000, "resets_at": "2026-12-01T00:00:00Z", "tier": "pro", "entitlement_source": "comp", "comp_until": "\#(stamp.string(from: until))"}"#.utf8)
+        let free = Data(#"{"minutes_used": 10, "minutes_limit": 500, "resets_at": "2026-12-01T00:00:00Z", "tier": "free"}"#.utf8)
+        let reads = LockedCounter()
+        StubURLProtocol.handler = { request in
+            guard request.url?.path.hasSuffix("/usage") == true else { return originalHandler(request) }
+            switch reads.next() {
+            case 1: return (200, comp)
+            case 2: return (500, Data(#"{"error": "internal_error"}"#.utf8))   // the read at the end fails once
+            default: return (200, free)
+            }
+        }
+        await app.refreshUsage()
+        XCTAssertNotNil(app.compPro)
+        XCTAssertTrue(app.planShowsPro)
+        XCTAssertNil(app.endedCompPro)
+
+        // Past the end, before any new answer: no longer shown as Pro, upgrade path back.
+        try await TestSupport.waitUntil(timeout: 5) { app.endedCompPro != nil || app.usageInfo?.tier == "free" }
+        XCTAssertFalse(app.planShowsPro)
+        XCTAssertNil(app.compPro)
+
+        // The read at the end failed; the next try is 30 seconds later in the app. Here the
+        // schedule is checked, and the same read is run by hand to show it settles.
+        XCTAssertEqual(AppState.compEndRefreshDelays.first, 1)
+        XCTAssertGreaterThan(AppState.compEndRefreshDelays.count, 2)
+        try await TestSupport.waitUntil(timeout: 5) { reads.value >= 2 }
+        XCTAssertEqual(app.usageInfo?.tier, "pro", "the failed read changed nothing")
+        XCTAssertNotNil(app.endedCompPro)
+        await app.refreshUsage()
+        XCTAssertEqual(app.usageInfo?.tier, "free")
+        XCTAssertNil(app.endedCompPro)
+        XCTAssertFalse(app.planShowsPro)
+        app.compEndRefreshTask?.cancel()
+    }
+
     func testARefusedLateCloudSwitchWriteReportsWhatTheServerHolds() async throws {
         let originalHandler = try XCTUnwrap(StubURLProtocol.handler)
         StubURLProtocol.handler = { request in
@@ -4405,4 +4450,13 @@ final class HomeSetupPolicyTests: XCTestCase {
         XCTAssertEqual(reopened.googleCalendarEnabled, oldCalendar)
         XCTAssertEqual(reopened.cloudSyncEnabled, oldCloud)
     }
+}
+
+
+/// A counter the URL stub can use from its own thread.
+final class LockedCounter: @unchecked Sendable {
+    private let lock = NSLock()
+    private var count = 0
+    func next() -> Int { lock.withLock { count += 1; return count } }
+    var value: Int { lock.withLock { count } }
 }
