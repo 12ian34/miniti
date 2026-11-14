@@ -1234,6 +1234,8 @@ final class AppState: ObservableObject {
     var accountEmailSequence = 0
     /// The account cloud switch value being written right now, if any (`pushCloudAccountFlag`).
     var cloudFlagPushInFlight: Bool?
+    /// Counts account switch writes, so only the newest one may clear the pending mark.
+    var cloudFlagWriteSequence = 0
     var accountEmailLastLoaded: Date?
     var accountEmailInFlight = false
     /// One coalesced refresh waiting for the in-flight read or mutation to finish (F2).
@@ -11669,10 +11671,18 @@ final class AppState: ObservableObject {
         isLoadingUsage = true
         let deviceId = DeviceIdentifier.getOrCreateDeviceId()
         
+        // The answer describes the account that asked. If the device changed account or
+        // credential while it was in flight, its cloud switch must not be applied to the new one.
+        let askedAccount = cloudAccountID
+        let askedGeneration = clientAuthManager.credentialGeneration
         do {
             usageInfo = try await minitiAPIService.checkUsage(deviceId: deviceId)
             isDeviceDisabled = false
-            applyAccountCloudFlag()
+            if cloudAccountID == askedAccount, clientAuthManager.credentialGeneration == askedGeneration {
+                applyAccountCloudFlag()
+            } else {
+                DebugLogger.shared.log(.app, "Usage answer for a previous account: cloud switch not applied")
+            }
         } catch MinitiAPIService.ServiceError.deviceDisabled {
             isDeviceDisabled = true
             DebugLogger.shared.log(.app, "Device disabled in managed mode")

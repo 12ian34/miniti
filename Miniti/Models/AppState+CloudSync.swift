@@ -193,7 +193,13 @@ extension AppState: CloudSyncHost {
 
     // MARK: Settings actions
 
-    enum CloudSwitchSource { case user, account }
+    enum CloudSwitchSource {
+        case user
+        /// Another device changed the account's switch.
+        case account
+        /// This device was on while its account said off, with no change to follow.
+        case accountDisagreement
+    }
 
     /// The switch. A person's flip is also written to the account (3.3.0), so every other
     /// device follows; a flip that follows the account is not written back.
@@ -204,9 +210,11 @@ extension AppState: CloudSyncHost {
             configureCloudSyncIfNeeded()
             cloudSync.kick(reason: "enabled")
         }
-        DebugLogger.shared.log(.app, "Cloud sync \(on ? "on" : "off")\(source == .account ? " (follows the account)" : "")")
+        DebugLogger.shared.log(.app, "Cloud sync \(on ? "on" : "off")\(source == .user ? "" : " (follows the account)")")
         if source == .account {
             cloudSync.note(.info, on ? "Cloud on" : "Cloud off", "turned \(on ? "on" : "off") on another device")
+        } else if source == .accountDisagreement {
+            cloudSync.note(.info, "Cloud off", "this account has cloud sync off")
         } else if appMode == .managed {
             // Marked pending now, not when the write starts: a usage check that lands in
             // between must see this device's own choice and leave it alone.
@@ -225,6 +233,8 @@ extension AppState: CloudSyncHost {
         case push(Bool)
         /// Take the account's choice on this device.
         case follow(Bool)
+        /// Turn off because the account says off, with no newer version to follow.
+        case settleOff
     }
 
     /// What to do with the account's cloud switch after a usage check (`cloud_enabled`,
@@ -238,17 +248,20 @@ extension AppState: CloudSyncHost {
     /// - A version this device has not applied means another device changed the switch:
     ///   follow it. "On" waits for Pro and the end of private mode, and leaves the version
     ///   unapplied so the next usage check tries again; "off" always applies.
-    /// - With nothing new and nothing pending, a device that is on while its account says
-    ///   off turns off (3.10.0 CS1.4). That state has no owner, and off is the safe
-    ///   direction: nothing is uploaded that the account said to stop. The opposite case,
-    ///   off while the account says on, stays as it is.
+    /// - At the version this device already applied, with nothing pending, a device that
+    ///   is on while its account says off turns off (3.10.0 CS1.4). That state has no
+    ///   owner, and off is the safe direction: nothing is uploaded that the account said
+    ///   to stop. The opposite case, off while the account says on, stays as it is. An
+    ///   answer older than the applied version is stale and changes nothing.
     nonisolated static func cloudAccountFlagAction(
         localOn: Bool, pending: Bool?, serverEnabled: Bool?, serverVersion: Int, appliedVersion: Int,
         isPro: Bool, privateMode: Bool
     ) -> CloudAccountFlagAction {
         if let pending { return .push(pending) }
         guard let serverEnabled else { return localOn ? .push(true) : .none }
-        guard serverVersion > appliedVersion else { return localOn && !serverEnabled ? .follow(false) : .none }
+        guard serverVersion > appliedVersion else {
+            return serverVersion == appliedVersion && localOn && !serverEnabled ? .settleOff : .none
+        }
         if serverEnabled == localOn { return .acknowledge }
         if serverEnabled { return isPro && !privateMode ? .follow(true) : .none }
         return .follow(false)
@@ -284,6 +297,8 @@ extension AppState: CloudSyncHost {
         case .follow(let on):
             defaults.set(version, forKey: Self.cloudFlagVersionKey(account))
             setCloudSyncEnabled(on, source: .account)
+        case .settleOff:
+            setCloudSyncEnabled(false, source: .accountDisagreement)
         }
     }
 
@@ -295,11 +310,16 @@ extension AppState: CloudSyncHost {
         defaults.set(on, forKey: Self.cloudFlagPendingKey(account))
         guard let api = minitiAPIService else { return }
         cloudFlagPushInFlight = on
-        defer { if cloudFlagPushInFlight == on { cloudFlagPushInFlight = nil } }
+        cloudFlagWriteSequence += 1
+        let sequence = cloudFlagWriteSequence
+        defer { if cloudFlagWriteSequence == sequence { cloudFlagPushInFlight = nil } }
         do {
             let version = try await api.setAccountCloud(enabled: on)
-            // A newer flip made while this one was in flight keeps its own pending mark.
-            if (defaults.object(forKey: Self.cloudFlagPendingKey(account)) as? Bool) == on {
+            // Only the newest write may confirm. A later flip keeps its own pending mark, and
+            // so does a later write of the same value that is still in flight or has failed:
+            // on, off, on with the last write lost must not be confirmed by the first "on".
+            if cloudFlagWriteSequence == sequence, cloudAccountID == account,
+               (defaults.object(forKey: Self.cloudFlagPendingKey(account)) as? Bool) == on {
                 defaults.removeObject(forKey: Self.cloudFlagPendingKey(account))
                 defaults.set(version, forKey: Self.cloudFlagVersionKey(account))
             }
