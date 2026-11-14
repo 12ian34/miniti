@@ -12,7 +12,7 @@ enum AccountUITestHarness {
     @MainActor static func seedFolderHistory(in context: ModelContext) {
         guard isActive, ProcessInfo.processInfo.environment["MINITI_UI_TEST_SCENARIO"] == "folders",
               (try? context.fetchCount(FetchDescriptor<Meeting>())) == 0 else { return }
-        for (index, title) in ["Acme customer review", "Borealis sales demo", "Monday standup", "Friday team sync"].enumerated() {
+        for (index, title) in ["Acme customer review", "Borealis sales demo", "Monday standup", "Friday team sync", "Taylor Reed", "Dentist"].enumerated() {
             context.insert(Meeting(title: title, startTime: Date().addingTimeInterval(Double(-index * 3600 - 120)), endTime: Date()))
         }
         try? context.save()

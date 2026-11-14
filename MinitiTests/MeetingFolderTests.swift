@@ -701,6 +701,36 @@ final class MeetingFolderTests: XCTestCase {
         XCTAssertNil(meetings[3].folderID, "Only the completed meeting moves")
     }
 
+    func testPreviewChoicesForUnfiledMeetingsApplyAsHandFiledAndUndo() throws {
+        let container = try TestSupport.makeInMemoryContainer()
+        let state = AppState(); state.modelContext = container.mainContext; state.automaticFolderCreation = true
+        let titles = ["Acme customer review", "Borealis sales demo", "Taylor Reed", "Taylor Reed", "Dentist"]
+        let meetings = titles.enumerated().map { Meeting(title: $1, startTime: Date().addingTimeInterval(Double(-$0) * 3600), endTime: Date()) }
+        meetings.forEach(container.mainContext.insert)
+        try container.mainContext.save()
+        let proposals = state.folderProposals(meetings: meetings, preview: true)
+        XCTAssertEqual(proposals.map(\.title), ["Acme customer review", "Borealis sales demo"])
+        let unfiled = state.meetingsLeftUnfiled(in: meetings, after: proposals)
+        XCTAssertEqual(unfiled.map(\.title), ["Taylor Reed", "Taylor Reed", "Dentist"])
+        // The user files one "Taylor Reed" into a folder named in Preview. Nothing exists yet.
+        let people = MeetingFolder(id: UUID(), name: "People")
+        let picked = state.manualFolderProposal(for: unfiled[0], folder: people)
+        XCTAssertTrue(state.meetingFolders.active.isEmpty)
+        let undo = state.applyFolderProposals(proposals + [picked])
+        XCTAssertEqual(undo.count, 3)
+        XCTAssertEqual(Set(state.meetingFolders.active.map(\.name)), ["Customers", "People"])
+        XCTAssertEqual(unfiled[0].folderID, people.id)
+        XCTAssertEqual(unfiled[0].folderManual, true, "A choice made in Preview counts as hand-filed")
+        XCTAssertEqual(meetings[0].folderManual, false)
+        // The same series learns from the hand-filed meeting on the next Preview.
+        let next = state.folderProposals(meetings: meetings, preview: true)
+        XCTAssertEqual(next.map(\.title), ["Taylor Reed"])
+        XCTAssertEqual(next.first?.folder.id, people.id)
+        XCTAssertEqual(state.meetingsLeftUnfiled(in: meetings, after: next).map(\.title), ["Dentist"])
+        state.undoFolderMoves(undo)
+        XCTAssertTrue(meetings.allSatisfy { $0.folderID == nil && $0.folderManual != true }, "Undo restores every meeting")
+    }
+
     func testFolderFromPrivateMeetingEvidenceStaysOnThisDevice() {
         let state = AppState(); state.automaticFolderCreation = true
         let meetings = (0..<2).map { _ in FolderFixture.meeting(.init("Untitled", [], FolderFixture.hiringSummary, nil)) }

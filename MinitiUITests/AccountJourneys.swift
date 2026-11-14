@@ -3716,7 +3716,7 @@ final class AccountJourneys: XCTestCase {
         openHistory()
         app.buttons["Manage folders"].clickOrTap()
         app.buttons["folders.preview"].clickOrTap()
-        let total = app.staticTexts["4 meetings across 2 folders"]
+        let total = app.staticTexts["4 meetings will be filed, 2 stay unfiled"]
         XCTAssertTrue(total.waitForExistence(timeout: 5), app.debugDescription)
         #if os(macOS)
         // Mac groups each folder in one disclosure row labelled with name, count and description.
@@ -3743,10 +3743,29 @@ final class AccountJourneys: XCTestCase {
         let evidence = XCTAttachment(screenshot: app.screenshot())
         evidence.name = "Broad folder preview with counts and descriptions"
         evidence.lifetime = .keepAlways; add(evidence)
+        // 3.10.0 FO2.5: what the rules leave unfiled can be filed from the same screen.
+        let choose = app.descendants(matching: .any)["folders.unfiled.Taylor Reed"].firstMatch
+        reveal(choose, attempts: 10)
+        XCTAssertTrue(choose.isHittable, app.debugDescription)
+        XCTAssertTrue(app.descendants(matching: .any)["folders.unfiled.Dentist"].firstMatch.exists)
+        choose.clickOrTap()
+        #if os(macOS)
+        let teamChoice = app.menuItems["Team"].firstMatch
+        #else
+        let teamChoice = app.buttons["Team"].firstMatch
+        #endif
+        XCTAssertTrue(teamChoice.waitForExistence(timeout: 5), app.debugDescription)
+        teamChoice.clickOrTap()
+        let summary = app.staticTexts["folders.preview.summary"]
+        let expected = "5 meetings will be filed, 1 stays unfiled"
+        let updated = NSPredicate(format: "label == %@ OR value == %@", expected, expected)
+        XCTAssertTrue(app.staticTexts.matching(updated).firstMatch.waitForExistence(timeout: 5), "\(summary.label) \(String(describing: summary.value))")
         let apply = app.buttons["folders.apply"]
         reveal(apply, attempts: 5)
         apply.clickOrTap()
-        XCTAssertTrue(total.waitForNonExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts.matching(updated).firstMatch.waitForNonExistence(timeout: 5))
+        let undo = app.buttons["Undo folder changes"].firstMatch
+        XCTAssertTrue(undo.waitForExistence(timeout: 5), app.debugDescription)
         app.buttons["Close"].firstMatch.clickOrTap()
     }
 

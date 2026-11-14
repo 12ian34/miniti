@@ -18,6 +18,8 @@ extension AppState {
         let previousManual: Bool?
         let previousLocalOnly: Bool?
         let folder: MeetingFolder
+        /// Chosen by the user in Preview. Applies as hand-filed, so its series learns from it.
+        var manual = false
     }
 
     func folderIncludes(_ meeting: Meeting) -> Bool {
@@ -230,6 +232,20 @@ extension AppState {
         return nil
     }
 
+    /// Finished meetings Preview leaves without a folder: not in a live folder and not
+    /// proposed for one. Same 1,000-row bound as the proposals.
+    func meetingsLeftUnfiled(in meetings: [Meeting], after proposals: [FolderProposal]) -> [Meeting] {
+        let proposed = Set(proposals.map(\.id))
+        return meetings.lazy.filter { $0.endTime != nil }.prefix(1000)
+            .filter { !proposed.contains($0.id) && self.meetingFolders.folder($0.folderID) == nil }
+    }
+
+    /// A folder the user picked for one meeting in Preview. Nothing moves until Apply.
+    func manualFolderProposal(for meeting: Meeting, folder: MeetingFolder) -> FolderProposal {
+        .init(owner: meetingFolders.owner, meeting: meeting, title: meeting.title, previousFolder: meeting.folderID,
+              previousManual: meeting.folderManual, previousLocalOnly: meeting.folderLocalOnly, folder: folder, manual: true)
+    }
+
     func applyFolderProposals(_ proposals: [FolderProposal]) -> [FolderMove] {
         var accepted: [FolderProposal] = []
         for proposal in proposals.prefix(1000) {
@@ -247,7 +263,7 @@ extension AppState {
             for proposal in accepted {
                 MeetingSyncDocument.prepareFolderEdit(proposal.meeting)
                 proposal.meeting.folderID = proposal.folder.id
-                proposal.meeting.folderManual = false
+                proposal.meeting.folderManual = proposal.manual
                 proposal.meeting.folderLocalOnly = proposal.folder.localOnly
             }
         }, revert: {
