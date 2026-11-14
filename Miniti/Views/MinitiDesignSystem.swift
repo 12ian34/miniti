@@ -822,22 +822,25 @@ struct AudioProcessingComparison: View {
                         ForEach(options.indices, id: \.self) { other in
                             Text(options[other].provider).hidden().accessibilityHidden(true)
                         }
-                        Text(options[index].provider)
-                            .foregroundStyle(ColorPalette.Text.primary)
+                        identified(Text(options[index].provider).foregroundStyle(ColorPalette.Text.primary),
+                                   "provider", index)
                     }
                     .fontWeight(.medium)
                     .fixedSize()
-                    Text(options[index].benefit)
+                    identified(Text(options[index].benefit)
                         .foregroundStyle(ColorPalette.Text.secondary)
                         .fixedSize(horizontal: false, vertical: true)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .accessibilityIdentifier(identifier.map { "\($0).benefit.\(index)" } ?? "")
+                        .frame(maxWidth: .infinity, alignment: .leading), "benefit", index)
                 }
             }
         }
         .font(.caption)
         .lineSpacing(MinitiDesignSystem.Spacing.hairline)
         .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    @ViewBuilder private func identified(_ view: some View, _ part: String, _ index: Int) -> some View {
+        if let identifier { view.accessibilityIdentifier("\(identifier).\(part).\(index)") } else { view }
     }
 }
 

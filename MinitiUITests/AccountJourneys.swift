@@ -863,35 +863,53 @@ final class AccountJourneys: XCTestCase {
         assertMacSettingsSignIn(move: false, recovery: false)
     }
 
-    /// 3.10.0 ST1: the provider comparison lines and their pickers never draw over each other.
+    /// 3.10.0 ST1: in Settings, Transcription, each choice reads title and picker, then one
+    /// line per provider, and nothing overlaps or leaves the window, at every interface
+    /// scale. Default Settings width only: a journey cannot drag the window narrower, and
+    /// at the 800-point minimum each line still fits without wrapping.
     func testMacTranscriptionModelChoicesDoNotOverlap() {
         executionTimeAllowance = 240
         for scale in 0...2 {
             let window = openMacAccountSettings(scale: scale)
             let tab = window.staticTexts["Transcription"].firstMatch
             XCTAssertTrue(tab.waitForExistence(timeout: 5), window.debugDescription); tab.click()
-            // Top to bottom within each choice: title and picker, then one line per provider.
-            // The next choice starts below the previous one. Half a point of rounding is allowed.
-            var previousBottom = -CGFloat.infinity
-            for (group, title) in [("transcription.model", "Transcription"), ("transcription.speakers", "Speaker separation")] {
-                var column: [(name: String, frame: CGRect)] = []
-                for name in ["\(group).title", "\(group).picker", "\(group).benefit.0", "\(group).benefit.1"] {
-                    let element = window.descendants(matching: .any)[name].firstMatch
-                    XCTAssertTrue(element.waitForExistence(timeout: 5), "\(name) at scale \(scale)\n\(window.debugDescription)")
-                    XCTAssertGreaterThan(element.frame.height, 0, name)
-                    column.append((name, element.frame))
-                }
-                let heading = column[0].frame.union(column[1].frame)
-                XCTAssertGreaterThanOrEqual(heading.minY, previousBottom - 0.5, "Scale \(scale): \(title) starts inside the previous choice")
-                XCTAssertGreaterThanOrEqual(column[2].frame.minY, heading.maxY - 0.5,
-                                            "Scale \(scale): \(column[2].name) \(column[2].frame) overlaps the \(title) heading \(heading)")
-                XCTAssertGreaterThanOrEqual(column[3].frame.minY, column[2].frame.maxY - 0.5,
-                                            "Scale \(scale): \(column[3].name) \(column[3].frame) overlaps \(column[2].name) \(column[2].frame)")
-                previousBottom = column[3].frame.maxY
-            }
+            assertTranscriptionChoicesLayout(in: window, "scale \(scale)")
             let capture = XCTAttachment(screenshot: window.screenshot())
             capture.name = "Transcription models at scale \(scale)"; capture.lifetime = .keepAlways; add(capture)
         }
+    }
+
+    /// Returns the width of a choice row, from its title's leading edge to its picker's trailing edge.
+    @discardableResult
+    private func assertTranscriptionChoicesLayout(in window: XCUIElement, _ context: String) -> CGFloat {
+        func frame(_ name: String) -> CGRect {
+            let element = window.descendants(matching: .any)[name].firstMatch
+            XCTAssertTrue(element.waitForExistence(timeout: 5), "\(name), \(context)\n\(window.debugDescription)")
+            XCTAssertGreaterThan(element.frame.height, 0, "\(name), \(context)")
+            XCTAssertTrue(window.frame.insetBy(dx: -0.5, dy: -0.5).contains(element.frame), "\(context): \(name) \(element.frame) is outside the window \(window.frame)")
+            return element.frame
+        }
+        // Half a point of rounding is allowed throughout.
+        var previousBottom = -CGFloat.infinity
+        var rowWidth: CGFloat = 0
+        for group in ["transcription.model", "transcription.speakers"] {
+            let title = frame("\(group).title"), picker = frame("\(group).picker")
+            rowWidth = picker.maxX - title.minX
+            XCTAssertLessThanOrEqual(title.maxX, picker.minX + 0.5, "\(context): \(group) title \(title) runs into its picker \(picker)")
+            let heading = title.union(picker)
+            XCTAssertGreaterThanOrEqual(heading.minY, previousBottom - 0.5, "\(context): \(group) starts inside the previous choice")
+            var bottom = heading.maxY
+            for index in 0...1 {
+                let provider = frame("\(group).provider.\(index)"), benefit = frame("\(group).benefit.\(index)")
+                XCTAssertLessThanOrEqual(provider.maxX, benefit.minX + 0.5, "\(context): \(group) provider \(index) \(provider) runs into its text \(benefit)")
+                XCTAssertLessThanOrEqual(benefit.maxX, picker.maxX + 0.5, "\(context): \(group) text \(index) \(benefit) is wider than the row")
+                XCTAssertGreaterThanOrEqual(min(provider.minY, benefit.minY), bottom - 0.5,
+                                            "\(context): \(group) line \(index) (\(provider), \(benefit)) overlaps what is above it, bottom \(bottom)")
+                bottom = max(provider.maxY, benefit.maxY)
+            }
+            previousBottom = bottom
+        }
+        return rowWidth
     }
 
     func testMacSettingsKeyRestoreInputAndCancel() {
