@@ -252,7 +252,7 @@ struct AccountSettingsView: View {
                 
                 Text(appState.appMode == .managed
                      ? (appState.isPro
-                        ? (appState.compProUntil.map { PlanCopy.compSummary(until: $0, minutesLimit: Int(appState.usageInfo?.minutesLimit ?? 5000)) }
+                        ? (appState.compPro.map { PlanCopy.compSummary($0, minutesLimit: Int(appState.usageInfo?.minutesLimit ?? 5000)) }
                            ?? "Pro subscription active. \(Int(appState.usageInfo?.minutesLimit ?? 5000)) minutes per month.")
                         : "API calls routed through Miniti's backend. 500 free minutes per month.")
                      : "Use your own Deepgram and OpenAI API keys. No limits, no tracking.")
@@ -269,7 +269,7 @@ struct AccountSettingsView: View {
                         HStack {
                             Text("Plan")
                             Spacer()
-                            Text(appState.compProUntil.map { PlanCopy.compPlan(until: $0) }
+                            Text(appState.compPro.map { PlanCopy.compPlan($0) }
                                  ?? "Pro, \(Int(appState.usageInfo?.minutesLimit ?? 5000)) min/month")
                                 .foregroundStyle(Color(hex: "A78BFA"))
                                 .fontWeight(.medium)
@@ -277,9 +277,9 @@ struct AccountSettingsView: View {
                         .accessibilityElement(children: .combine)
                         .accessibilityIdentifier("billing.plan")
                         
-                        if appState.compProUntil != nil {
+                        if let comp = appState.compPro {
                             // Complimentary Pro has no subscription behind it: nothing to manage.
-                            Text(PlanCopy.compCaption)
+                            Text(PlanCopy.compNote(comp))
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
                                 .accessibilityIdentifier("billing.plan.comp")

@@ -2604,6 +2604,27 @@ final class AccountCloudSwitchWriterTests: XCTestCase {
         XCTAssertEqual(server.outcomes, ["dropped", "confirmed B:off v2"])
     }
 
+    func testEachWriteIsNumberedAboveTheLast() {
+        let suite = "cloud-flag-intent-\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suite)!
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let t = Date(timeIntervalSince1970: 1_763_121_600)
+        let first = AppState.nextCloudFlagIntent(account: "A", now: t, defaults: defaults)
+        XCTAssertEqual(first, 1_763_121_600_000)
+        // The same millisecond, and a clock that went back, still count upwards.
+        XCTAssertEqual(AppState.nextCloudFlagIntent(account: "A", now: t, defaults: defaults), first + 1)
+        XCTAssertEqual(AppState.nextCloudFlagIntent(account: "A", now: t.addingTimeInterval(-3600), defaults: defaults), first + 2)
+        XCTAssertEqual(AppState.nextCloudFlagIntent(account: "A", now: t.addingTimeInterval(1), defaults: defaults), first + 1000)
+        // The server holds a higher number than this device remembers (reinstall with a
+        // slow clock): the next write goes above it.
+        AppState.noteCloudFlagIntent(first + 50_000, account: "A", defaults: defaults)
+        XCTAssertEqual(AppState.nextCloudFlagIntent(account: "A", now: t.addingTimeInterval(2), defaults: defaults), first + 50_001)
+        AppState.noteCloudFlagIntent(5, account: "A", defaults: defaults)
+        XCTAssertEqual(AppState.nextCloudFlagIntent(account: "A", now: t.addingTimeInterval(2), defaults: defaults), first + 50_002)
+        // Each account has its own numbering.
+        XCTAssertEqual(AppState.nextCloudFlagIntent(account: "B", now: t, defaults: defaults), first)
+    }
+
     func testAFailedWriteConfirmsNothingAndTheNextOneStillRuns() async {
         let writer = AccountCloudSwitchWriter(), server = Server()
         server.failNext = true

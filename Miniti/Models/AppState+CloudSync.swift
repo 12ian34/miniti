@@ -271,6 +271,23 @@ extension AppState: CloudSyncHost {
     private static func cloudFlagVersionKey(_ account: String) -> String { "cloudSync.accountFlag.version.\(account)" }
     private static func cloudFlagPendingKey(_ account: String) -> String { "cloudSync.accountFlag.pending.\(account)" }
 
+    /// The number for this device's next account switch write: the clock in milliseconds,
+    /// or one more than the last number used if the clock has not moved past it.
+    nonisolated static func nextCloudFlagIntent(account: String, now: Date = Date(), defaults: UserDefaults = .standard) -> Int64 {
+        let key = "cloudSync.accountFlag.intent.\(account)"
+        let last = (defaults.object(forKey: key) as? NSNumber)?.int64Value ?? 0
+        let next = max(Int64(now.timeIntervalSince1970 * 1000), last + 1)
+        defaults.set(NSNumber(value: next), forKey: key)
+        return next
+    }
+
+    /// Never number a write at or below one the server has already accepted from this device.
+    nonisolated static func noteCloudFlagIntent(_ accepted: Int64, account: String, defaults: UserDefaults = .standard) {
+        let key = "cloudSync.accountFlag.intent.\(account)"
+        let last = (defaults.object(forKey: key) as? NSNumber)?.int64Value ?? 0
+        if accepted > last { defaults.set(NSNumber(value: accepted), forKey: key) }
+    }
+
     /// Runs after every successful usage check.
     func applyAccountCloudFlag() {
         guard appMode == .managed, let usage = usageInfo, let account = cloudAccountID else { return }
@@ -319,7 +336,16 @@ extension AppState: CloudSyncHost {
                 return .init(account: account, generation: self.clientAuthManager.credentialGeneration)
             },
             write: { on, owner in
-                try await api.setAccountCloud(enabled: on, accountID: owner.account, credentialGeneration: owner.generation)
+                // Numbered when it is sent, so a retry is above the attempt it replaces.
+                let intent = Self.nextCloudFlagIntent(account: owner.account)
+                do {
+                    return try await api.setAccountCloud(enabled: on, accountID: owner.account, credentialGeneration: owner.generation, intent: intent)
+                } catch let stale as AccountCloudWriteStale {
+                    // This device's clock went back, or its counter was reset: move past
+                    // what the server has, so the retry at the next usage check is accepted.
+                    Self.noteCloudFlagIntent(stale.lastIntent, account: owner.account)
+                    throw stale
+                }
             },
             finished: { [weak self] outcome in self?.cloudFlagWriteFinished(outcome) })
     }

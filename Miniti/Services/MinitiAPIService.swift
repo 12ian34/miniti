@@ -204,10 +204,12 @@ final class MinitiAPIService: @unchecked Sendable {
         /// compares with the version it last applied (`AppState.cloudAccountFlagAction`).
         let cloudEnabled: Bool?
         let cloudVersion: Int?
-        /// Complimentary Pro (3.10.0): miniti added Pro to the account until this date. Set only
-        /// when the backend says the comp is what makes this device Pro
-        /// (`entitlement_source: "comp"` with `comp_until`). Nil for a subscription, for Pro
-        /// from another device, for free, and from older backends.
+        /// Complimentary Pro (3.10.0): the backend says miniti's own grant is what makes this
+        /// device Pro (`entitlement_source: "comp"`). False for a subscription, for Pro from
+        /// another device, for free, and from older backends.
+        let entitlementIsComp: Bool
+        /// When that grant ends (`comp_until`). Nil when the date was missing or unreadable;
+        /// the source above still stands, so a comp never looks like a subscription.
         let compUntil: Date?
 
         enum CodingKeys: String, CodingKey {
@@ -271,15 +273,18 @@ final class MinitiAPIService: @unchecked Sendable {
                 ?? ((try? container.decodeIfPresent(Bool.self, forKey: .cloudEnabledCamel)) ?? nil)
             cloudVersion = MinitiAPIService.decodeOptionalInt(container, .cloudVersion, .cloudVersionCamel)
             let source = (try? container.decodeIfPresent(String.self, forKey: .entitlementSource)) ?? nil
-            compUntil = source == "comp" ? ((try? container.decodeIfPresent(Date.self, forKey: .compUntil)) ?? nil) : nil
+            entitlementIsComp = source == "comp"
+            compUntil = entitlementIsComp ? ((try? container.decodeIfPresent(Date.self, forKey: .compUntil)) ?? nil) : nil
         }
 
         var isPro: Bool { tier == "pro" }
         /// Pro that comes from another device on the same account: nothing to manage here.
         var isProViaAccount: Bool { isPro && entitlementViaAccount }
-        /// The end of complimentary Pro while it is what makes this device Pro. There is no
-        /// subscription behind it, so there is nothing to manage and nothing to pay.
-        var compProUntil: Date? { isPro && !entitlementViaAccount ? compUntil : nil }
+        /// Complimentary Pro while it is what makes this device Pro. There is no subscription
+        /// behind it, so there is nothing to manage and nothing to pay.
+        var compPro: CompProStatus? {
+            isPro && !entitlementViaAccount && entitlementIsComp ? CompProStatus(until: compUntil) : nil
+        }
 
         /// Remaining docs lookups this period, or nil if the backend hasn't
         /// reported a cap (in which case the client shouldn't gate on it).
@@ -2692,21 +2697,47 @@ struct ManagedSpeakerNamesResponse: Decodable {
     }
 }
 
+/// Complimentary Pro as the last usage answer described it.
+struct CompProStatus: Equatable {
+    /// When the grant ends. Nil when the server's date could not be read.
+    let until: Date?
+
+    /// The answer is older than the grant: it has ended, and the plan is being checked again.
+    func hasEnded(now: Date = Date()) -> Bool {
+        guard let until else { return false }
+        return now >= until
+    }
+}
+
 /// Plan wording shared by Mac and iOS Settings.
 enum PlanCopy {
     /// Under the plan row for complimentary Pro: there is no subscription and no charge.
     static let compCaption = "Added by miniti. Nothing to pay."
+    /// Under the plan row once the grant's date has passed and the plan is being read again.
+    static let compEndedCaption = "Complimentary Pro has ended. Checking your plan."
 
-    /// "Pro until 31 Dec 2026", in the reader's own date style and time zone.
-    static func compPlan(until: Date, locale: Locale = .current, timeZone: TimeZone = .current) -> String {
+    private static func day(_ date: Date, locale: Locale, timeZone: TimeZone) -> String {
         var style = Date.FormatStyle(date: .abbreviated, time: .omitted)
         style.locale = locale
         style.timeZone = timeZone
-        return "Pro until \(until.formatted(style))"
+        return date.formatted(style)
+    }
+
+    /// "Pro until 31 Dec 2026" in the reader's own date style and time zone, "Pro ended
+    /// 31 Dec 2026" once that has passed, and plain "Pro" when the date is unknown.
+    static func compPlan(_ comp: CompProStatus, now: Date = Date(), locale: Locale = .current, timeZone: TimeZone = .current) -> String {
+        guard let until = comp.until else { return "Pro" }
+        return "\(comp.hasEnded(now: now) ? "Pro ended" : "Pro until") \(day(until, locale: locale, timeZone: timeZone))"
+    }
+
+    static func compNote(_ comp: CompProStatus, now: Date = Date()) -> String {
+        comp.hasEnded(now: now) ? compEndedCaption : compCaption
     }
 
     /// The line under the mode picker for complimentary Pro.
-    static func compSummary(until: Date, minutesLimit: Int, locale: Locale = .current, timeZone: TimeZone = .current) -> String {
-        "\(compPlan(until: until, locale: locale, timeZone: timeZone)). \(minutesLimit) minutes per month."
+    static func compSummary(_ comp: CompProStatus, minutesLimit: Int, now: Date = Date(), locale: Locale = .current, timeZone: TimeZone = .current) -> String {
+        if comp.hasEnded(now: now) { return compEndedCaption }
+        guard comp.until != nil else { return "Pro, added by miniti. \(minutesLimit) minutes per month." }
+        return "\(compPlan(comp, now: now, locale: locale, timeZone: timeZone)). \(minutesLimit) minutes per month."
     }
 }

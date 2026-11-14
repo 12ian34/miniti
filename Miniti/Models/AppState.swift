@@ -1232,6 +1232,9 @@ final class AppState: ObservableObject {
     private(set) var accountGeneration = 0
     /// Bumped by every email read and mutation; only the latest read may apply.
     var accountEmailSequence = 0
+    /// The end date `scheduleCompEndRefresh` is waiting for, and its timer.
+    var compEndRefreshDate: Date?
+    var compEndRefreshTask: Task<Void, Never>?
     /// Sends account cloud switch writes one at a time, in order (`pushCloudAccountFlag`).
     let cloudFlagWriter = AccountCloudSwitchWriter()
     var accountEmailLastLoaded: Date?
@@ -11683,6 +11686,7 @@ final class AppState: ObservableObject {
             if stillAsked() {
                 usageInfo = answer
                 isDeviceDisabled = false
+                scheduleCompEndRefresh()
                 applyAccountCloudFlag()
             } else {
                 DebugLogger.shared.log(.app, "Usage answer for a previous account ignored")
@@ -12103,13 +12107,32 @@ final class AppState: ObservableObject {
     /// Pro on this device because another device on the account holds the subscription.
     var isProViaAccount: Bool { usageInfo?.isProViaAccount ?? false }
 
-    /// Complimentary Pro (3.10.0): the date miniti's own grant of Pro ends, while that grant is
-    /// what makes this device Pro. On iOS a local App Store subscription comes first.
-    var compProUntil: Date? {
+    /// Complimentary Pro (3.10.0): miniti's own grant of Pro, while that grant is what makes
+    /// this device Pro. On iOS a local App Store subscription comes first.
+    var compPro: CompProStatus? {
         #if os(iOS)
         if hasActiveAppStoreSubscription { return nil }
         #endif
-        return usageInfo?.compProUntil
+        return usageInfo?.compPro
+    }
+
+    /// Read the plan again when a complimentary grant reaches its end, so Settings left open
+    /// past that moment does not keep showing it. One timer per end date.
+    func scheduleCompEndRefresh() {
+        let until = usageInfo?.compPro?.until
+        guard until != compEndRefreshDate else { return }
+        compEndRefreshDate = until
+        compEndRefreshTask?.cancel()
+        compEndRefreshTask = nil
+        guard let until else { return }
+        compEndRefreshTask = Task { [weak self] in
+            let wait = max(0, until.timeIntervalSinceNow) + 2
+            try? await Task.sleep(nanoseconds: UInt64(min(wait, 86_400 * 30) * 1_000_000_000))
+            guard !Task.isCancelled, let self else { return }
+            // Views that show the grant read the clock when they draw; ask them to draw again.
+            self.objectWillChange.send()
+            await self.refreshUsage()
+        }
     }
 
     func revealRecoveryKey() -> String? {

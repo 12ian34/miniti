@@ -91,7 +91,19 @@ final class MinitiAPIServiceTests: XCTestCase {
         let info = try decoder.decode(MinitiAPIService.UsageInfo.self, from: comp)
         XCTAssertTrue(info.isPro)
         XCTAssertFalse(info.isProViaAccount)
-        XCTAssertEqual(info.compProUntil, ISO8601DateFormatter().date(from: "2026-12-31T23:59:59Z"))
+        XCTAssertEqual(info.compPro, CompProStatus(until: ISO8601DateFormatter().date(from: "2026-12-31T23:59:59Z")))
+
+        // The source alone is enough to know it is a comp. A missing or unreadable date
+        // leaves the date unknown, never fails the response and never looks like a subscription.
+        let undated = [
+            #"{"minutes_used": 10, "minutes_limit": 5000, "resets_at": "2026-04-01T00:00:00Z", "tier": "pro", "entitlement_source": "comp"}"#,
+            #"{"minutes_used": 10, "minutes_limit": 5000, "resets_at": "2026-04-01T00:00:00Z", "tier": "pro", "entitlement_source": "comp", "comp_until": "soon"}"#,
+            #"{"minutes_used": 10, "minutes_limit": 5000, "resets_at": "2026-04-01T00:00:00Z", "tier": "pro", "entitlement_source": "comp", "comp_until": true}"#,
+        ]
+        for json in undated {
+            let decoded = try decoder.decode(MinitiAPIService.UsageInfo.self, from: Data(json.utf8))
+            XCTAssertEqual(decoded.compPro, CompProStatus(until: nil), json)
+        }
 
         // A subscription, Pro from another device, and older backends carry no comp.
         let cases = [
@@ -100,8 +112,6 @@ final class MinitiAPIServiceTests: XCTestCase {
             // The date alone, or an unknown source, is not a comp.
             #"{"minutes_used": 10, "minutes_limit": 5000, "resets_at": "2026-04-01T00:00:00Z", "tier": "pro", "comp_until": "2026-12-31T23:59:59.000Z"}"#,
             #"{"minutes_used": 10, "minutes_limit": 5000, "resets_at": "2026-04-01T00:00:00Z", "tier": "pro", "entitlement_source": "gift", "comp_until": "2026-12-31T23:59:59.000Z"}"#,
-            // An unreadable date leaves ordinary Pro, and never fails the whole response.
-            #"{"minutes_used": 10, "minutes_limit": 5000, "resets_at": "2026-04-01T00:00:00Z", "tier": "pro", "entitlement_source": "comp", "comp_until": "soon"}"#,
             #"{"minutes_used": 10, "minutes_limit": 5000, "resets_at": "2026-04-01T00:00:00Z", "tier": "pro", "entitlement_source": 7, "comp_until": true}"#,
             // The fields never promote a free device, and never mix with Pro from another device.
             #"{"minutes_used": 10, "minutes_limit": 500, "resets_at": "2026-04-01T00:00:00Z", "tier": "free", "entitlement_source": "comp", "comp_until": "2026-12-31T23:59:59.000Z"}"#,
@@ -109,19 +119,38 @@ final class MinitiAPIServiceTests: XCTestCase {
         ]
         for json in cases {
             let decoded = try decoder.decode(MinitiAPIService.UsageInfo.self, from: Data(json.utf8))
-            XCTAssertNil(decoded.compProUntil, json)
+            XCTAssertNil(decoded.compPro, json)
         }
     }
 
     func testComplimentaryProCopy() throws {
         let until = try XCTUnwrap(ISO8601DateFormatter().date(from: "2026-12-31T23:59:59Z"))
+        let before = until.addingTimeInterval(-1)
         let london = try XCTUnwrap(TimeZone(identifier: "Europe/London"))
         let gb = Locale(identifier: "en_GB")
-        XCTAssertEqual(PlanCopy.compPlan(until: until, locale: gb, timeZone: london), "Pro until 31 Dec 2026")
-        XCTAssertEqual(PlanCopy.compPlan(until: until, locale: Locale(identifier: "en_US"), timeZone: london), "Pro until Dec 31, 2026")
-        XCTAssertEqual(PlanCopy.compSummary(until: until, minutesLimit: 5000, locale: gb, timeZone: london), "Pro until 31 Dec 2026. 5000 minutes per month.")
-        XCTAssertEqual(PlanCopy.compCaption, "Added by miniti. Nothing to pay.")
-        for text in [PlanCopy.compCaption, PlanCopy.compSummary(until: until, minutesLimit: 5000, locale: gb, timeZone: london)] {
+        let comp = CompProStatus(until: until)
+        XCTAssertEqual(PlanCopy.compPlan(comp, now: before, locale: gb, timeZone: london), "Pro until 31 Dec 2026")
+        XCTAssertEqual(PlanCopy.compPlan(comp, now: before, locale: Locale(identifier: "en_US"), timeZone: london), "Pro until Dec 31, 2026")
+        XCTAssertEqual(PlanCopy.compSummary(comp, minutesLimit: 5000, now: before, locale: gb, timeZone: london), "Pro until 31 Dec 2026. 5000 minutes per month.")
+        XCTAssertEqual(PlanCopy.compNote(comp, now: before), "Added by miniti. Nothing to pay.")
+
+        // At the end second the cached answer is out of date: say so, and never "until".
+        XCTAssertFalse(comp.hasEnded(now: before))
+        XCTAssertTrue(comp.hasEnded(now: until))
+        XCTAssertEqual(PlanCopy.compPlan(comp, now: until, locale: gb, timeZone: london), "Pro ended 31 Dec 2026")
+        XCTAssertEqual(PlanCopy.compNote(comp, now: until), "Complimentary Pro has ended. Checking your plan.")
+        XCTAssertEqual(PlanCopy.compSummary(comp, minutesLimit: 5000, now: until, locale: gb, timeZone: london), "Complimentary Pro has ended. Checking your plan.")
+
+        // A comp whose date could not be read is still a comp, with no date claimed.
+        let undated = CompProStatus(until: nil)
+        XCTAssertFalse(undated.hasEnded(now: until))
+        XCTAssertEqual(PlanCopy.compPlan(undated, now: before, locale: gb, timeZone: london), "Pro")
+        XCTAssertEqual(PlanCopy.compNote(undated, now: before), "Added by miniti. Nothing to pay.")
+        XCTAssertEqual(PlanCopy.compSummary(undated, minutesLimit: 5000, now: before, locale: gb, timeZone: london), "Pro, added by miniti. 5000 minutes per month.")
+
+        for text in [PlanCopy.compCaption, PlanCopy.compEndedCaption,
+                     PlanCopy.compSummary(comp, minutesLimit: 5000, now: before, locale: gb, timeZone: london),
+                     PlanCopy.compSummary(undated, minutesLimit: 5000, now: before, locale: gb, timeZone: london)] {
             XCTAssertFalse(text.contains("&"))
             XCTAssertFalse(text.contains("\u{2014}"))
             XCTAssertFalse(text.contains("Miniti"))

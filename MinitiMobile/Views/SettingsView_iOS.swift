@@ -421,7 +421,7 @@ private struct SettingsDetailView_iOS: View {
                                 Text("Checking…")
                                     .foregroundStyle(.secondary)
                             } else if appState.isPro {
-                                Text(appState.compProUntil.map { PlanCopy.compPlan(until: $0) }
+                                Text(appState.compPro.map { PlanCopy.compPlan($0) }
                                      ?? "Pro, \(Int(appState.displayMinutesLimit)) min/month")
                                     .foregroundStyle(.purple)
                                     .fontWeight(.medium)
@@ -439,9 +439,9 @@ private struct SettingsDetailView_iOS: View {
                                     .foregroundStyle(.secondary)
                             }
                         } else if appState.isPro {
-                            if appState.compProUntil != nil {
+                            if let comp = appState.compPro {
                                 // Complimentary Pro has no subscription behind it: nothing to manage.
-                                Text(PlanCopy.compCaption)
+                                Text(PlanCopy.compNote(comp))
                                     .font(.caption)
                                     .foregroundStyle(.secondary)
                                     .accessibilityIdentifier("billing.plan.comp")
@@ -606,7 +606,7 @@ private struct SettingsDetailView_iOS: View {
                          ? (appState.shouldShowManagedSubscriptionPlaceholder
                             ? "Checking subscription status…"
                             : (appState.isPro
-                               ? (appState.compProUntil.map { PlanCopy.compSummary(until: $0, minutesLimit: Int(appState.displayMinutesLimit)) }
+                               ? (appState.compPro.map { PlanCopy.compSummary($0, minutesLimit: Int(appState.displayMinutesLimit)) }
                                   ?? "Pro subscription active. \(Int(appState.displayMinutesLimit)) minutes per month.")
                                : "500 free minutes per month via Miniti's backend."))
                          : "Audio and text go straight to your own Deepgram and OpenAI accounts, billed by them.")

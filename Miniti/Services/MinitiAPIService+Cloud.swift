@@ -105,6 +105,11 @@ struct CloudConnectedApp: Identifiable, Equatable {
 }
 
 /// Why a cloud call was refused, mapped from the server's error codes.
+/// The server already accepted a higher-numbered cloud switch write from this device.
+struct AccountCloudWriteStale: Error, Equatable {
+    let lastIntent: Int64
+}
+
 enum CloudSyncError: Error, Equatable {
     /// `410 cursor_expired`: reconcile from the manifest.
     case cursorExpired
@@ -330,10 +335,17 @@ extension MinitiAPIService: CloudSyncTransport {
 
     /// The same write, refused before it is signed unless the device is still on `accountID`
     /// with the same credential: a choice made for one account is never written to another.
-    func setAccountCloud(enabled: Bool, accountID: String, credentialGeneration: Int) async throws -> Int {
-        let body = try JSONSerialization.data(withJSONObject: ["enabled": enabled])
+    ///
+    /// `intent` numbers this device's writes. A request that timed out here may still reach
+    /// the server after the next one; the server refuses a number that is not above the last
+    /// it accepted from this device, so the late one changes nothing.
+    func setAccountCloud(enabled: Bool, accountID: String, credentialGeneration: Int, intent: Int64) async throws -> Int {
+        let body = try JSONSerialization.data(withJSONObject: ["enabled": enabled, "intent": intent])
         let (status, json) = try await cloudCall(cloudRequest(path: "/account/cloud", method: "PUT", body: body),
                                                  expectedOwner: (accountID, credentialGeneration))
+        if status == 409, json["error"] as? String == "stale_intent" {
+            throw AccountCloudWriteStale(lastIntent: (json["intent"] as? NSNumber)?.int64Value ?? intent)
+        }
         guard (200..<300).contains(status) else { throw CloudSyncError.server(code: "http_\(status)", status: status) }
         return (json["version"] as? NSNumber)?.intValue ?? 0
     }

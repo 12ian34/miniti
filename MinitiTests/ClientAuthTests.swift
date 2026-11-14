@@ -3363,6 +3363,29 @@ final class AccountEmailStateTests: XCTestCase {
         XCTAssertFalse(app.isDeviceDisabled, "A's disabled answer must not stick to B")
     }
 
+    func testARefusedLateCloudSwitchWriteReportsWhatTheServerHolds() async throws {
+        let originalHandler = try XCTUnwrap(StubURLProtocol.handler)
+        StubURLProtocol.handler = { request in
+            guard request.url?.path.hasSuffix("/account/cloud") == true else { return originalHandler(request) }
+            return (409, Data(#"{"error": "stale_intent", "message": "A newer choice from this device was already saved", "intent": 1763121600500}"#.utf8))
+        }
+        let m = manager("acct_a")
+        let api = MinitiAPIService(session: session, auth: m)
+        do {
+            _ = try await api.setAccountCloud(enabled: true, accountID: "acct_a", credentialGeneration: m.credentialGeneration, intent: 1_763_121_600_000)
+            XCTFail("a refused write must not look written")
+        } catch let stale as AccountCloudWriteStale {
+            XCTAssertEqual(stale.lastIntent, 1_763_121_600_500)
+        }
+        // A write for an account this device is not on is refused before it is sent.
+        do {
+            _ = try await api.setAccountCloud(enabled: true, accountID: "acct_b", credentialGeneration: m.credentialGeneration, intent: 1)
+            XCTFail("a write for another account must not be sent")
+        } catch {
+            XCTAssertEqual(error as? CloudSyncError, .notEnrolled)
+        }
+    }
+
     func testASwitchDuringTheReconcilingReadMakesTheWriteStale() async throws {
         let app = await makeApp(account: "acct_a")
         let outcome = try await switchDuringReconciliation(app) {
