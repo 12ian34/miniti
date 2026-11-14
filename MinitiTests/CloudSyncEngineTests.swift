@@ -1938,10 +1938,12 @@ final class SyncMergeFormTests: XCTestCase {
     @MainActor private final class Device {
         let host: TestCloudHost
         let engine = CloudSyncEngine()
-        init(_ transport: FakeCloudTransport, clock: @escaping () -> Date) throws {
-            host = try TestCloudHost()
+        /// Pass an existing host and defaults for a relaunch: the store and the cursor
+        /// survive, the engine's in-memory state does not.
+        init(_ transport: FakeCloudTransport, clock: @escaping () -> Date, host existing: TestCloudHost? = nil, defaults: UserDefaults? = nil) throws {
+            host = try existing ?? TestCloudHost()
             engine.host = host; engine.transport = transport
-            engine.defaults = UserDefaults(suiteName: "SyncMergeFormTests-\(UUID().uuidString)")!
+            engine.defaults = defaults ?? UserDefaults(suiteName: "SyncMergeFormTests-\(UUID().uuidString)")!
             engine.sleep = { _ in }
             engine.now = clock
         }
@@ -2310,5 +2312,79 @@ final class SyncMergeFormTests: XCTestCase {
             XCTAssertEqual(device.host.meeting(id)?.notes, "A's new notes")
             XCTAssertEqual(device.host.meeting(id)?.folderID, folder)
         }
+    }
+
+    // MARK: SM1.3 download first when behind
+
+    /// The 2026-11-14 shape: a Mac that stopped with folder edits pending comes back after
+    /// another device filed the same meetings the same way. It downloads first and finds
+    /// nothing left to send: no uploads and no refused uploads.
+    func testADeviceThatIsBehindDownloadsFirstAndSendsNothingThatIsAlreadyThere() async throws {
+        let a = try device(), b = try device()
+        let ids = (0..<6).map { record(on: a, title: "Meeting \($0)") }
+        await sync(a); await sync(b)
+        let folder = UUID()
+        // A files them, then stops before uploading.
+        for id in ids { move(id, on: a, to: folder) }
+        // B files the same meetings into the same folder and uploads.
+        for id in ids { move(id, on: b, to: folder) }
+        await sync(b)
+        // A comes back much later: a new engine, as after a relaunch.
+        clock = clock.addingTimeInterval(4 * 24 * 3600)
+        let relaunched = try Device(transport, clock: { [unowned self] in self.clock }, host: a.host, defaults: a.engine.defaults)
+        let before = puts
+        await sync(relaunched)
+        XCTAssertEqual(puts, before, "Nothing uploaded and nothing refused")
+        for id in ids {
+            let meeting = try XCTUnwrap(a.host.meeting(id))
+            XCTAssertEqual(meeting.folderID, folder)
+            XCTAssertEqual(meeting.syncFingerprint, MeetingSyncDocument.fingerprint(of: meeting), "Clean after the download")
+        }
+    }
+
+    /// Downloading first never swallows a real local edit: it still uploads in the same pass.
+    func testADeviceThatIsBehindStillUploadsAGenuinelyNewerEdit() async throws {
+        let (a, b, id) = try await pairWithOneMerge()
+        let folder = UUID()
+        move(id, on: b, to: folder)
+        await sync(b)
+        clock = clock.addingTimeInterval(3600)
+        a.host.meeting(id)?.notes = "Written after waking"
+        try a.host.context.save()
+        let relaunched = try Device(transport, clock: { [unowned self] in self.clock }, host: a.host, defaults: a.engine.defaults)
+        let before = puts
+        await sync(relaunched, passes: 1)
+        XCTAssertEqual(puts, before + 1, "One upload, accepted first time: the download came first")
+        XCTAssertEqual(transport.rows[id]?.document["notes"] as? String, "Written after waking")
+        XCTAssertEqual(a.host.meeting(id)?.folderID, folder, "B's folder was merged in, not overwritten")
+        await sync(b)
+        XCTAssertEqual(b.host.meeting(id)?.notes, "Written after waking")
+    }
+
+    /// An up-to-date device keeps today's order: upload, then download.
+    func testAnUpToDateDeviceStillUploadsBeforeDownloading() async throws {
+        let (a, _, id) = try await pairWithOneMerge()
+        a.host.meeting(id)?.notes = "Edit while in step"
+        try a.host.context.save()
+        transport.calls = []
+        await sync(a, passes: 1)
+        let order = transport.calls.filter { $0 == "put" || $0.hasPrefix("changes") }
+        XCTAssertTrue(order.contains { $0.hasPrefix("changes") }, "\(transport.calls)")
+        XCTAssertEqual(order.first, "put", "\(transport.calls)")
+    }
+
+    /// A download that must wait for unsaved local changes (a recording in progress) does
+    /// not hold finished meetings back.
+    func testADeferredDownloadDoesNotHoldUploadsBack() async throws {
+        let (a, _, id) = try await pairWithOneMerge()
+        clock = clock.addingTimeInterval(3600)
+        a.host.meeting(id)?.notes = "Finished meeting edit"
+        try a.host.context.save()
+        // Something unsaved in the same store, as live transcript rows are during a recording.
+        let live = Meeting(title: "Live", startTime: clock)
+        a.host.context.insert(live)
+        let relaunched = try Device(transport, clock: { [unowned self] in self.clock }, host: a.host, defaults: a.engine.defaults)
+        await sync(relaunched, passes: 1)
+        XCTAssertEqual(transport.rows[id]?.document["notes"] as? String, "Finished meeting edit", "Uploaded within one pass")
     }
 }

@@ -221,6 +221,15 @@ final class CloudSyncEngine: ObservableObject {
     private var lastScannedUploadProtectedID: UUID?
     private enum PassDeferral: Error { case localEdits, committedEdits }
 
+    /// When this engine last finished downloading changes. In memory only: nil after
+    /// launch, an account change or a bookkeeping reset.
+    private var lastDownloadCompletedAt: Date?
+    /// No completed download within the last two poll intervals.
+    private var isBehindOnDownloads: Bool {
+        guard let last = lastDownloadCompletedAt else { return true }
+        return now().timeIntervalSince(last) > 2 * Self.pollInterval
+    }
+
     private func rememberProtectedIncoming(id: UUID, revision: Int, deleted: Bool, host: CloudSyncHost) {
         guard host.cloudProtectsIncoming(id) else { return }
         // Our own upload echoed through the feed needs no later manifest revisit.
@@ -256,6 +265,7 @@ final class CloudSyncEngine: ObservableObject {
         statusFetchedAt = nil
         statusRefreshFailed = false
         lastSyncedAt = nil
+        lastDownloadCompletedAt = nil
         pendingUploadCount = 0
         pendingRemovalCount = 0
         protectedMeetingCount = 0
@@ -418,6 +428,7 @@ final class CloudSyncEngine: ObservableObject {
 
     /// Tests: force the next pass through the manifest without touching meetings.
     func resetBookkeepingCursorOnly() {
+        lastDownloadCompletedAt = nil
         cursor = 0
         needsReconcile = true
     }
@@ -512,12 +523,29 @@ final class CloudSyncEngine: ObservableObject {
                     throw error
                 }
             }
+            // A device that is behind (launch, wake, cloud just switched on) and has edits to
+            // send downloads first: an upload against an old revision is refused anyway, and
+            // the merge may show there is nothing left to send (3.10.0 SM1.3). Local edits
+            // were stamped by the scan above. A download that has to wait for unsaved local
+            // changes, as during a recording, does not hold the uploads back.
+            if shouldScan, pendingUploadCount > 0, isBehindOnDownloads {
+                phase = .pulling
+                do {
+                    try await pull(host: host, transport: transport, context: context)
+                    try check(context)
+                    lastDownloadCompletedAt = now()
+                } catch PassDeferral.localEdits {
+                    DebugLogger.shared.log(.app, "Cloud sync: download-first deferred for unsaved local edits, uploading")
+                }
+                guard stillAllowed else { refreshPause(); return }
+            }
             if shouldScan { try await push(host: host, transport: transport, context: context) }
             try await pushTombstones(host: host, transport: transport, context: context)
             guard stillAllowed else { refreshPause(); return }
             phase = .pulling
             try await pull(host: host, transport: transport, context: context)
             try check(context)
+            lastDownloadCompletedAt = now()
             await host.cloudSyncFolders()
             try check(context)
             guard stillAllowed else { refreshPause(); return }
