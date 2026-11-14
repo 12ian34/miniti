@@ -83,12 +83,15 @@ struct MeetingFolderManager: View {
     @State private var regroupManual = false
     /// Meetings Preview leaves unfiled, and the folders the user picked for them here.
     @State private var unfiled: [Meeting] = []
-    @State private var choices: [UUID: MeetingFolder] = [:]
+    /// Captured when chosen, so Apply refuses a meeting that changed in the meantime.
+    @State private var choices: [UUID: AppState.FolderProposal] = [:]
+    @State private var unfiledShown = unfiledPageSize
+    @State private var applyIssue: String?
     /// Folders named in Preview. They are created with Apply, like proposed broad folders.
     @State private var newFolders: [MeetingFolder] = []
     @State private var namingFolderFor: Meeting?
     @State private var newFolderName = ""
-    private static let unfiledRowLimit = 200
+    private static let unfiledPageSize = 200
 
     private struct PreviewGroup: Identifiable {
         let folder: MeetingFolder
@@ -160,7 +163,7 @@ struct MeetingFolderManager: View {
             }
         }
         .onChange(of: appState.meetingFolders.owner) { _, _ in
-            path = []; proposals = []; unfiled = []; choices = [:]; newFolders = []; previewIssue = nil; deleting = nil; resetEditor()
+            path = []; clearPreview(); previewIssue = nil; deleting = nil; resetEditor()
         }
     }
 
@@ -179,6 +182,7 @@ struct MeetingFolderManager: View {
             Section {
                 journey("Organise existing meetings", detail: "Preview folders and meeting counts before anything moves.", icon: "tray.full", id: "folders.preview") {
                     regroupManual = false
+                    clearPreview()
                     refreshPreview()
                     path.append(.preview)
                 }
@@ -267,6 +271,9 @@ struct MeetingFolderManager: View {
                         .onChange(of: regroupManual) { _, _ in refreshPreview() }
                 }
             }
+            if let applyIssue {
+                Section { Text(applyIssue).foregroundStyle(ColorPalette.Status.warning).accessibilityIdentifier("folders.apply.issue") }
+            }
             if let previewIssue {
                 Section { Text(previewIssue).foregroundStyle(ColorPalette.Status.warning); Button("Retry preview") { refreshPreview() } }
             } else if proposals.isEmpty && unfiled.isEmpty {
@@ -296,9 +303,11 @@ struct MeetingFolderManager: View {
                 Section {
                     Text("miniti could not tell where these belong. Choose a folder for any of them, or leave them unfiled.")
                         .font(.footnote).foregroundStyle(ColorPalette.Text.secondary)
-                    ForEach(unfiled.prefix(Self.unfiledRowLimit)) { meeting in unfiledRow(meeting) }
-                    if unfiled.count > Self.unfiledRowLimit {
-                        Text("Showing the \(Self.unfiledRowLimit) most recent of \(unfiled.count). Apply, then open Preview again for the rest.")
+                    ForEach(unfiled.prefix(unfiledShown)) { meeting in unfiledRow(meeting) }
+                    if unfiled.count > unfiledShown {
+                        Button("Show \(min(Self.unfiledPageSize, unfiled.count - unfiledShown)) more") { unfiledShown += Self.unfiledPageSize }
+                            .accessibilityIdentifier("folders.unfiled.more")
+                        Text("Showing the \(unfiledShown) most recent of \(unfiled.count).")
                             .font(.footnote).foregroundStyle(ColorPalette.Text.secondary)
                     }
                 } header: {
@@ -313,13 +322,7 @@ struct MeetingFolderManager: View {
         #endif
         .safeAreaInset(edge: .bottom) {
             actionBar {
-                Button("Apply organisation") {
-                    let picked = unfiled.compactMap { meeting in
-                        choices[meeting.id].map { appState.manualFolderProposal(for: meeting, folder: $0) }
-                    }
-                    appState.folderUndo = appState.applyFolderProposals(proposals + picked)
-                    proposals = []; unfiled = []; choices = [:]; newFolders = []; path.removeLast()
-                }
+                Button("Apply organisation") { applyPreview() }
                 .disabled(filedCount == 0 || previewIssue != nil)
                 .accessibilityIdentifier("folders.apply")
             }
@@ -344,11 +347,12 @@ struct MeetingFolderManager: View {
                     .font(.caption).foregroundStyle(ColorPalette.Text.secondary)
             }
             .fixedSize(horizontal: false, vertical: true)
+            .layoutPriority(1)
             .accessibilityElement(children: .combine)
             if !dynamic { Spacer(minLength: MinitiDesignSystem.Spacing.compact) }
             Menu {
                 ForEach(choosableFolders) { folder in
-                    Button(folder.name) { choices[meeting.id] = folder }
+                    Button(folder.name) { choices[meeting.id] = appState.manualFolderProposal(for: meeting, folder: folder) }
                 }
                 Divider()
                 Button("New folder…") { newFolderName = ""; namingFolderFor = meeting }
@@ -356,11 +360,12 @@ struct MeetingFolderManager: View {
                     Button("Leave unfiled") { choices[meeting.id] = nil }
                 }
             } label: {
-                Text(choices[meeting.id]?.name ?? "Choose folder")
+                // One line, shortened if needed: a folder name can be 80 characters.
+                Text(choices[meeting.id]?.folder.name ?? "Choose folder").lineLimit(1).truncationMode(.tail)
             }
-            .fixedSize()
-            .accessibilityLabel("Folder for \(meeting.title)")
-            .accessibilityValue(choices[meeting.id]?.name ?? "Unfiled")
+            .frame(minWidth: MinitiDesignSystem.Control.minimumIconHitSize, alignment: dynamic ? .leading : .trailing)
+            .accessibilityLabel("Folder for \(meeting.title), \(meeting.startTime.formatted(date: .abbreviated, time: .shortened))")
+            .accessibilityValue(choices[meeting.id]?.folder.name ?? "Unfiled")
             .accessibilityIdentifier("folders.unfiled.\(meeting.title)")
         }
     }
@@ -372,11 +377,29 @@ struct MeetingFolderManager: View {
         guard !name.isEmpty, name.utf16.count <= 80 else { return }
         // Reuse a folder with the same name rather than creating a twin.
         if let existing = choosableFolders.first(where: { $0.name.caseInsensitiveCompare(name) == .orderedSame }) {
-            choices[meeting.id] = existing; return
+            choices[meeting.id] = appState.manualFolderProposal(for: meeting, folder: existing); return
         }
         let folder = MeetingFolder(id: UUID(), name: name, localOnly: appState.privateModeEnabled || meeting.syncExcluded)
         newFolders.append(folder)
-        choices[meeting.id] = folder
+        choices[meeting.id] = appState.manualFolderProposal(for: meeting, folder: folder)
+    }
+
+    private func clearPreview() {
+        proposals = []; unfiled = []; choices = [:]; newFolders = []; applyIssue = nil; unfiledShown = Self.unfiledPageSize
+    }
+
+    private func applyPreview() {
+        let result = appState.applyFolderPreview(proposals, choices: unfiled.compactMap { choices[$0.id] })
+        if !result.undo.isEmpty { appState.folderUndo = result.undo }
+        guard !result.rejected.isEmpty else { clearPreview(); path.removeLast(); return }
+        // Keep what was refused on screen, with the user's own choices intact.
+        let refused = Set(result.rejected.map(\.id))
+        choices = choices.filter { refused.contains($0.key) }
+        refreshPreview()
+        let count = result.rejected.count
+        applyIssue = result.undo.isEmpty
+            ? "Nothing could be filed. Check the folder limit and try again."
+            : "\(count) \(count == 1 ? "meeting was" : "meetings were") not filed: they changed, or the folder limit was reached. They are still listed here."
     }
 
     private var editor: some View {
@@ -477,21 +500,23 @@ struct MeetingFolderManager: View {
             else {
                 guard let context = appState.modelContext else {
                     previewIssue = "Meeting history is not ready. Try again in a moment."
-                    proposals = []; unfiled = []; choices = [:]; newFolders = []; return
+                    clearPreview(); return
                 }
                 var fetch = FetchDescriptor<Meeting>(predicate: #Predicate { $0.endTime != nil }, sortBy: [SortDescriptor(\Meeting.startTime, order: .reverse)])
                 fetch.fetchLimit = 1000
                 source = try context.fetch(fetch)
             }
+            // A folder the user picked here outranks a new suggestion for the same meeting.
             proposals = appState.folderProposals(meetings: source, regroupManual: regroupManual, preview: true)
+                .filter { choices[$0.id] == nil }
             unfiled = appState.meetingsLeftUnfiled(in: source, after: proposals)
             // Keep choices for meetings that are still listed, and only the new folders they use.
             let listed = Set(unfiled.map(\.id))
             choices = choices.filter { listed.contains($0.key) }
-            newFolders = newFolders.filter { folder in choices.values.contains { $0.id == folder.id } }
-            previewIssue = nil
+            newFolders = newFolders.filter { folder in choices.values.contains { $0.folder.id == folder.id } }
+            previewIssue = nil; applyIssue = nil
         } catch {
-            proposals = []; unfiled = []; choices = [:]; newFolders = []
+            clearPreview()
             previewIssue = "Could not load meeting history. Try again."
         }
     }

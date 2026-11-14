@@ -272,6 +272,25 @@ extension AppState {
               previousManual: meeting.folderManual, previousLocalOnly: meeting.folderLocalOnly, folder: folder, manual: true)
     }
 
+    /// Apply from Preview: the rules' proposals plus the folders the user picked. A picked
+    /// folder that does not exist yet is swapped for a live folder of the same name, so a
+    /// folder that arrived by sync or was created meanwhile is not duplicated. Returns
+    /// what moved, for Undo, and what was refused (changed since, folder limit, save
+    /// failure) so the screen can keep it.
+    func applyFolderPreview(_ proposals: [FolderProposal], choices: [FolderProposal]) -> (undo: [FolderMove], rejected: [FolderProposal]) {
+        let picked = choices.map { choice -> FolderProposal in
+            guard meetingFolders.folder(choice.folder.id) == nil,
+                  let live = meetingFolders.active.first(where: { $0.name.caseInsensitiveCompare(choice.folder.name) == .orderedSame })
+            else { return choice }
+            return .init(owner: choice.owner, meeting: choice.meeting, title: choice.title, previousFolder: choice.previousFolder,
+                         previousManual: choice.previousManual, previousLocalOnly: choice.previousLocalOnly, folder: live, manual: true)
+        }
+        let all = proposals + picked
+        let undo = applyFolderProposals(all)
+        let moved = Set(undo.map { $0.meeting.id })
+        return (undo, all.filter { !moved.contains($0.id) })
+    }
+
     func applyFolderProposals(_ proposals: [FolderProposal]) -> [FolderMove] {
         var accepted: [FolderProposal] = []
         for proposal in proposals.prefix(1000) {

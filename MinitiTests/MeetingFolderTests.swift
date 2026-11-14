@@ -756,7 +756,51 @@ final class MeetingFolderTests: XCTestCase {
         XCTAssertEqual(next.first?.folder.id, people.id)
         XCTAssertEqual(state.meetingsLeftUnfiled(in: meetings, after: next).map(\.title), ["Dentist"])
         state.undoFolderMoves(undo)
-        XCTAssertTrue(meetings.allSatisfy { $0.folderID == nil && $0.folderManual != true }, "Undo restores every meeting")
+        XCTAssertTrue(meetings.allSatisfy { $0.folderID == nil && $0.folderManual == nil && $0.folderLocalOnly == nil },
+                      "Undo restores every membership field exactly")
+    }
+
+    func testPreviewApplyRefusesChangedMeetingsReusesSameNamedFoldersAndReportsWhatWasRefused() throws {
+        let container = try TestSupport.makeInMemoryContainer()
+        let state = AppState(); state.modelContext = container.mainContext; state.automaticFolderCreation = true
+        let meetings = ["Taylor Reed", "Dentist", "Jo Park"].map { Meeting(title: $0, endTime: Date()) }
+        meetings.forEach(container.mainContext.insert)
+        try container.mainContext.save()
+        // Two choices of a folder named in Preview, captured when chosen.
+        let staged = MeetingFolder(id: UUID(), name: "People")
+        let first = state.manualFolderProposal(for: meetings[0], folder: staged)
+        let second = state.manualFolderProposal(for: meetings[1], folder: staged)
+        let third = state.manualFolderProposal(for: meetings[2], folder: staged)
+        // Meanwhile a folder with that name arrives (sync, or the ordinary editor) and one
+        // meeting is filed elsewhere.
+        let arrived = MeetingFolder(id: UUID(), name: "people")
+        let customers = MeetingFolder(id: UUID(), name: "Customers")
+        XCTAssertTrue(state.meetingFolders.edit(arrived)); XCTAssertTrue(state.meetingFolders.edit(customers))
+        XCTAssertNotNil(state.moveMeeting(meetings[1], to: customers))
+        let result = state.applyFolderPreview([], choices: [first, second, third])
+        XCTAssertEqual(result.undo.count, 2)
+        XCTAssertEqual(result.rejected.map(\.title), ["Dentist"], "A meeting that changed since it was chosen is refused and reported")
+        XCTAssertEqual(meetings[1].folderID, customers.id, "The intervening move is kept")
+        XCTAssertEqual(meetings[0].folderID, arrived.id, "The live folder of the same name is used")
+        XCTAssertEqual(meetings[2].folderID, arrived.id)
+        XCTAssertEqual(state.meetingFolders.active.filter { $0.name.caseInsensitiveCompare("People") == .orderedSame }.count, 1, "No duplicate folder")
+        XCTAssertEqual(meetings[0].folderManual, true)
+    }
+
+    func testPreviewApplyAtTheFolderLimitKeepsTheRefusedChoice() throws {
+        let container = try TestSupport.makeInMemoryContainer()
+        let state = AppState(); state.modelContext = container.mainContext
+        for index in 0..<199 { XCTAssertTrue(state.meetingFolders.edit(.init(id: UUID(), name: "Folder \(index)"))) }
+        let meetings = ["Taylor Reed", "Dentist"].map { Meeting(title: $0, endTime: Date()) }
+        meetings.forEach(container.mainContext.insert)
+        try container.mainContext.save()
+        let choices = [state.manualFolderProposal(for: meetings[0], folder: .init(id: UUID(), name: "People")),
+                       state.manualFolderProposal(for: meetings[1], folder: .init(id: UUID(), name: "Health"))]
+        let result = state.applyFolderPreview([], choices: choices)
+        XCTAssertEqual(result.undo.count, 1)
+        XCTAssertEqual(result.rejected.map(\.title), ["Dentist"])
+        XCTAssertNil(meetings[1].folderID)
+        XCTAssertEqual(state.meetingFolders.active.count, 200)
     }
 
     func testOwnAddressesNeverCountAsAnotherParticipant() {

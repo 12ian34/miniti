@@ -3782,14 +3782,22 @@ final class AccountJourneys: XCTestCase {
         reveal(apply, attempts: 5)
         apply.clickOrTap()
         XCTAssertTrue(app.staticTexts.matching(updated).firstMatch.waitForNonExistence(timeout: 5))
-        let undo = app.buttons["Undo folder changes"].firstMatch
-        XCTAssertTrue(undo.waitForExistence(timeout: 5), app.debugDescription)
+        XCTAssertTrue(app.buttons["Undo folder changes"].firstMatch.waitForExistence(timeout: 5), app.debugDescription)
+        // History behind the sheet has an Undo with the same name; use the one in the sheet.
+        guard let undo = app.buttons.matching(identifier: "Undo folder changes").allElementsBoundByIndex.last(where: { $0.isHittable }) else {
+            return XCTFail("No hittable Undo\n\(app.debugDescription)")
+        }
+        // Undo restores everything: Preview offers the same six meetings again.
+        undo.clickOrTap()
+        XCTAssertTrue(app.buttons["Undo folder changes"].firstMatch.waitForNonExistence(timeout: 5))
+        app.buttons["folders.preview"].clickOrTap()
+        XCTAssertTrue(total.waitForExistence(timeout: 5), app.debugDescription)
         app.buttons["Close"].firstMatch.clickOrTap()
     }
 
     func testFoldersCanBeCreatedAndRenamedInHistory() {
         #if os(macOS)
-        // Mac shows History only once meetings exist; the folders fixture seeds four.
+        // Mac shows History only once meetings exist; the folders fixture seeds six.
         launch("folders")
         #else
         launch()
