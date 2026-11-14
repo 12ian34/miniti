@@ -352,9 +352,55 @@ enum MeetingSyncDocument {
             meeting.folderEditContentFingerprint == fingerprint(of: meeting, includingFolder: false)
     }
 
+    private static let contentIgnoredKeys: Set<String> = ["folder_id", "folder_manual", "updated_at", "created_at", "segments"]
+    /// Marks a content baseline made by `contentFingerprint`. A baseline without it was
+    /// written by 3.8.0 or 3.9.0 and is compared with `legacyContentFingerprint`.
+    static let contentFormPrefix = "c2:"
+
+    /// The document as the server stores it (`lib/syncDocument.ts`): a null or blank
+    /// `external_source` or `external_id` is absent, external ids are trimmed and cut,
+    /// the title is cut to 500 and a blank language is "en". A local document and the
+    /// copy that comes back from the server reduce to the same thing.
+    static func serverForm(_ document: [String: Any]) -> [String: Any] {
+        var result = document
+        for (key, limit) in [("external_source", 64), ("external_id", 512)] {
+            if let value = (result[key] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines), !value.isEmpty {
+                result[key] = javaScriptPrefix(value, limit)
+            } else { result.removeValue(forKey: key) }
+        }
+        if let title = result["title"] as? String { result["title"] = javaScriptPrefix(title, 500) }
+        let language = (result["language"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        result["language"] = language.isEmpty ? "en" : javaScriptPrefix(language, 16)
+        return result
+    }
+
+    /// JavaScript's `slice(0, n)` counts UTF-16 units, as the server does.
+    private static func javaScriptPrefix(_ text: String, _ limit: Int) -> String {
+        let units = Array(text.utf16)
+        return units.count <= limit ? text : String(decoding: units.prefix(limit), as: UTF16.self)
+    }
+
+    /// Content identity, the same for a local document and its server copy (3.10.0 SM1).
     static func contentFingerprint(document: [String: Any]) -> String {
-        let ignored: Set<String> = ["folder_id", "folder_manual", "updated_at", "created_at", "segments"]
-        return fnv1a(jsonString(document.filter { !ignored.contains($0.key) }) ?? "")
+        contentFormPrefix + fnv1a(jsonString(serverForm(document).filter { !contentIgnoredKeys.contains($0.key) }) ?? "")
+    }
+
+    /// The 3.8.0 and 3.9.0 identity: it hashed the document as given, so a local document
+    /// (explicit null external keys) and its server copy (keys absent) differed.
+    static func legacyContentFingerprint(document: [String: Any]) -> String {
+        fnv1a(jsonString(document.filter { !contentIgnoredKeys.contains($0.key) }) ?? "")
+    }
+
+    /// Whether `document` has the content a stored baseline describes. A current baseline
+    /// compares directly. An older one may have been taken from either form, so the
+    /// document is tried as given, as the server stores it, and as this device encodes it.
+    static func content(of document: [String: Any], matches baseline: String) -> Bool {
+        if baseline.hasPrefix(contentFormPrefix) { return contentFingerprint(document: document) == baseline }
+        var localForm = document
+        for key in ["external_source", "external_id"] where localForm[key] == nil { localForm[key] = NSNull() }
+        var withoutNulls = document
+        for key in ["external_source", "external_id"] where withoutNulls[key] is NSNull { withoutNulls.removeValue(forKey: key) }
+        return [document, localForm, withoutNulls, serverForm(document)].contains { legacyContentFingerprint(document: $0) == baseline }
     }
 
     static func folderFingerprint(document: [String: Any]) -> String {

@@ -48,6 +48,10 @@ final class FakeCloudTransport: CloudSyncTransport, @unchecked Sendable {
     var calls: [String] = []
     var respectsTaskCancellation = false
     var cancelNext = false
+    /// Store documents the way `/api/sync` does (`lib/syncDocument.ts`): null external keys
+    /// are dropped, external ids trimmed, the title cut to 500 and an empty language stored
+    /// as "en". Off by default so older tests keep their exact documents.
+    var appliesServerDocumentRules = false
     var failNext: CloudSyncError?
     /// An error the engine has no case for, to reach its last catch.
     var failNextUnknown: Error?
@@ -122,7 +126,18 @@ final class FakeCloudTransport: CloudSyncTransport, @unchecked Sendable {
 
     func putMeeting(id: UUID, baseRevision: Int, document data: Data, restoreDeleted: Bool = false) async throws -> CloudPutResult {
         calls.append("put"); await gate.wait("put"); try throwIfArmed()
-        let document = (try? JSONSerialization.jsonObject(with: data) as? [String: Any]) ?? [:]
+        var document = (try? JSONSerialization.jsonObject(with: data) as? [String: Any]) ?? [:]
+        if appliesServerDocumentRules {
+            for key in ["external_source", "external_id"] {
+                let limit = key == "external_source" ? 64 : 512
+                if let value = (document[key] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines), !value.isEmpty {
+                    document[key] = String(value.prefix(limit))
+                } else { document.removeValue(forKey: key) }
+            }
+            if let title = document["title"] as? String { document["title"] = String(title.prefix(500)) }
+            let language = (document["language"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            document["language"] = language.isEmpty ? "en" : String(language.prefix(16))
+        }
         if tier != "pro" { throw CloudSyncError.proRequired }
         if let title = document["title"] as? String, tooLargeTitles.contains(title) { return .tooLarge }
         let updatedAt = MeetingSyncDocument.date(document["updated_at"]) ?? Date()
@@ -1903,5 +1918,234 @@ final class CloudPrivacyAvailabilityTests: XCTestCase {
         XCTAssertEqual(MeetingCloudPrivacyPresentation.uploadStatus(pause: .notManaged), "This meeting can sync with a managed Pro account.")
         XCTAssertEqual(MeetingCloudPrivacyPresentation.uploadStatus(pause: .notPro), "This meeting can sync when this account has Pro.")
         XCTAssertEqual(MeetingCloudPrivacyPresentation.uploadStatus(pause: nil), "Waiting to put on the cloud")
+    }
+}
+
+/// 3.10.0 SM1: several devices on one account, against a transport that stores documents
+/// the way the server does. Before SM1.2 the merge compared a local-form hash with a
+/// server-form hash, so untouched content looked edited.
+@MainActor
+final class SyncMergeFormTests: XCTestCase {
+    @MainActor private final class Device {
+        let host: TestCloudHost
+        let engine = CloudSyncEngine()
+        init(_ transport: FakeCloudTransport, clock: @escaping () -> Date) throws {
+            host = try TestCloudHost()
+            engine.host = host; engine.transport = transport
+            engine.defaults = UserDefaults(suiteName: "SyncMergeFormTests-\(UUID().uuidString)")!
+            engine.sleep = { _ in }
+            engine.now = clock
+        }
+    }
+
+    private var transport: FakeCloudTransport!
+    private var clock = Date(timeIntervalSince1970: 1_790_100_000)
+    private var puts: Int { transport.calls.filter { $0 == "put" }.count }
+
+    override func setUp() async throws {
+        transport = FakeCloudTransport()
+        transport.appliesServerDocumentRules = true
+    }
+
+    private func device() throws -> Device { try Device(transport, clock: { [unowned self] in self.clock }) }
+
+    private func sync(_ device: Device, passes: Int = 2) async {
+        for _ in 0..<passes {
+            clock = clock.addingTimeInterval(10)
+            for _ in 0..<400 where device.engine.isRunning { try? await Task.sleep(nanoseconds: 5_000_000) }
+            await device.engine.sync(reason: "test")
+        }
+    }
+
+    private func record(on device: Device, title: String = "Planning call") -> UUID {
+        let meeting = Meeting(title: title, startTime: Date(timeIntervalSince1970: 1_790_000_000), endTime: Date(timeIntervalSince1970: 1_790_000_600))
+        meeting.segments.append(TranscriptSegment(text: "Hello", speaker: 0, timestamp: 0, isFinal: true))
+        device.host.context.insert(meeting)
+        try? device.host.context.save()
+        return meeting.id
+    }
+
+    private func move(_ id: UUID, on device: Device, to folder: UUID) {
+        guard let meeting = device.host.meeting(id) else { return XCTFail("missing meeting") }
+        MeetingSyncDocument.prepareFolderEdit(meeting)
+        meeting.folderID = folder; meeting.folderManual = true
+        try? device.host.context.save()
+    }
+
+    /// Two devices share one meeting, and B has merged it once (a folder change from A).
+    private func pairWithOneMerge() async throws -> (a: Device, b: Device, id: UUID) {
+        let a = try device(), b = try device()
+        let id = record(on: a)
+        await sync(a); await sync(b)
+        XCTAssertNotNil(b.host.meeting(id))
+        move(id, on: a, to: UUID())
+        await sync(a); await sync(b)
+        XCTAssertEqual(b.host.meeting(id)?.folderID, a.host.meeting(id)?.folderID)
+        return (a, b, id)
+    }
+
+    /// (a) A device that downloads two folder-only changes in a row uploads nothing.
+    func testFolderOnlyChangesFromAnotherDeviceNeverCauseAnUpload() async throws {
+        let (a, b, id) = try await pairWithOneMerge()
+        let before = puts
+        let folder = UUID()
+        move(id, on: a, to: folder)
+        await sync(a)
+        XCTAssertEqual(puts, before + 1, "A uploads its own folder change")
+        await sync(b); await sync(b)
+        XCTAssertEqual(b.host.meeting(id)?.folderID, folder)
+        XCTAssertEqual(puts, before + 1, "B only downloads: its content never changed")
+        await sync(a); await sync(b)
+        XCTAssertEqual(puts, before + 1, "And nothing echoes back")
+    }
+
+    /// (b) Three devices after one folder change, each seeing every revision separately.
+    func testThreeDevicesSettleAfterOneFolderChange() async throws {
+        let (a, b, id) = try await pairWithOneMerge()
+        let c = try device()
+        await sync(c)
+        let before = puts
+        let folder = UUID()
+        move(id, on: a, to: folder)
+        await sync(a, passes: 1)
+        var rounds = 0
+        var last = puts
+        repeat {
+            rounds += 1
+            last = puts
+            for device in [b, c, a] { await sync(device, passes: 1) }
+        } while puts != last && rounds < 20
+        XCTAssertLessThan(rounds, 20, "Did not settle in 20 rounds")
+        XCTAssertEqual(puts - before, 1, "Exactly one upload: the original change")
+        for device in [a, b, c] { XCTAssertEqual(device.host.meeting(id)?.folderID, folder) }
+    }
+
+    /// (c) A edits content; before B downloads it, B makes a later folder move. The result
+    /// is A's content with B's folder, on both devices.
+    func testALaterFolderMoveNeverReplacesAnotherDevicesNewerContent() async throws {
+        let (a, b, id) = try await pairWithOneMerge()
+        a.host.meeting(id)?.notes = "A's new notes"
+        try a.host.context.save()
+        await sync(a)
+        let folder = UUID()
+        move(id, on: b, to: folder)
+        await sync(b); await sync(a); await sync(b)
+        for device in [a, b] {
+            XCTAssertEqual(device.host.meeting(id)?.notes, "A's new notes")
+            XCTAssertEqual(device.host.meeting(id)?.folderID, folder)
+        }
+    }
+
+    /// (d) A edits content but has not uploaded; another device uploads a later folder-only
+    /// change first. A's refused upload must not discard A's own edit.
+    func testARefusedUploadKeepsTheDevicesOwnNewerContent() async throws {
+        let a = try device(), b = try device()
+        let id = record(on: a)
+        await sync(a); await sync(b)
+        a.host.meeting(id)?.notes = "A's new notes"
+        try a.host.context.save()
+        // A notices its edit (and stamps it) but cannot reach the server yet.
+        transport.failNext = .offline
+        await sync(a, passes: 1)
+        XCTAssertEqual(transport.rows[id]?.revision, 1)
+        let folder = UUID()
+        move(id, on: b, to: folder)
+        await sync(b)
+        await sync(a); await sync(b); await sync(a)
+        for device in [a, b] {
+            XCTAssertEqual(device.host.meeting(id)?.notes, "A's new notes")
+            XCTAssertEqual(device.host.meeting(id)?.folderID, folder)
+        }
+    }
+
+    /// Rewrites the stored baseline the way 3.9.0 left it: its own hash over the device's
+    /// local document (after an upload) or over the server's copy (after a merge).
+    private func leaveLegacyBaseline(_ id: UUID, on device: Device, fromServerCopy: Bool) {
+        guard let meeting = device.host.meeting(id) else { return XCTFail("missing meeting") }
+        let document = fromServerCopy ? (transport.rows[id]?.document ?? [:]) : MeetingSyncDocument.encode(meeting, segments: [])
+        meeting.syncedContentFingerprint = MeetingSyncDocument.legacyContentFingerprint(document: document)
+        try? device.host.context.save()
+    }
+
+    /// Upgrade from 3.9.0: baselines in both old forms, nothing dirty. The upgrade alone
+    /// uploads nothing, and the next folder change from another device is only downloaded.
+    func testUpgradeWithLegacyBaselinesUploadsNothingAndStaysClean() async throws {
+        for (aFromServer, bFromServer) in [(false, true), (true, false), (false, false), (true, true)] {
+            let (a, b, id) = try await pairWithOneMerge()
+            leaveLegacyBaseline(id, on: a, fromServerCopy: aFromServer)
+            leaveLegacyBaseline(id, on: b, fromServerCopy: bFromServer)
+            let before = puts
+            await sync(a); await sync(b)
+            XCTAssertEqual(puts, before, "The upgrade alone uploads nothing")
+            for device in [a, b] {
+                let meeting = try XCTUnwrap(device.host.meeting(id))
+                XCTAssertEqual(meeting.syncFingerprint, MeetingSyncDocument.fingerprint(of: meeting), "Still clean")
+                XCTAssertNil(meeting.syncStateRaw, "Not sent back to folder refresh")
+            }
+            let folder = UUID()
+            move(id, on: a, to: folder)
+            await sync(a); await sync(b); await sync(a); await sync(b)
+            XCTAssertEqual(puts, before + 1, "Only A's own change is uploaded (\(aFromServer), \(bFromServer))")
+            XCTAssertEqual(b.host.meeting(id)?.folderID, folder)
+            XCTAssertEqual(b.host.meeting(id)?.syncedContentFingerprint?.hasPrefix(MeetingSyncDocument.contentFormPrefix), true,
+                           "A merge replaces the old baseline with a current one")
+        }
+    }
+
+    /// A meeting that is dirty at upgrade still merges exactly: A's content, B's folder.
+    func testDirtyMeetingWithALegacyBaselineStillMergesExactly() async throws {
+        for fromServer in [false, true] {
+            let (a, b, id) = try await pairWithOneMerge()
+            leaveLegacyBaseline(id, on: a, fromServerCopy: !fromServer)
+            leaveLegacyBaseline(id, on: b, fromServerCopy: fromServer)
+            a.host.meeting(id)?.notes = "A's new notes"
+            try a.host.context.save()
+            await sync(a)
+            let folder = UUID()
+            move(id, on: b, to: folder)
+            await sync(b); await sync(a); await sync(b)
+            for device in [a, b] {
+                XCTAssertEqual(device.host.meeting(id)?.notes, "A's new notes", "legacy baseline from server copy: \(fromServer)")
+                XCTAssertEqual(device.host.meeting(id)?.folderID, folder)
+            }
+        }
+    }
+
+    /// Local and server forms of one document have the same content identity, across the
+    /// rules the server applies; real differences still show.
+    func testLocalAndServerFormsShareOneContentIdentity() async throws {
+        let a = try device()
+        let long = String(repeating: "é", count: 600)
+        let cases: [(String, (Meeting) -> Void)] = [
+            ("recorded", { _ in }),
+            ("imported", { $0.externalSource = "granola"; $0.externalID = "  doc-123  " }),
+            ("blank external id", { $0.externalSource = "granola"; $0.externalID = "   " }),
+            ("long title", { $0.title = long }),
+            ("empty language", { $0.language = "" }),
+            ("unknown extra keys", { $0.syncExtraJSON = #"{"future_field":{"a":[1,2,null]},"other":null}"# }),
+        ]
+        for (name, change) in cases {
+            let id = record(on: a, title: "Form \(name)")
+            let meeting = try XCTUnwrap(a.host.meeting(id))
+            change(meeting)
+            try a.host.context.save()
+            await sync(a)
+            let local = MeetingSyncDocument.encode(meeting, segments: [])
+            let stored = try XCTUnwrap(transport.rows[id]?.document, name)
+            XCTAssertEqual(MeetingSyncDocument.contentFingerprint(document: local), MeetingSyncDocument.contentFingerprint(document: stored), name)
+            if name == "recorded" {
+                // The common case: a 3.9.0 baseline taken from either form matches both forms.
+                for baseline in [local, stored].map(MeetingSyncDocument.legacyContentFingerprint(document:)) {
+                    XCTAssertTrue(MeetingSyncDocument.content(of: stored, matches: baseline))
+                    XCTAssertTrue(MeetingSyncDocument.content(of: local, matches: baseline))
+                }
+            }
+            var edited = stored; edited["notes"] = "changed"
+            XCTAssertNotEqual(MeetingSyncDocument.contentFingerprint(document: local), MeetingSyncDocument.contentFingerprint(document: edited), name)
+            XCTAssertFalse(MeetingSyncDocument.content(of: edited, matches: MeetingSyncDocument.legacyContentFingerprint(document: local)), name)
+            var moved = stored; moved["folder_id"] = UUID().uuidString.lowercased(); moved["folder_manual"] = true
+            XCTAssertEqual(MeetingSyncDocument.contentFingerprint(document: local), MeetingSyncDocument.contentFingerprint(document: moved), "A folder is not content")
+        }
+        XCTAssertFalse(MeetingSyncDocument.content(of: [:], matches: "legacy-content-unverified"))
     }
 }

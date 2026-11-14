@@ -1247,12 +1247,13 @@ final class CloudSyncEngine: ObservableObject {
               let baseContent = meeting.syncedContentFingerprint,
               let baseFolder = meeting.syncedFolderFingerprint else { return false }
         let local = MeetingSyncDocument.encode(meeting, segments: [])
-        let localContent = MeetingSyncDocument.contentFingerprint(document: local)
-        let remoteContent = MeetingSyncDocument.contentFingerprint(document: remote.document)
+        // The same content identity for both sides, whichever form the baseline was taken in.
+        let localChanged = !MeetingSyncDocument.content(of: local, matches: baseContent)
+        let remoteChanged = !MeetingSyncDocument.content(of: remote.document, matches: baseContent)
         let localFolder = MeetingSyncDocument.folderFingerprint(document: local)
         let remoteFolder = MeetingSyncDocument.folderFingerprint(document: remote.document)
         let newer = Self.isNewer(meeting.updatedAt ?? MeetingSyncDocument.fallbackUpdatedAt(meeting), than: remote.updatedAt)
-        let keepContent = meeting.cloudRestoreRequested || (localContent != baseContent && (remoteContent == baseContent || newer))
+        let keepContent = meeting.cloudRestoreRequested || (localChanged && (!remoteChanged || newer))
         let keepFolder = meeting.folderLocalOnly == true || (localFolder != baseFolder && (remoteFolder == baseFolder || newer))
         let folder = (meeting.folderID, meeting.folderManual, meeting.folderLocalOnly)
         let work = {
