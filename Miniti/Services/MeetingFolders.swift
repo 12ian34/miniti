@@ -25,6 +25,9 @@ final class MeetingFolderStore: ObservableObject {
         var folders: [MeetingFolder] = []
         var dirty: Set<UUID> = []
         var conflicts: [MeetingFolder] = []
+        /// Broad folders already checked for a 3.9.0 default name. Each is checked once,
+        /// so a name the user chooses afterwards, the old one included, is kept.
+        var legacyNamesChecked: Set<UUID>?
     }
     @Published private(set) var scope = Scope()
     @Published private(set) var issue: String?
@@ -69,16 +72,20 @@ final class MeetingFolderStore: ObservableObject {
     /// 3.10.0 renamed three broad folders to one word. An automatic folder that still has
     /// its 3.9.0 default name, description and no title rule is renamed in one catalog
     /// edit. Every device writes the same bytes, so two devices renaming at once merge
-    /// cleanly. Renamed, user-created and deleted folders are left alone.
+    /// cleanly. Renamed, user-created and deleted folders are left alone, and each folder
+    /// is checked once per catalog: whatever the user names it later stays.
     func renameLegacyDefaults() {
         guard readable else { return }
         var next = scope
-        for (index, folder) in scope.folders.enumerated() where !folder.deleted && folder.titleRule.isEmpty {
-            guard let category = FolderMatcher.Category.identifying(folder, owner: owner),
-                  folder.name == category.legacyName, folder.description == category.description else { continue }
+        var checked = next.legacyNamesChecked ?? []
+        for (index, folder) in scope.folders.enumerated() where !folder.deleted && !checked.contains(folder.id) {
+            guard let category = FolderMatcher.Category.identifying(folder, owner: owner), let legacy = category.legacyName else { continue }
+            checked.insert(folder.id)
+            guard folder.titleRule.isEmpty, folder.name == legacy, folder.description == category.description else { continue }
             next.folders[index].name = category.name
             next.dirty.insert(folder.id)
         }
+        if checked != (next.legacyNamesChecked ?? []) { next.legacyNamesChecked = checked }
         if next != scope { _ = save(next) }
     }
 

@@ -645,6 +645,34 @@ final class MeetingFolderTests: XCTestCase {
         let before = store.scope
         store.renameLegacyDefaults()
         XCTAssertEqual(store.scope, before, "Idempotent")
+        // The user prefers the old name after all. Each folder is checked once, so it stays.
+        var back = store.scope.folders.first { $0.id == product.id }!
+        back.name = "Product & engineering"
+        XCTAssertTrue(store.edit(back))
+        store.renameLegacyDefaults()
+        XCTAssertTrue(store.merge(store.scope.base))
+        XCTAssertEqual(name(product.id), "Product & engineering", "A deliberate rename back is kept")
+    }
+
+    func testLegacyRenameSurvivesRelaunchAndOwnerChange() throws {
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("folders-\(UUID().uuidString).json")
+        defer { try? FileManager.default.removeItem(at: url) }
+        let account = "account:abc"
+        let legacy = MeetingFolder(id: FolderMatcher.Category.planning.id(owner: account, localOnly: false),
+                                   name: "Business planning", description: FolderMatcher.Category.planning.description)
+        // A 3.9.0 catalog file has no record of the check.
+        let old = "{\"\(account)\":{\"base\":{\"revision\":3,\"folders\":[]},\"folders\":[\(String(data: try JSONEncoder().encode(legacy), encoding: .utf8)!)],\"dirty\":[],\"conflicts\":[]}}"
+        try Data(old.utf8).write(to: url)
+        let store = MeetingFolderStore(url: url)
+        XCTAssertTrue(store.active.isEmpty, "The local scope has nothing to rename")
+        store.selectOwner("abc")
+        XCTAssertEqual(store.active.map(\.name), ["Planning"])
+        XCTAssertTrue(store.scope.dirty.contains(legacy.id), "The rename is queued for sync")
+        var back = store.active[0]; back.name = "Business planning"
+        XCTAssertTrue(store.edit(back))
+        let reopened = MeetingFolderStore(url: url)
+        reopened.selectOwner("abc")
+        XCTAssertEqual(reopened.active.map(\.name), ["Business planning"], "The check is remembered across launches")
     }
 
     func testTwoDevicesRenamingAtOnceMergeWithoutConflict() {
@@ -729,6 +757,74 @@ final class MeetingFolderTests: XCTestCase {
         XCTAssertEqual(state.meetingsLeftUnfiled(in: meetings, after: next).map(\.title), ["Dentist"])
         state.undoFolderMoves(undo)
         XCTAssertTrue(meetings.allSatisfy { $0.folderID == nil && $0.folderManual != true }, "Undo restores every meeting")
+    }
+
+    func testOwnAddressesNeverCountAsAnotherParticipant() {
+        let state = AppState(); state.automaticFolderCreation = true
+        // A solo recording: the calendar lists an alternate address as a guest, and the
+        // speaker marked as me carries that same address.
+        let solo = (0..<2).map { _ -> Meeting in
+            let meeting = FolderFixture.meeting(.init("Voice memo", [FolderFixture.me, "sam.alt@harborlabs.io"], nil, nil))
+            meeting.speakerEmails = ["0": "sam.alt@harborlabs.io"]
+            meeting.selfSpeakerIDs = [0]
+            return meeting
+        }
+        let found = state.folderParticipants(of: solo[0])
+        XCTAssertEqual(found.own, ["harborlabs.io"])
+        XCTAssertTrue(found.others.isEmpty, "Both addresses are the user's")
+        XCTAssertTrue(state.folderProposals(meetings: solo, preview: true).isEmpty, "A solo recording is not a team meeting")
+    }
+
+    func testAClientIssuedAddressDoesNotMakeThatClientAColleagueEverywhere() {
+        let state = AppState(); state.automaticFolderCreation = true
+        var rows: [FolderFixture.Row] = (0..<3).map { _ in .init("Priya / Sam", [FolderFixture.me, FolderFixture.priya], nil, nil) }
+        rows += (0..<2).map { _ in .init("Lee Chen", [FolderFixture.me, FolderFixture.lee], nil, nil) }
+        let meetings = rows.map(FolderFixture.meeting)
+        // Once, the user joined from an address the client gave them.
+        let embedded = Meeting(title: "Workshop day", endTime: Date())
+        embedded.attendees = [
+            .init(email: "sam@acmefreight.com", displayName: nil, domain: "acmefreight.com", responseStatus: "accepted", isOrganizer: false, isSelf: true),
+            .init(email: FolderFixture.lee, displayName: nil, domain: "acmefreight.com", responseStatus: "accepted", isOrganizer: true, isSelf: false),
+        ]
+        func names(_ list: [Meeting]) -> [String: String] {
+            Dictionary(state.folderProposals(meetings: list, preview: true).map { ($0.title, $0.folder.name) }, uniquingKeysWith: { first, _ in first })
+        }
+        let result = names(meetings + [embedded])
+        XCTAssertEqual(result["Lee Chen"], "Customers", "Other meetings with the client stay customer meetings")
+        XCTAssertEqual(result["Priya / Sam"], "Team")
+        // Renaming the odd meeting to a title rule match changes nothing for the others.
+        embedded.title = "Standup"
+        XCTAssertEqual(names(meetings + [embedded])["Lee Chen"], "Customers")
+    }
+
+    func testAutomaticFilingLeavesAMeetingUnfiledWhenItsSummaryDisagreesWithWhoWasThere() throws {
+        let container = try TestSupport.makeInMemoryContainer()
+        let state = AppState(); state.modelContext = container.mainContext
+        state.automaticFolderCreation = true; state.automaticFolderFiling = true
+        let rows: [FolderFixture.Row] = [
+            .init("Ana Ruiz", [FolderFixture.me, FolderFixture.ana], FolderFixture.investorSummary, nil),
+            .init("Catch up", [FolderFixture.me, FolderFixture.ana], FolderFixture.investorSummary, nil),
+            .init("Lee Chen", [FolderFixture.me, FolderFixture.lee], nil, nil), .init("Dana and Sam", [FolderFixture.me, FolderFixture.dana], nil, nil),
+        ]
+        let meetings = rows.map(FolderFixture.meeting)
+        meetings.forEach(container.mainContext.insert)
+        try container.mainContext.save()
+        state.automaticallyFileMeeting(meetings[0])
+        XCTAssertNil(meetings[0].folderID, "An investor conversation is not filed under Customers just because Investors does not exist yet")
+        XCTAssertEqual(Set(state.folderProposals(meetings: meetings, preview: true).map { $0.folder.name }), ["Investors", "Customers"])
+        state.automaticallyFileMeeting(meetings[2])
+        XCTAssertEqual(state.meetingFolders.folder(meetings[2].folderID)?.name, "Customers")
+    }
+
+    func testInvestorTitlesKeepFilingIntoAnExistingPlanningFolderUntilInvestorsExists() {
+        let state = AppState(); state.automaticFolderCreation = false
+        let planning = FolderMatcher.Category.planning.folder(owner: state.meetingFolders.owner, localOnly: false)
+        XCTAssertTrue(state.meetingFolders.edit(planning))
+        let meeting = Meeting(title: "Investor update", endTime: Date())
+        XCTAssertEqual(state.folderProposals(meetings: [meeting]).first?.folder.id, planning.id, "As 3.9.0 did")
+        let investors = FolderMatcher.Category.investors.folder(owner: state.meetingFolders.owner, localOnly: false)
+        XCTAssertTrue(state.meetingFolders.edit(investors))
+        XCTAssertEqual(state.folderProposals(meetings: [meeting]).first?.folder.id, investors.id)
     }
 
     func testFolderFromPrivateMeetingEvidenceStaysOnThisDevice() {
