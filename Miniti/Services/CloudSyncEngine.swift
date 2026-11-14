@@ -747,7 +747,16 @@ final class CloudSyncEngine: ObservableObject {
                 for (meeting, fingerprint) in changed {
                     meeting.updatedAt = meeting.localFingerprint == nil && meeting.updatedAt == nil ? MeetingSyncDocument.fallbackUpdatedAt(meeting) : stamp
                     meeting.localFingerprint = fingerprint
-                    if meeting.syncStateRaw != "pending_folder_refresh" { meeting.syncStateRaw = nil }
+                    if meeting.syncStateRaw != "pending_folder_refresh" {
+                        // A skipped upload left the fingerprint of what it tried to send. Once
+                        // the skip is lifted that is not a synced state any more: forget it, so
+                        // changing the meeting back cannot make it look in step.
+                        if meeting.syncStateRaw?.hasPrefix("skipped_") == true {
+                            meeting.syncFingerprint = nil
+                            meeting.folderEditContentFingerprint = nil
+                        }
+                        meeting.syncStateRaw = nil
+                    }
                 }
             }) else {
                 scanFailed = true

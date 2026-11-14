@@ -68,6 +68,9 @@ final class FakeCloudTransport: CloudSyncTransport, @unchecked Sendable {
     var omitBatchRows = false
     var omittedBatchIDs: Set<UUID> = []
     var tooLargeTitles: Set<String> = []
+    /// Rejects a document by its notes, so one device's content is too large while
+    /// another device's copy of the same meeting uploads normally.
+    var tooLargeNotes: Set<String> = []
     var tier = "pro"
     var accountCloud: (enabled: Bool?, version: Int) = (nil, 0)
     /// Runs after a put is accepted and before the result is returned (simulates the user
@@ -149,6 +152,7 @@ final class FakeCloudTransport: CloudSyncTransport, @unchecked Sendable {
         reshapeStored?(&document)
         if tier != "pro" { throw CloudSyncError.proRequired }
         if let title = document["title"] as? String, tooLargeTitles.contains(title) { return .tooLarge }
+        if let notes = document["notes"] as? String, tooLargeNotes.contains(notes) { return .tooLarge }
         let updatedAt = MeetingSyncDocument.date(document["updated_at"]) ?? Date()
         let transcriptRevision = (document["transcript_revision"] as? NSNumber)?.intValue ?? 0
         if let source = document["external_source"] as? String, let external = document["external_id"] as? String {
@@ -2401,27 +2405,52 @@ final class SyncMergeFormTests: XCTestCase {
 
     /// A rejected upload (too large) stores the fingerprint of what it tried to send. That
     /// must not make the meeting look in step: its unsynced notes survive another
-    /// device's folder change.
+    /// device's folder change, also after the skip is lifted and the meeting is changed
+    /// and changed back.
     func testARejectedUploadIsNotInStepAndKeepsItsEdit() async throws {
-        let (a, b, id) = try await pairWithOneMerge()
+        for liftSkipFirst in [false, true] {
+            let (a, b, id) = try await pairWithOneMerge()
+            let meeting = try XCTUnwrap(a.host.meeting(id))
+            meeting.notes = "Long unsynced notes"
+            try a.host.context.save()
+            transport.tooLargeNotes = ["Long unsynced notes"]
+            await sync(a)
+            XCTAssertEqual(meeting.syncStateRaw, "skipped_too_large")
+            if liftSkipFirst {
+                // Pin, let a scan notice (which lifts the skip) while offline, then unpin:
+                // the content is again exactly what was rejected.
+                meeting.isPinned.toggle()
+                try a.host.context.save()
+                transport.failNext = .offline
+                await sync(a, passes: 1)
+                XCTAssertNil(meeting.syncStateRaw)
+                meeting.isPinned.toggle()
+                try a.host.context.save()
+            }
+            let folder = UUID()
+            let revision = try XCTUnwrap(transport.rows[id]?.revision)
+            move(id, on: b, to: folder)
+            await sync(b)
+            XCTAssertEqual(transport.rows[id]?.revision, revision + 1, "B's folder change reached the server")
+            XCTAssertEqual(transport.rows[id]?.document["folder_id"] as? String, folder.uuidString.lowercased())
+            await sync(a)
+            XCTAssertEqual(meeting.notes, "Long unsynced notes", "The rejected edit is still here (skip lifted first: \(liftSkipFirst))")
+            XCTAssertEqual(meeting.folderID, folder, "And B's folder arrived")
+            transport.tooLargeNotes = []
+        }
+        // A folder move made while skipped is no witness that only the folder changed.
+        let (a, _, id) = try await pairWithOneMerge()
         let meeting = try XCTUnwrap(a.host.meeting(id))
         meeting.notes = "Long unsynced notes"
         try a.host.context.save()
-        transport.tooLargeTitles = [meeting.title]
+        transport.tooLargeNotes = ["Long unsynced notes"]
         await sync(a)
-        XCTAssertEqual(meeting.syncStateRaw, "skipped_too_large")
-        let folder = UUID()
-        move(id, on: b, to: folder)
-        await sync(b)
-        await sync(a)
-        XCTAssertEqual(meeting.notes, "Long unsynced notes", "The rejected edit is still here")
-        // A folder move made while skipped is no witness either.
         MeetingSyncDocument.prepareFolderEdit(meeting)
         XCTAssertNil(meeting.folderEditContentFingerprint)
     }
 
-    /// A download cut short (sync switched off part way) does not count as up to date.
-    func testAnInterruptedDownloadLeavesTheDeviceBehind() async throws {
+    /// After a pause the next pass starts as a device that is behind and downloads first.
+    func testAPauseLeavesTheDeviceBehind() async throws {
         let (a, b, id) = try await pairWithOneMerge()
         move(id, on: b, to: UUID())
         await sync(b)
