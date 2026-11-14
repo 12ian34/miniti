@@ -380,9 +380,28 @@ enum MeetingSyncDocument {
         return units.count <= limit ? text : String(decoding: units.prefix(limit), as: UTF16.self)
     }
 
-    /// Content identity, the same for a local document and its server copy (3.10.0 SM1).
+    /// A cloud document as this app would encode it after reading it. Another client, or
+    /// the server, may leave out optional keys, store an empty MEDDPICC object or write
+    /// dates without fractional seconds; reading and re-encoding gives every such shape
+    /// the one this device uses for its own documents. The scratch meeting is never
+    /// inserted, and no segments are touched.
+    static func appleForm(_ decoded: Decoded, in context: ModelContext) -> [String: Any] {
+        let scratch = Meeting(id: decoded.id, title: decoded.document["title"] as? String ?? "new",
+                              startTime: date(decoded.document["start_time"]) ?? Date())
+        apply(decoded, to: scratch, in: context, replaceSegments: false)
+        return encode(scratch, segments: [])
+    }
+
+    /// Content identity of one of this device's own documents (3.10.0 SM1). It reduces the
+    /// document to the form the server stores, so it equals `contentFingerprint(remote:in:)`
+    /// of the copy that comes back.
     static func contentFingerprint(document: [String: Any]) -> String {
         contentFormPrefix + fnv1a(jsonString(serverForm(document).filter { !contentIgnoredKeys.contains($0.key) }) ?? "")
+    }
+
+    /// Content identity of a cloud document, in the same terms as a local one.
+    static func contentFingerprint(remote: Decoded, in context: ModelContext) -> String {
+        contentFingerprint(document: appleForm(remote, in: context))
     }
 
     /// The 3.8.0 and 3.9.0 identity: it hashed the document as given, so a local document
@@ -391,20 +410,52 @@ enum MeetingSyncDocument {
         fnv1a(jsonString(document.filter { !contentIgnoredKeys.contains($0.key) }) ?? "")
     }
 
-    /// Whether `document` has the content a stored baseline describes. A current baseline
-    /// compares directly. An older one may have been taken from either form, so the
-    /// document is tried as given, as the server stores it, and as this device encodes it.
-    static func content(of document: [String: Any], matches baseline: String) -> Bool {
-        if baseline.hasPrefix(contentFormPrefix) { return contentFingerprint(document: document) == baseline }
-        var localForm = document
-        for key in ["external_source", "external_id"] where localForm[key] == nil { localForm[key] = NSNull() }
-        var withoutNulls = document
-        for key in ["external_source", "external_id"] where withoutNulls[key] is NSNull { withoutNulls.removeValue(forKey: key) }
-        return [document, localForm, withoutNulls, serverForm(document)].contains { legacyContentFingerprint(document: $0) == baseline }
+    private static let externalKeys = ["external_source", "external_id"]
+    /// A document with the external keys as explicit nulls (local form) and absent (server form).
+    private static func externalKeyForms(_ document: [String: Any]) -> [[String: Any]] {
+        var nulls = document, absent = document
+        for key in externalKeys {
+            if nulls[key] == nil { nulls[key] = NSNull() }
+            if absent[key] is NSNull { absent.removeValue(forKey: key) }
+        }
+        return [document, nulls, absent]
+    }
+
+    /// Whether this device's document has the content a stored baseline describes. An
+    /// older baseline may have been taken from the local document or from the server's
+    /// copy of it, so both forms are tried.
+    static func content(of local: [String: Any], matches baseline: String) -> Bool {
+        if baseline.hasPrefix(contentFormPrefix) { return contentFingerprint(document: local) == baseline }
+        return (externalKeyForms(local) + externalKeyForms(serverForm(local))).contains { legacyContentFingerprint(document: $0) == baseline }
+    }
+
+    /// Whether a cloud document has the content a stored baseline describes. For an older
+    /// baseline the document is tried as received, as this app would encode it, and with
+    /// the values the server normalised (title cut, language default, external ids
+    /// trimmed) put back from `local` where they are the same value before normalising.
+    /// Without that last step an untouched long title would read as a remote edit.
+    static func content(ofRemote remote: Decoded, matches baseline: String, local: [String: Any], in context: ModelContext) -> Bool {
+        let apple = appleForm(remote, in: context)
+        if baseline.hasPrefix(contentFormPrefix) { return contentFingerprint(document: apple) == baseline }
+        var restored = apple
+        let normalisedLocal = serverForm(local), normalisedRemote = serverForm(apple)
+        for key in ["title", "language"] + externalKeys {
+            let mine = normalisedLocal[key] as? String, theirs = normalisedRemote[key] as? String
+            if mine == theirs { restored[key] = local[key] ?? NSNull() }
+        }
+        return (externalKeyForms(remote.document) + externalKeyForms(apple) + externalKeyForms(restored))
+            .contains { legacyContentFingerprint(document: $0) == baseline }
     }
 
     static func folderFingerprint(document: [String: Any]) -> String {
         (document["folder_id"] as? String ?? "").lowercased() + ":" + String(document["folder_manual"] as? Bool ?? false)
+    }
+
+    /// After a merge: the baseline is the cloud copy, in this device's terms.
+    static func recordSyncBaseline(_ meeting: Meeting, remote: Decoded, in context: ModelContext) {
+        recordSyncBaseline(meeting, document: appleForm(remote, in: context).merging(
+            ["folder_id": remote.document["folder_id"] ?? NSNull(), "folder_manual": remote.document["folder_manual"] ?? NSNull()],
+            uniquingKeysWith: { _, new in new }))
     }
 
     static func recordSyncBaseline(_ meeting: Meeting, document: [String: Any]? = nil) {

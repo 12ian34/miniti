@@ -52,6 +52,14 @@ final class FakeCloudTransport: CloudSyncTransport, @unchecked Sendable {
     /// are dropped, external ids trimmed, the title cut to 500 and an empty language stored
     /// as "en". Off by default so older tests keep their exact documents.
     var appliesServerDocumentRules = false
+    /// Rewrites a document before it is stored, to stand in for another client that writes
+    /// the same content in a different shape.
+    var reshapeStored: ((inout [String: Any]) -> Void)?
+    /// JavaScript `slice(0, n)`: UTF-16 units, as the server counts.
+    static func slice(_ text: String, _ limit: Int) -> String {
+        let units = Array(text.utf16)
+        return units.count <= limit ? text : String(decoding: units.prefix(limit), as: UTF16.self)
+    }
     var failNext: CloudSyncError?
     /// An error the engine has no case for, to reach its last catch.
     var failNextUnknown: Error?
@@ -131,13 +139,14 @@ final class FakeCloudTransport: CloudSyncTransport, @unchecked Sendable {
             for key in ["external_source", "external_id"] {
                 let limit = key == "external_source" ? 64 : 512
                 if let value = (document[key] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines), !value.isEmpty {
-                    document[key] = String(value.prefix(limit))
+                    document[key] = Self.slice(value, limit)
                 } else { document.removeValue(forKey: key) }
             }
-            if let title = document["title"] as? String { document["title"] = String(title.prefix(500)) }
+            if let title = document["title"] as? String { document["title"] = Self.slice(title, 500) }
             let language = (document["language"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-            document["language"] = language.isEmpty ? "en" : String(language.prefix(16))
+            document["language"] = language.isEmpty ? "en" : Self.slice(language, 16)
         }
+        reshapeStored?(&document)
         if tier != "pro" { throw CloudSyncError.proRequired }
         if let title = document["title"] as? String, tooLargeTitles.contains(title) { return .tooLarge }
         let updatedAt = MeetingSyncDocument.date(document["updated_at"]) ?? Date()
@@ -2112,40 +2121,146 @@ final class SyncMergeFormTests: XCTestCase {
     }
 
     /// Local and server forms of one document have the same content identity, across the
-    /// rules the server applies; real differences still show.
+    /// rules the server applies and the shapes another client may write; real differences
+    /// still show.
     func testLocalAndServerFormsShareOneContentIdentity() async throws {
         let a = try device()
-        let long = String(repeating: "é", count: 600)
+        let context = a.host.context
+        let long = String(repeating: "e\u{301}", count: 600) // decomposed: two UTF-16 units each
         let cases: [(String, (Meeting) -> Void)] = [
             ("recorded", { _ in }),
-            ("imported", { $0.externalSource = "granola"; $0.externalID = "  doc-123  " }),
+            ("imported", { $0.externalSource = "granola"; $0.externalID = "  doc-\($0.id.uuidString)  "; $0.importedAt = Date(timeIntervalSince1970: 1_790_000_100) }),
             ("blank external id", { $0.externalSource = "granola"; $0.externalID = "   " }),
             ("long title", { $0.title = long }),
             ("empty language", { $0.language = "" }),
             ("unknown extra keys", { $0.syncExtraJSON = #"{"future_field":{"a":[1,2,null]},"other":null}"# }),
         ]
-        for (name, change) in cases {
-            let id = record(on: a, title: "Form \(name)")
-            let meeting = try XCTUnwrap(a.host.meeting(id))
-            change(meeting)
-            try a.host.context.save()
-            await sync(a)
-            let local = MeetingSyncDocument.encode(meeting, segments: [])
-            let stored = try XCTUnwrap(transport.rows[id]?.document, name)
-            XCTAssertEqual(MeetingSyncDocument.contentFingerprint(document: local), MeetingSyncDocument.contentFingerprint(document: stored), name)
-            if name == "recorded" {
-                // The common case: a 3.9.0 baseline taken from either form matches both forms.
-                for baseline in [local, stored].map(MeetingSyncDocument.legacyContentFingerprint(document:)) {
-                    XCTAssertTrue(MeetingSyncDocument.content(of: stored, matches: baseline))
-                    XCTAssertTrue(MeetingSyncDocument.content(of: local, matches: baseline))
-                }
+        // Another client's shape for the same content: optional keys left out, an empty
+        // MEDDPICC object, no template, dates without fractional seconds.
+        let plain = ISO8601DateFormatter()
+        let otherClient: (inout [String: Any]) -> Void = { document in
+            document.removeValue(forKey: "external_url")
+            document["meddpicc"] = [String: Any]()
+            document["template"] = NSNull()
+            for key in ["insights_updated_at", "transcript_edited_at", "imported_at"] {
+                if let date = MeetingSyncDocument.date(document[key]) { document[key] = plain.string(from: date) }
             }
-            var edited = stored; edited["notes"] = "changed"
-            XCTAssertNotEqual(MeetingSyncDocument.contentFingerprint(document: local), MeetingSyncDocument.contentFingerprint(document: edited), name)
-            XCTAssertFalse(MeetingSyncDocument.content(of: edited, matches: MeetingSyncDocument.legacyContentFingerprint(document: local)), name)
-            var moved = stored; moved["folder_id"] = UUID().uuidString.lowercased(); moved["folder_manual"] = true
-            XCTAssertEqual(MeetingSyncDocument.contentFingerprint(document: local), MeetingSyncDocument.contentFingerprint(document: moved), "A folder is not content")
+        }
+        for reshape in [false, true] {
+            transport.reshapeStored = reshape ? otherClient : nil
+            for (name, change) in cases {
+                let label = "\(name), other client shape \(reshape)"
+                let id = record(on: a, title: "Form \(name)")
+                let meeting = try XCTUnwrap(a.host.meeting(id))
+                change(meeting)
+                try context.save()
+                await sync(a)
+                let local = MeetingSyncDocument.encode(meeting, segments: [])
+                var stored = try XCTUnwrap(transport.rows[id]?.document, label)
+                stored["segments"] = [[String: Any]]()
+                let remote = try XCTUnwrap(MeetingSyncDocument.decode(stored), label)
+                let current = MeetingSyncDocument.contentFingerprint(document: local)
+                XCTAssertEqual(current, MeetingSyncDocument.contentFingerprint(remote: remote, in: context), label)
+                // A 3.9.0 baseline, taken from the local document or from the server's copy.
+                for baseline in [local, stored].map(MeetingSyncDocument.legacyContentFingerprint(document:)) {
+                    XCTAssertTrue(MeetingSyncDocument.content(ofRemote: remote, matches: baseline, local: local, in: context), label)
+                }
+                XCTAssertTrue(MeetingSyncDocument.content(of: local, matches: MeetingSyncDocument.legacyContentFingerprint(document: local)), label)
+                if !reshape, !["imported", "long title", "empty language"].contains(name) {
+                    XCTAssertTrue(MeetingSyncDocument.content(of: local, matches: MeetingSyncDocument.legacyContentFingerprint(document: stored)), label)
+                }
+                var edited = stored; edited["notes"] = "changed"
+                let editedRemote = try XCTUnwrap(MeetingSyncDocument.decode(edited))
+                XCTAssertNotEqual(current, MeetingSyncDocument.contentFingerprint(remote: editedRemote, in: context), label)
+                for baseline in [local, stored].map(MeetingSyncDocument.legacyContentFingerprint(document:)) {
+                    XCTAssertFalse(MeetingSyncDocument.content(ofRemote: editedRemote, matches: baseline, local: local, in: context), label)
+                }
+                var retitled = stored; retitled["title"] = "Another title"
+                XCTAssertFalse(MeetingSyncDocument.content(ofRemote: try XCTUnwrap(MeetingSyncDocument.decode(retitled)),
+                                                           matches: MeetingSyncDocument.legacyContentFingerprint(document: local), local: local, in: context), label)
+                var moved = stored; moved["folder_id"] = UUID().uuidString.lowercased(); moved["folder_manual"] = true
+                XCTAssertEqual(current, MeetingSyncDocument.contentFingerprint(remote: try XCTUnwrap(MeetingSyncDocument.decode(moved)), in: context), "A folder is not content")
+            }
         }
         XCTAssertFalse(MeetingSyncDocument.content(of: [:], matches: "legacy-content-unverified"))
+    }
+
+    /// Another client stores the same content in a different shape. After merging it, a
+    /// later folder move still must not replace a newer edit (consequence 2).
+    func testAnotherClientsDocumentShapeIsNotAnEdit() async throws {
+        transport.reshapeStored = { document in
+            document.removeValue(forKey: "external_url")
+            document["meddpicc"] = [String: Any]()
+            document["template"] = NSNull()
+        }
+        let (a, b, id) = try await pairWithOneMerge()
+        let before = puts
+        a.host.meeting(id)?.notes = "A's new notes"
+        try a.host.context.save()
+        await sync(a)
+        let folder = UUID()
+        move(id, on: b, to: folder)
+        var trace: [String] = ["A edit \(puts - before)"]
+        for (name, device) in [("b", b), ("a", a), ("b", b), ("a", a)] { await sync(device); trace.append("\(name) \(puts - before)") }
+        for device in [a, b] {
+            XCTAssertEqual(device.host.meeting(id)?.notes, "A's new notes")
+            XCTAssertEqual(device.host.meeting(id)?.folderID, folder)
+        }
+        // A's edit, B's first attempt (refused, then merged) and B's move. Nothing after that.
+        XCTAssertEqual(trace, ["A edit 1", "b 3", "a 3", "b 3", "a 3"])
+    }
+
+    /// A 3.9.0 baseline taken before the server cut the title, trimmed the external id or
+    /// defaulted the language. The device's own offline edit must survive a later
+    /// folder-only change from another device.
+    func testLegacyBaselineOfANormalisedMeetingKeepsTheDevicesOwnEdit() async throws {
+        let changes: [(String, (Meeting) -> Void)] = [
+            ("long title", { $0.title = String(repeating: "x", count: 600) }),
+            ("untrimmed external id", { $0.externalSource = "granola"; $0.externalID = "  doc-123  " }),
+            ("empty language", { $0.language = "" }),
+        ]
+        for (name, change) in changes {
+            let a = try device(), b = try device()
+            let id = record(on: a, title: "Legacy \(name)")
+            change(try XCTUnwrap(a.host.meeting(id)))
+            try a.host.context.save()
+            await sync(a); await sync(b)
+            leaveLegacyBaseline(id, on: a, fromServerCopy: false)
+            a.host.meeting(id)?.notes = "A's new notes"
+            try a.host.context.save()
+            transport.failNext = .offline
+            await sync(a, passes: 1)
+            let folder = UUID()
+            move(id, on: b, to: folder)
+            await sync(b)
+            await sync(a); await sync(b); await sync(a)
+            for device in [a, b] {
+                XCTAssertEqual(device.host.meeting(id)?.notes, "A's new notes", name)
+                XCTAssertEqual(device.host.meeting(id)?.folderID, folder, name)
+            }
+        }
+    }
+
+    /// Three devices upgraded from 3.9.0 with one local-form and two server-form baselines,
+    /// the mix that could keep echoing. Each device sees each revision by itself.
+    func testThreeUpgradedDevicesWithMixedBaselinesSettle() async throws {
+        let (a, b, id) = try await pairWithOneMerge()
+        let c = try device()
+        await sync(c)
+        leaveLegacyBaseline(id, on: a, fromServerCopy: false)
+        leaveLegacyBaseline(id, on: b, fromServerCopy: true)
+        leaveLegacyBaseline(id, on: c, fromServerCopy: true)
+        let before = puts
+        let folder = UUID()
+        move(id, on: a, to: folder)
+        await sync(a, passes: 1)
+        var rounds = 0, last = puts
+        repeat {
+            rounds += 1; last = puts
+            for device in [c, b, a] { await sync(device, passes: 1) }
+        } while puts != last && rounds < 20
+        XCTAssertLessThan(rounds, 20, "Did not settle in 20 rounds")
+        XCTAssertEqual(puts - before, 1, "Exactly one upload: the original change")
+        for device in [a, b, c] { XCTAssertEqual(device.host.meeting(id)?.folderID, folder) }
     }
 }

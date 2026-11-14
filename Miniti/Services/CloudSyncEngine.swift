@@ -1249,7 +1249,7 @@ final class CloudSyncEngine: ObservableObject {
         let local = MeetingSyncDocument.encode(meeting, segments: [])
         // The same content identity for both sides, whichever form the baseline was taken in.
         let localChanged = !MeetingSyncDocument.content(of: local, matches: baseContent)
-        let remoteChanged = !MeetingSyncDocument.content(of: remote.document, matches: baseContent)
+        let remoteChanged = !MeetingSyncDocument.content(ofRemote: remote, matches: baseContent, local: local, in: context)
         let localFolder = MeetingSyncDocument.folderFingerprint(document: local)
         let remoteFolder = MeetingSyncDocument.folderFingerprint(document: remote.document)
         let newer = Self.isNewer(meeting.updatedAt ?? MeetingSyncDocument.fallbackUpdatedAt(meeting), than: remote.updatedAt)
@@ -1276,7 +1276,7 @@ final class CloudSyncEngine: ObservableObject {
                     meeting.folderID = folder.0; meeting.folderManual = folder.1; meeting.folderLocalOnly = folder.2
                 }
             }
-            MeetingSyncDocument.recordSyncBaseline(meeting, document: remote.document)
+            MeetingSyncDocument.recordSyncBaseline(meeting, remote: remote, in: context)
             if meeting.syncStateRaw == "pending_folder_refresh" { meeting.syncStateRaw = nil }
             meeting.folderEditContentFingerprint = nil
             if meeting.syncFingerprint != MeetingSyncDocument.fingerprint(of: meeting) {
