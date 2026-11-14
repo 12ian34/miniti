@@ -79,12 +79,34 @@ class SwiftFixtures(unittest.TestCase):
         Calendar & automation
         """
         let apple = "Open System Settings, Privacy & Security, Screen & System Audio Recording."
-        let mixed = "Privacy & Security and Terms & Conditions"
-        let code = a && b ? "Q&A" : "x=1&y=2"
+        let mixed = "System Settings, Privacy & Security and Terms & Conditions"
+        let compact = "Q&A"
+        let leading = "Sales &marketing"
+        let escaped = "Sales\t&\tmarketing"
+        let unrelated = "Privacy & Security tips"
         // "Comment & prose"
         '''
         found = self.findings(source)
-        self.assertEqual([(f.rule, f.line) for f in found], [('ampersand', 2), ('ampersand', 3), ('ampersand', 7)])
+        self.assertEqual([(f.rule, f.line) for f in found], [('ampersand', line) for line in (2, 3, 7, 8, 9, 10, 11)])
+
+    def test_ampersand_ignores_code_queries_and_entities(self):
+        source = r'''
+        let code = a && b ? "x" : "y"
+        Text("\(flags & mask)")
+        Text("Mask \(flags /* a & b */ & mask) set")
+        let query = "/sync/changes?since=\(since)&limit=\(limit)"
+        let link = "https://example.invalid/s?domain=\(domain)&sz=32"
+        let entity = "Fish &amp; chips &#38; peas"
+        let logic = "a && b"
+        url += "&time_min=\(timeMin)"
+        '''
+        self.assertEqual(self.findings(source), [])
+        nested = 'Text("Total \\(label("A & B")) done")'
+        self.assertEqual([(f.rule, f.signature) for f in self.findings(nested)], [('ampersand', '"A & B"')])
+
+    def test_copy_only_roots_check_ampersands_and_nothing_else(self):
+        source = 'Text("Stop & save").foregroundColor(Color(hex: "71717A")).focusable(false)'
+        self.assertEqual([f.rule for f in guard.scan('MinitiWatch/Views/Example.swift', source, copy_only=True)], ['ampersand'])
 
     def test_interpolation_code_is_checked_in_normal_and_raw_strings(self):
         fixtures = [

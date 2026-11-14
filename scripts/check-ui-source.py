@@ -13,6 +13,9 @@ import sys
 ROOT = Path(__file__).resolve().parent.parent
 BASELINE = Path('scripts/ui-source-baseline.json')
 SOURCE_ROOTS = ('Miniti', 'MinitiMobile')
+# Copy also lives in the Watch app, the Live Activity and shared sources. Only the
+# ampersand rule applies there; D18 owns their token adoption.
+COPY_ONLY_ROOTS = ('MinitiWatch', 'MinitiLiveActivity', 'Shared')
 # Palette definitions are the sole raw-colour authority in the main apps.
 EXCLUDED = {'Miniti/Models/ColorPalette.swift'}
 RULES = {'raw-color', 'focus-opt-out', 'small-fixed-font', 'local-chrome', 'ampersand'}
@@ -31,6 +34,7 @@ class Token:
     value: str
     offset: int
     kind: str = 'code'
+    prose: str = ''  # A string's literal text with interpolations removed.
 
 
 @dataclass(frozen=True)
@@ -83,7 +87,7 @@ def tokenize(source: str) -> list[Token]:
                 hashes, quote = string.group(1) or '', string.group(2)
                 end_mark, escape = quote + hashes, '\\' + hashes
                 i += len(string.group())
-                interpolations = []
+                interpolations, prose = [], []
                 while i < n and not source.startswith(end_mark, i):
                     if source.startswith(escape + '(', i):
                         opening = i + len(escape)
@@ -91,15 +95,18 @@ def tokenize(source: str) -> list[Token]:
                         interpolations += [Token('(', opening), *inner, Token(')', end)]
                         i = end + 1
                     elif source.startswith(escape, i):
+                        # An escaped tab or newline is whitespace in the rendered copy.
+                        prose.append(' ' if source[i + len(escape):i + len(escape) + 1] in 'tnr' else '')
                         i += len(escape) + 1
                     else:
+                        prose.append(source[i])
                         i += 1
                 if i >= n:
                     raise ValueError('unterminated string')
                 i += len(end_mark)
                 # The additional balanced tokens expose executable interpolation
                 # expressions without mistaking ordinary string prose for code.
-                out += [Token(source[start:i], start, 'string'), *interpolations]
+                out += [Token(source[start:i], start, 'string', ''.join(prose)), *interpolations]
                 continue
             char = source[i]
             if char in '([{':
@@ -156,18 +163,29 @@ def arguments(tokens):
     return result
 
 
-def scan(path: str, source: str) -> list[Finding]:
+def has_copy_ampersand(prose: str) -> bool:
+    """Product copy never uses an ampersand (3.10.0 CP1).
+
+    Every string literal is checked, since the guard cannot tell copy from other
+    strings. Interpolated code is not part of the text. Apple's pane names pass only
+    in a sentence that sends people to System Settings. Query strings (`a=1&b=2`),
+    character entities and `&&` are not copy.
+    """
+    if 'System Settings' in prose:
+        for allowed in APPLE_AMPERSAND_NAMES:
+            prose = prose.replace(allowed, '')
+    prose = re.sub(r'&&|&#?\w+;|(?<![\s&])&(?=\w+=)', '', prose)
+    return '&' in prose
+
+
+def scan(path: str, source: str, copy_only: bool = False) -> list[Finding]:
     tokens = tokenize(source)
     found = []
     for token in tokens:
-        # Product copy never uses an ampersand (3.10.0 CP1). Every string literal
-        # is checked, since the guard cannot tell copy from other strings.
-        if token.kind == 'string':
-            text = token.value
-            for allowed in APPLE_AMPERSAND_NAMES:
-                text = text.replace(allowed, '')
-            if re.search(r'\s&\s', text):
-                found.append(Finding(path, source.count('\n', 0, token.offset) + 1, 'ampersand', token.value))
+        if token.kind == 'string' and has_copy_ampersand(token.prose):
+            found.append(Finding(path, source.count('\n', 0, token.offset) + 1, 'ampersand', token.value))
+    if copy_only:
+        return found
     for start, end, name, args in calls(tokens):
         labels = arguments(args)
         rule = None
@@ -195,9 +213,11 @@ def scan(path: str, source: str) -> list[Finding]:
 
 def inventory(root: Path):
     findings, files = [], []
-    for directory in SOURCE_ROOTS:
+    for directory in SOURCE_ROOTS + COPY_ONLY_ROOTS:
         location = root / directory
         if not location.is_dir():
+            if directory in COPY_ONLY_ROOTS:
+                continue
             raise ValueError(f'missing source directory: {directory}')
         for path in sorted(location.rglob('*.swift')):
             relative = path.relative_to(root).as_posix()
@@ -207,7 +227,7 @@ def inventory(root: Path):
                 raise ValueError(f'symlinked source is not supported: {relative}')
             files.append(relative)
             try:
-                findings += scan(relative, path.read_text())
+                findings += scan(relative, path.read_text(), copy_only=directory in COPY_ONLY_ROOTS)
             except ValueError as error:
                 raise ValueError(f'{relative}: {error}') from error
     if not files:
@@ -225,7 +245,7 @@ def load_baseline(path: Path):
             raise ValueError('baseline entries must be objects')
         name, rule, signature, count = (entry.get(k) for k in ('path', 'rule', 'signature', 'count'))
         if (not isinstance(name, str) or not name.endswith('.swift') or '..' in Path(name).parts
-                or not any(name.startswith(d + '/') for d in SOURCE_ROOTS) or name in EXCLUDED
+                or not any(name.startswith(d + '/') for d in SOURCE_ROOTS + COPY_ONLY_ROOTS) or name in EXCLUDED
                 or rule not in RULES or not isinstance(signature, str) or not signature
                 or type(count) is not int or count < 1):
             raise ValueError(f'invalid baseline entry: {entry}')
