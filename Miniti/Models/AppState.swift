@@ -1232,10 +1232,8 @@ final class AppState: ObservableObject {
     private(set) var accountGeneration = 0
     /// Bumped by every email read and mutation; only the latest read may apply.
     var accountEmailSequence = 0
-    /// The account cloud switch value being written right now, if any (`pushCloudAccountFlag`).
-    var cloudFlagPushInFlight: Bool?
-    /// Counts account switch writes, so only the newest one may clear the pending mark.
-    var cloudFlagWriteSequence = 0
+    /// Sends account cloud switch writes one at a time, in order (`pushCloudAccountFlag`).
+    let cloudFlagWriter = AccountCloudSwitchWriter()
     var accountEmailLastLoaded: Date?
     var accountEmailInFlight = false
     /// One coalesced refresh waiting for the in-flight read or mutation to finish (F2).
@@ -11675,17 +11673,25 @@ final class AppState: ObservableObject {
         // credential while it was in flight, its cloud switch must not be applied to the new one.
         let askedAccount = cloudAccountID
         let askedGeneration = clientAuthManager.credentialGeneration
+        // Nothing from the answer is published before this check: a previous account's plan
+        // must not open or close this account's sync, and its "disabled" must not stick here.
+        let stillAsked = { [self] in
+            cloudAccountID == askedAccount && clientAuthManager.credentialGeneration == askedGeneration
+        }
         do {
-            usageInfo = try await minitiAPIService.checkUsage(deviceId: deviceId)
-            isDeviceDisabled = false
-            if cloudAccountID == askedAccount, clientAuthManager.credentialGeneration == askedGeneration {
+            let answer = try await minitiAPIService.checkUsage(deviceId: deviceId)
+            if stillAsked() {
+                usageInfo = answer
+                isDeviceDisabled = false
                 applyAccountCloudFlag()
             } else {
-                DebugLogger.shared.log(.app, "Usage answer for a previous account: cloud switch not applied")
+                DebugLogger.shared.log(.app, "Usage answer for a previous account ignored")
             }
         } catch MinitiAPIService.ServiceError.deviceDisabled {
-            isDeviceDisabled = true
-            DebugLogger.shared.log(.app, "Device disabled in managed mode")
+            if stillAsked() {
+                isDeviceDisabled = true
+                DebugLogger.shared.log(.app, "Device disabled in managed mode")
+            }
         } catch {
             DebugLogger.shared.log(.app, "Usage check FAILED: \(error.localizedDescription)")
         }

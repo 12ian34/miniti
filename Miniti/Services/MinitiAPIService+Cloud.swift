@@ -164,11 +164,11 @@ extension MinitiAPIService: CloudSyncTransport {
     }
 
     /// Run a cloud call, mapping the shared error codes; returns the status and parsed body.
-    private func cloudCall(_ request: URLRequest) async throws -> (Int, [String: Any]) {
+    private func cloudCall(_ request: URLRequest, expectedOwner: (account: String, generation: Int)? = nil) async throws -> (Int, [String: Any]) {
         let data: Data
         let response: URLResponse
         do {
-            (data, response) = try await send(request, preservingSignInCause: true)
+            (data, response) = try await send(request, expectedOwner: expectedOwner, preservingSignInCause: true)
         } catch let failure as SignInFailure {
             // Not reaching the server, a key that is locked for now and a server fault while
             // refreshing all mean the same to sync: wait and try again. Only the first is
@@ -324,6 +324,16 @@ extension MinitiAPIService: CloudSyncTransport {
         let body = try JSONSerialization.data(withJSONObject: ["enabled": enabled])
         let (status, json) = try await cloudCall(cloudRequest(path: "/account/cloud", method: "PUT", body: body))
         // A backend without the route (404) must leave the choice pending, not confirm it.
+        guard (200..<300).contains(status) else { throw CloudSyncError.server(code: "http_\(status)", status: status) }
+        return (json["version"] as? NSNumber)?.intValue ?? 0
+    }
+
+    /// The same write, refused before it is signed unless the device is still on `accountID`
+    /// with the same credential: a choice made for one account is never written to another.
+    func setAccountCloud(enabled: Bool, accountID: String, credentialGeneration: Int) async throws -> Int {
+        let body = try JSONSerialization.data(withJSONObject: ["enabled": enabled])
+        let (status, json) = try await cloudCall(cloudRequest(path: "/account/cloud", method: "PUT", body: body),
+                                                 expectedOwner: (accountID, credentialGeneration))
         guard (200..<300).contains(status) else { throw CloudSyncError.server(code: "http_\(status)", status: status) }
         return (json["version"] as? NSNumber)?.intValue ?? 0
     }

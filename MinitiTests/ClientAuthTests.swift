@@ -3304,6 +3304,65 @@ final class AccountEmailStateTests: XCTestCase {
         return outcome
     }
 
+    /// A usage answer describes the account that asked. One that arrives after the device
+    /// has moved to another account must change nothing: not the plan (which opens or closes
+    /// cloud sync), and not the "disabled" state (3.10.0 CS1.4).
+    func testAUsageAnswerForThePreviousAccountIsIgnored() async throws {
+        let app = await makeApp(account: "acct_a")
+        app.managedEnrollmentTestResult = true
+        let originalHandler = try XCTUnwrap(StubURLProtocol.handler)
+        let usageStarted = expectation(description: "account A usage answer is held")
+        let release = DispatchSemaphore(value: 0)
+        defer { release.signal() }
+        let pro = Data(#"{"minutes_used": 10, "minutes_limit": 5000, "resets_at": "2026-12-01T00:00:00Z", "tier": "pro", "cloud_enabled": true, "cloud_version": 9}"#.utf8)
+        let free = Data(#"{"minutes_used": 3, "minutes_limit": 500, "resets_at": "2026-12-01T00:00:00Z", "tier": "free"}"#.utf8)
+        StubURLProtocol.handler = { request in
+            guard request.url?.path.hasSuffix("/usage") == true else { return originalHandler(request) }
+            if request.value(forHTTPHeaderField: "Authorization") == "Bearer acct_a" {
+                usageStarted.fulfill()
+                XCTAssertEqual(release.wait(timeout: .now() + 10), .success, "test did not release the usage answer")
+                return (200, pro)
+            }
+            return (200, free)
+        }
+        let stale = Task { await app.refreshUsage() }
+        await fulfillment(of: [usageStarted], timeout: 5)
+        switchAccount(app, to: "acct_b")
+        await app.refreshUsage()
+        XCTAssertEqual(app.usageInfo?.tier, "free")
+        release.signal()
+        await stale.value
+        XCTAssertEqual(app.clientAuthStatus.accountID, "acct_b")
+        XCTAssertEqual(app.usageInfo?.tier, "free", "A's Pro answer must not become B's plan")
+        XCTAssertEqual(app.usageInfo?.minutesUsed, 3)
+        XCTAssertFalse(app.isPro)
+        XCTAssertFalse(app.isLoadingUsage)
+    }
+
+    func testADisabledAnswerForThePreviousAccountIsIgnored() async throws {
+        let app = await makeApp(account: "acct_a")
+        app.managedEnrollmentTestResult = true
+        let originalHandler = try XCTUnwrap(StubURLProtocol.handler)
+        let usageStarted = expectation(description: "account A usage answer is held")
+        let release = DispatchSemaphore(value: 0)
+        defer { release.signal() }
+        StubURLProtocol.handler = { request in
+            guard request.url?.path.hasSuffix("/usage") == true else { return originalHandler(request) }
+            if request.value(forHTTPHeaderField: "Authorization") == "Bearer acct_a" {
+                usageStarted.fulfill()
+                XCTAssertEqual(release.wait(timeout: .now() + 10), .success, "test did not release the usage answer")
+                return (403, Data(#"{"error": "device_disabled", "message": "This device has been disabled"}"#.utf8))
+            }
+            return (200, Data(#"{"minutes_used": 3, "minutes_limit": 500, "resets_at": "2026-12-01T00:00:00Z", "tier": "free"}"#.utf8))
+        }
+        let stale = Task { await app.refreshUsage() }
+        await fulfillment(of: [usageStarted], timeout: 5)
+        switchAccount(app, to: "acct_b")
+        release.signal()
+        await stale.value
+        XCTAssertFalse(app.isDeviceDisabled, "A's disabled answer must not stick to B")
+    }
+
     func testASwitchDuringTheReconcilingReadMakesTheWriteStale() async throws {
         let app = await makeApp(account: "acct_a")
         let outcome = try await switchDuringReconciliation(app) {

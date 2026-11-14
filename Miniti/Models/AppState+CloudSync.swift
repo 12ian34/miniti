@@ -219,7 +219,7 @@ extension AppState: CloudSyncHost {
             // Marked pending now, not when the write starts: a usage check that lands in
             // between must see this device's own choice and leave it alone.
             if let account = cloudAccountID { UserDefaults.standard.set(on, forKey: Self.cloudFlagPendingKey(account)) }
-            Task { await pushCloudAccountFlag(on) }
+            pushCloudAccountFlag(on)
         }
     }
 
@@ -291,9 +291,8 @@ extension AppState: CloudSyncHost {
         case .acknowledge:
             defaults.set(version, forKey: Self.cloudFlagVersionKey(account))
         case .push(let on):
-            // Several usage checks finish close together at launch. One write is enough.
-            guard cloudFlagPushInFlight != on else { break }
-            Task { await pushCloudAccountFlag(on) }
+            // Several usage checks finish close together at launch. The writer sends one.
+            pushCloudAccountFlag(on)
         case .follow(let on):
             defaults.set(version, forKey: Self.cloudFlagVersionKey(account))
             setCloudSyncEnabled(on, source: .account)
@@ -304,27 +303,43 @@ extension AppState: CloudSyncHost {
 
     /// Write this device's choice to the account. The choice stays marked pending until the
     /// server confirms it, and `applyAccountCloudFlag` retries a pending one at every usage check.
-    func pushCloudAccountFlag(_ on: Bool) async {
+    ///
+    /// The account and credential are fixed here, when the choice is made, not when the
+    /// request is sent: a write queued for one account is never sent as another. Writes go
+    /// out one at a time in the order the choices were made (`AccountCloudSwitchWriter`),
+    /// so the server cannot apply an older choice after a newer one.
+    func pushCloudAccountFlag(_ on: Bool) {
         guard appMode == .managed, let account = cloudAccountID else { return }
-        let defaults = UserDefaults.standard
-        defaults.set(on, forKey: Self.cloudFlagPendingKey(account))
+        UserDefaults.standard.set(on, forKey: Self.cloudFlagPendingKey(account))
         guard let api = minitiAPIService else { return }
-        cloudFlagPushInFlight = on
-        cloudFlagWriteSequence += 1
-        let sequence = cloudFlagWriteSequence
-        defer { if cloudFlagWriteSequence == sequence { cloudFlagPushInFlight = nil } }
-        do {
-            let version = try await api.setAccountCloud(enabled: on)
-            // Only the newest write may confirm. A later flip keeps its own pending mark, and
-            // so does a later write of the same value that is still in flight or has failed:
-            // on, off, on with the last write lost must not be confirmed by the first "on".
-            if cloudFlagWriteSequence == sequence, cloudAccountID == account,
-               (defaults.object(forKey: Self.cloudFlagPendingKey(account)) as? Bool) == on {
-                defaults.removeObject(forKey: Self.cloudFlagPendingKey(account))
-                defaults.set(version, forKey: Self.cloudFlagVersionKey(account))
+        let owner = AccountCloudSwitchWriter.Owner(account: account, generation: clientAuthManager.credentialGeneration)
+        cloudFlagWriter.request(on, owner: owner,
+            currentOwner: { [weak self] in
+                guard let self, self.appMode == .managed, let account = self.cloudAccountID else { return nil }
+                return .init(account: account, generation: self.clientAuthManager.credentialGeneration)
+            },
+            write: { on, owner in
+                try await api.setAccountCloud(enabled: on, accountID: owner.account, credentialGeneration: owner.generation)
+            },
+            finished: { [weak self] outcome in self?.cloudFlagWriteFinished(outcome) })
+    }
+
+    private func cloudFlagWriteFinished(_ outcome: AccountCloudSwitchWriter.Outcome) {
+        switch outcome {
+        case .confirmed(let on, let owner, let version):
+            let defaults = UserDefaults.standard
+            // The pending mark is this device's latest choice. It is cleared only by the
+            // write that carried that same choice, with nothing newer waiting behind it.
+            if (defaults.object(forKey: Self.cloudFlagPendingKey(owner.account)) as? Bool) == on {
+                defaults.removeObject(forKey: Self.cloudFlagPendingKey(owner.account))
+                defaults.set(version, forKey: Self.cloudFlagVersionKey(owner.account))
             }
             DebugLogger.shared.log(.app, "Cloud switch \(on ? "on" : "off") written to the account (version \(version))")
-        } catch {
+        case .superseded(let on):
+            DebugLogger.shared.log(.app, "Cloud switch \(on ? "on" : "off") written, with a newer choice still to send")
+        case .dropped:
+            DebugLogger.shared.log(.app, "Cloud switch write dropped: the account or sign-in changed before it was sent")
+        case .failed(let error):
             DebugLogger.shared.log(.app, "Cloud switch not written to the account yet (\(error)); retrying at the next usage check", level: .warning)
         }
     }
@@ -798,5 +813,89 @@ extension AppState {
         default:
             return "Could not check this account's email."
         }
+    }
+}
+
+/// Sends the account's cloud switch one write at a time, in the order the choices were made.
+///
+/// Two overlapping requests can reach the server in either order, and the server gives the
+/// later arrival the higher version, so "on then off" could end as "on" for every device.
+/// Here a newer choice waits for the write before it, and only the latest waiting choice is
+/// kept. Each choice carries the account and credential it was made under; if either has
+/// changed by the time it would be sent or confirmed, it is dropped, never sent as the
+/// account the device is on now.
+@MainActor
+final class AccountCloudSwitchWriter {
+    struct Owner: Equatable {
+        let account: String
+        let generation: Int
+    }
+
+    enum Outcome {
+        /// Written, with nothing newer waiting: the caller may clear its pending mark.
+        case confirmed(on: Bool, owner: Owner, version: Int)
+        /// Written, but a newer choice is waiting and goes next.
+        case superseded(on: Bool)
+        /// Not sent, or its answer ignored: the account or credential changed.
+        case dropped
+        case failed(Error)
+    }
+
+    private struct Intent {
+        let on: Bool
+        let owner: Owner
+        let currentOwner: () -> Owner?
+        let write: (Bool, Owner) async throws -> Int
+        let finished: (Outcome) -> Void
+    }
+
+    private var sending: (on: Bool, owner: Owner)?
+    private var waiting: Intent?
+
+    /// The value being written or waiting to be, for diagnostics and tests.
+    var latestValue: Bool? { waiting?.on ?? sending?.on }
+
+    /// Ask for `on` to be written for `owner`. Returns at once; the same value already on
+    /// its way for the same owner is not sent twice.
+    func request(
+        _ on: Bool, owner: Owner,
+        currentOwner: @escaping () -> Owner?,
+        write: @escaping (Bool, Owner) async throws -> Int,
+        finished: @escaping (Outcome) -> Void
+    ) {
+        if let waiting {
+            if waiting.on == on, waiting.owner == owner { return }
+        } else if let sending, sending.on == on, sending.owner == owner {
+            return
+        }
+        // Reserved before any suspension, so two callers in the same turn share one write.
+        waiting = Intent(on: on, owner: owner, currentOwner: currentOwner, write: write, finished: finished)
+        guard sending == nil else { return }
+        sending = (on, owner)
+        Task { await drain() }
+    }
+
+    private func drain() async {
+        while let intent = waiting {
+            waiting = nil
+            sending = (intent.on, intent.owner)
+            guard intent.currentOwner() == intent.owner else {
+                intent.finished(.dropped)
+                continue
+            }
+            do {
+                let version = try await intent.write(intent.on, intent.owner)
+                if intent.currentOwner() != intent.owner {
+                    intent.finished(.dropped)
+                } else if waiting != nil {
+                    intent.finished(.superseded(on: intent.on))
+                } else {
+                    intent.finished(.confirmed(on: intent.on, owner: intent.owner, version: version))
+                }
+            } catch {
+                intent.finished(.failed(error))
+            }
+        }
+        sending = nil
     }
 }

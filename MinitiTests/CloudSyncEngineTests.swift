@@ -2477,3 +2477,144 @@ final class SyncMergeFormTests: XCTestCase {
         XCTAssertEqual(order.filter { $0 == "put" }.count, 1, "One upload, accepted first time")
     }
 }
+
+/// The account cloud switch is written one request at a time, in the order the choices were
+/// made, and only for the account each choice was made under (3.10.0 CS1.4).
+@MainActor
+final class AccountCloudSwitchWriterTests: XCTestCase {
+    private typealias Owner = AccountCloudSwitchWriter.Owner
+
+    /// A server stand-in whose writes finish only when the test releases them.
+    @MainActor
+    private final class Server {
+        var received: [String] = []
+        var outcomes: [String] = []
+        var current: Owner? = Owner(account: "A", generation: 1)
+        var failNext = false
+        private var gates: [CheckedContinuation<Void, Never>] = []
+        private var version = 0
+
+        func write(_ on: Bool, _ owner: Owner) async throws -> Int {
+            received.append("\(owner.account):\(on ? "on" : "off")")
+            await withCheckedContinuation { gates.append($0) }
+            if failNext { failNext = false; throw URLError(.timedOut) }
+            version += 1
+            return version
+        }
+
+        func release() async {
+            for _ in 0..<50 where gates.isEmpty { await Task.yield() }
+            XCTAssertFalse(gates.isEmpty, "a write was expected to be in flight")
+            if !gates.isEmpty { gates.removeFirst().resume() }
+            for _ in 0..<20 { await Task.yield() }
+        }
+
+        func note(_ outcome: AccountCloudSwitchWriter.Outcome) {
+            switch outcome {
+            case .confirmed(let on, let owner, let version): outcomes.append("confirmed \(owner.account):\(on ? "on" : "off") v\(version)")
+            case .superseded(let on): outcomes.append("superseded \(on ? "on" : "off")")
+            case .dropped: outcomes.append("dropped")
+            case .failed: outcomes.append("failed")
+            }
+        }
+    }
+
+    private func request(_ writer: AccountCloudSwitchWriter, _ server: Server, _ on: Bool, owner: Owner? = nil) {
+        writer.request(on, owner: owner ?? server.current!,
+                       currentOwner: { server.current },
+                       write: { try await server.write($0, $1) },
+                       finished: { server.note($0) })
+    }
+
+    private func settle() async { for _ in 0..<20 { await Task.yield() } }
+
+    func testALaterChoiceWaitsForTheWriteBeforeIt() async {
+        let writer = AccountCloudSwitchWriter(), server = Server()
+        request(writer, server, true)
+        await settle()
+        request(writer, server, false)
+        await settle()
+        // The second write has not been sent: the server cannot apply them out of order.
+        XCTAssertEqual(server.received, ["A:on"])
+        XCTAssertEqual(writer.latestValue, false)
+        await server.release()
+        XCTAssertEqual(server.received, ["A:on", "A:off"])
+        XCTAssertEqual(server.outcomes, ["superseded on"], "the older write must not confirm")
+        await server.release()
+        XCTAssertEqual(server.outcomes, ["superseded on", "confirmed A:off v2"])
+        XCTAssertNil(writer.latestValue)
+    }
+
+    func testTheSameChoiceIsSentOnce() async {
+        let writer = AccountCloudSwitchWriter(), server = Server()
+        // Several usage checks finishing in the same turn at launch.
+        request(writer, server, true)
+        request(writer, server, true)
+        await settle()
+        request(writer, server, true)
+        await server.release()
+        await settle()
+        XCTAssertEqual(server.received, ["A:on"])
+        XCTAssertEqual(server.outcomes, ["confirmed A:on v1"])
+    }
+
+    func testOnlyTheLatestWaitingChoiceIsSent() async {
+        let writer = AccountCloudSwitchWriter(), server = Server()
+        request(writer, server, true)
+        await settle()
+        request(writer, server, false)
+        request(writer, server, true)
+        await server.release()
+        await server.release()
+        XCTAssertEqual(server.received, ["A:on", "A:on"], "the off in the middle was replaced before it was sent")
+        XCTAssertEqual(server.outcomes, ["superseded on", "confirmed A:on v2"])
+    }
+
+    func testAChoiceIsNeverSentAsAnotherAccount() async {
+        let writer = AccountCloudSwitchWriter(), server = Server()
+        let a = Owner(account: "A", generation: 1)
+        // The choice is made on A; the device has moved to B before the write is sent.
+        server.current = Owner(account: "B", generation: 2)
+        request(writer, server, true, owner: a)
+        await settle()
+        XCTAssertEqual(server.received, [], "nothing may be written with B's sign-in")
+        XCTAssertEqual(server.outcomes, ["dropped"])
+
+        // The same account with a new credential is a different owner too.
+        server.current = Owner(account: "A", generation: 2)
+        request(writer, server, true, owner: a)
+        await settle()
+        XCTAssertEqual(server.received, [])
+        XCTAssertEqual(server.outcomes, ["dropped", "dropped"])
+    }
+
+    func testAnAnswerThatArrivesAfterAnAccountChangeConfirmsNothing() async {
+        let writer = AccountCloudSwitchWriter(), server = Server()
+        request(writer, server, true)
+        await settle()
+        server.current = Owner(account: "B", generation: 2)
+        await server.release()
+        XCTAssertEqual(server.received, ["A:on"])
+        XCTAssertEqual(server.outcomes, ["dropped"])
+
+        // B's own choice still goes out afterwards.
+        request(writer, server, false)
+        await server.release()
+        XCTAssertEqual(server.received, ["A:on", "B:off"])
+        XCTAssertEqual(server.outcomes, ["dropped", "confirmed B:off v2"])
+    }
+
+    func testAFailedWriteConfirmsNothingAndTheNextOneStillRuns() async {
+        let writer = AccountCloudSwitchWriter(), server = Server()
+        server.failNext = true
+        request(writer, server, true)
+        await server.release()
+        XCTAssertEqual(server.outcomes, ["failed"])
+        XCTAssertNil(writer.latestValue)
+        // The pending mark stays with the caller, and the next usage check asks again.
+        request(writer, server, true)
+        await server.release()
+        XCTAssertEqual(server.received, ["A:on", "A:on"])
+        XCTAssertEqual(server.outcomes, ["failed", "confirmed A:on v1"])
+    }
+}
