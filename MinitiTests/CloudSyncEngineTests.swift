@@ -2263,4 +2263,52 @@ final class SyncMergeFormTests: XCTestCase {
         XCTAssertEqual(puts - before, 1, "Exactly one upload: the original change")
         for device in [a, b, c] { XCTAssertEqual(device.host.meeting(id)?.folderID, folder) }
     }
+
+    /// After the upgrade's first pass, a 3.9.0 baseline is in the current form, so a later
+    /// offline rename of a title the server had cut is still recognised as this device's edit.
+    func testRenamingATitleTheServerCutSurvivesALaterFolderChangeElsewhere() async throws {
+        let a = try device(), b = try device()
+        let id = record(on: a, title: String(repeating: "x", count: 600))
+        await sync(a); await sync(b)
+        leaveLegacyBaseline(id, on: a, fromServerCopy: false)
+        let before = puts
+        await sync(a, passes: 1) // the first pass after upgrading
+        XCTAssertEqual(puts, before, "Rewriting a baseline uploads nothing")
+        XCTAssertEqual(a.host.meeting(id)?.syncedContentFingerprint?.hasPrefix(MeetingSyncDocument.contentFormPrefix), true)
+        a.host.meeting(id)?.title = "Renamed by A"
+        try a.host.context.save()
+        transport.failNext = .offline
+        await sync(a, passes: 1)
+        let folder = UUID()
+        move(id, on: b, to: folder)
+        await sync(b)
+        await sync(a); await sync(b); await sync(a)
+        for device in [a, b] {
+            XCTAssertEqual(device.host.meeting(id)?.title, "Renamed by A")
+            XCTAssertEqual(device.host.meeting(id)?.folderID, folder)
+        }
+    }
+
+    /// B's 3.9.0 baseline was taken from a copy in another client's shape, which none of
+    /// B's own forms reproduces. B has not touched the content, so A's newer notes win
+    /// even though B's folder move is later.
+    func testAnOldBaselineInAnotherClientsShapeDoesNotMakeUntouchedContentWin() async throws {
+        let (a, b, id) = try await pairWithOneMerge()
+        var sparse = try XCTUnwrap(transport.rows[id]?.document)
+        sparse.removeValue(forKey: "external_url"); sparse["meddpicc"] = [String: Any](); sparse["template"] = NSNull()
+        let meeting = try XCTUnwrap(b.host.meeting(id))
+        meeting.syncedContentFingerprint = MeetingSyncDocument.legacyContentFingerprint(document: sparse)
+        try b.host.context.save()
+        XCTAssertNil(MeetingSyncDocument.currentContentBaseline(replacingLegacy: meeting), "No local form matches it")
+        a.host.meeting(id)?.notes = "A's new notes"
+        try a.host.context.save()
+        await sync(a)
+        let folder = UUID()
+        move(id, on: b, to: folder)
+        await sync(b); await sync(a); await sync(b)
+        for device in [a, b] {
+            XCTAssertEqual(device.host.meeting(id)?.notes, "A's new notes")
+            XCTAssertEqual(device.host.meeting(id)?.folderID, folder)
+        }
+    }
 }

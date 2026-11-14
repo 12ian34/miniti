@@ -376,8 +376,14 @@ enum MeetingSyncDocument {
 
     /// JavaScript's `slice(0, n)` counts UTF-16 units, as the server does.
     private static func javaScriptPrefix(_ text: String, _ limit: Int) -> String {
-        let units = Array(text.utf16)
-        return units.count <= limit ? text : String(decoding: units.prefix(limit), as: UTF16.self)
+        var units = Array(text.utf16)
+        guard units.count > limit else { return text }
+        units = Array(units.prefix(limit))
+        // A cut through a surrogate pair leaves half a character on the server. What comes
+        // back for that half is not pinned down, so it is dropped here; such a title can
+        // read as changed, which falls back to the timestamp rule.
+        if let last = units.last, UTF16.isLeadSurrogate(last) { units.removeLast() }
+        return String(decoding: units, as: UTF16.self)
     }
 
     /// A cloud document as this app would encode it after reading it. Another client, or
@@ -449,6 +455,16 @@ enum MeetingSyncDocument {
 
     static func folderFingerprint(document: [String: Any]) -> String {
         (document["folder_id"] as? String ?? "").lowercased() + ":" + String(document["folder_manual"] as? Bool ?? false)
+    }
+
+    /// The current-form baseline for a meeting whose stored one is from 3.8.0 or 3.9.0 and
+    /// still describes its content. Nil when there is nothing to rewrite: no baseline, a
+    /// current one, the unverified marker, or content that has moved on since.
+    static func currentContentBaseline(replacingLegacy meeting: Meeting) -> String? {
+        guard let baseline = meeting.syncedContentFingerprint, !baseline.hasPrefix(contentFormPrefix),
+              baseline != "legacy-content-unverified" else { return nil }
+        let local = encode(meeting, segments: [])
+        return content(of: local, matches: baseline) ? contentFingerprint(document: local) : nil
     }
 
     /// After a merge: the baseline is the cloud copy, in this device's terms.

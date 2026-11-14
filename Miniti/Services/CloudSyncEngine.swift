@@ -681,6 +681,7 @@ final class CloudSyncEngine: ObservableObject {
         var skipped: Set<UUID> = []
         var pendingFolders: Set<UUID> = []
         var folderIssues: [String] = []
+        var rebasedBaselines: [(Meeting, String)] = []
         protectedMeetingCount = meetings.filter { !$0.syncExcluded && !host.isMeetingDeleted($0.id) && ($0.id == protected || $0.endTime == nil) }.count
         pendingRemovalCount = tombstones.count
         for meeting in meetings where meeting.endTime != nil && !meeting.syncExcluded && meeting.id != protected && !host.isMeetingDeleted(meeting.id) {
@@ -691,6 +692,10 @@ final class CloudSyncEngine: ObservableObject {
                 if folderRefreshRetries[meeting.id] != nil { folderIssues.append(meeting.title) }
             }
             if fingerprint != meeting.localFingerprint { changed.append((meeting, fingerprint)) }
+            // A 3.8.0 or 3.9.0 baseline that still describes this meeting's content is
+            // rewritten in the current form now, while it can still be recognised. After a
+            // later edit (a rename of a title the server had cut, say) it could not be.
+            if let rebased = MeetingSyncDocument.currentContentBaseline(replacingLegacy: meeting) { rebasedBaselines.append((meeting, rebased)) }
             if meeting.syncStateRaw == "pending_folder_refresh" { continue }
             if meeting.cloudRestoreRequested || (fingerprint != meeting.syncFingerprint && meeting.syncStateRaw == nil) { dirty.append(meeting) }
             else if fingerprint != meeting.syncFingerprint && meeting.syncStateRaw != nil && fingerprint != meeting.localFingerprint {
@@ -710,6 +715,10 @@ final class CloudSyncEngine: ObservableObject {
                 pendingScan = true
                 throw CloudSyncError.server(code: "local_save_failed", status: 0)
             }
+        }
+        if !rebasedBaselines.isEmpty {
+            // Bookkeeping only: nothing becomes dirty, and a failed save is retried by the next scan.
+            _ = host.cloudCommit { for (meeting, baseline) in rebasedBaselines { meeting.syncedContentFingerprint = baseline } }
         }
         pendingUploadCount = dirty.count
         pendingFolderRefreshCount = pendingFolders.count
@@ -1248,7 +1257,11 @@ final class CloudSyncEngine: ObservableObject {
               let baseFolder = meeting.syncedFolderFingerprint else { return false }
         let local = MeetingSyncDocument.encode(meeting, segments: [])
         // The same content identity for both sides, whichever form the baseline was taken in.
-        let localChanged = !MeetingSyncDocument.content(of: local, matches: baseContent)
+        // Independent of any baseline: a meeting with nothing to upload, or only a folder
+        // move since it was last in step, has not changed its content. This also covers an
+        // old baseline taken from a copy in another client's shape, which no local form matches.
+        let inStep = meeting.syncFingerprint == MeetingSyncDocument.fingerprint(of: meeting) || MeetingSyncDocument.hasOnlyPendingFolderEdit(meeting)
+        let localChanged = !inStep && !MeetingSyncDocument.content(of: local, matches: baseContent)
         let remoteChanged = !MeetingSyncDocument.content(ofRemote: remote, matches: baseContent, local: local, in: context)
         let localFolder = MeetingSyncDocument.folderFingerprint(document: local)
         let remoteFolder = MeetingSyncDocument.folderFingerprint(document: remote.document)
