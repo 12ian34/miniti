@@ -863,6 +863,37 @@ final class AccountJourneys: XCTestCase {
         assertMacSettingsSignIn(move: false, recovery: false)
     }
 
+    /// 3.10.0 ST1: the provider comparison lines and their pickers never draw over each other.
+    func testMacTranscriptionModelChoicesDoNotOverlap() {
+        executionTimeAllowance = 240
+        for scale in 0...2 {
+            let window = openMacAccountSettings(scale: scale)
+            let tab = window.staticTexts["Transcription"].firstMatch
+            XCTAssertTrue(tab.waitForExistence(timeout: 5), window.debugDescription); tab.click()
+            // Top to bottom within each choice: title and picker, then one line per provider.
+            // The next choice starts below the previous one. Half a point of rounding is allowed.
+            var previousBottom = -CGFloat.infinity
+            for (group, title) in [("transcription.model", "Transcription"), ("transcription.speakers", "Speaker separation")] {
+                var column: [(name: String, frame: CGRect)] = []
+                for name in ["\(group).title", "\(group).picker", "\(group).benefit.0", "\(group).benefit.1"] {
+                    let element = window.descendants(matching: .any)[name].firstMatch
+                    XCTAssertTrue(element.waitForExistence(timeout: 5), "\(name) at scale \(scale)\n\(window.debugDescription)")
+                    XCTAssertGreaterThan(element.frame.height, 0, name)
+                    column.append((name, element.frame))
+                }
+                let heading = column[0].frame.union(column[1].frame)
+                XCTAssertGreaterThanOrEqual(heading.minY, previousBottom - 0.5, "Scale \(scale): \(title) starts inside the previous choice")
+                XCTAssertGreaterThanOrEqual(column[2].frame.minY, heading.maxY - 0.5,
+                                            "Scale \(scale): \(column[2].name) \(column[2].frame) overlaps the \(title) heading \(heading)")
+                XCTAssertGreaterThanOrEqual(column[3].frame.minY, column[2].frame.maxY - 0.5,
+                                            "Scale \(scale): \(column[3].name) \(column[3].frame) overlaps \(column[2].name) \(column[2].frame)")
+                previousBottom = column[3].frame.maxY
+            }
+            let capture = XCTAttachment(screenshot: window.screenshot())
+            capture.name = "Transcription models at scale \(scale)"; capture.lifetime = .keepAlways; add(capture)
+        }
+    }
+
     func testMacSettingsKeyRestoreInputAndCancel() {
         assertMacSettingsSignIn(move: false, recovery: true)
     }

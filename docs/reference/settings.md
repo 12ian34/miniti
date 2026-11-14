@@ -36,6 +36,8 @@ Private mode is locked while starting, recording, resuming or finalizing with St
 
 Setup, Models lists every supported local model family: Nemotron 3.5 speech transcription (Mac only, downloaded on demand, existing disk-size/removal control), bundled Nemotron speaker separation (Mac/iOS), and CAM++ voice recognition (Mac/iOS, existing observed preparation status). Configure links go to Transcription for feature choices and Voices for remembered identities. No model is enabled, downloaded or deleted merely by opening the tab. Hosted OpenAI/Deepgram/Jev services are covered by Privacy, not presented as local models.
 
+Mac Settings, Transcription, Models (3.10.0 ST1): each choice is one Form row. The title and its "Deepgram" / "This Mac" segmented picker come first, and `AudioProcessingComparison` explains both providers beneath as caption text with the provider names in one aligned column. The component uses plain stacks: as a Grid in its own Form row it under-measured wrapped text and drew over the picker below. The Mac journey `testMacTranscriptionModelChoicesDoNotOverlap` checks the order and that nothing overlaps at all three interface scales, at the default Settings width only.
+
 The persisted `sending`, `dataFlow` and `whatLeaves` destinations resolve to Privacy; `models` now resolves to Models. Search/deep-link anchors `sending.overview` and `privacy.models` are deliberately retained under their new owners. Both platforms now render the shared consent row at `privacy.thirdPartyAI`, so the overview's permission Configure link has a real target. iOS Configure within Privacy scrolls the current destination rather than pushing a second Privacy screen.
 
 ## Help and explicit reports (shipped in 3.5.0)

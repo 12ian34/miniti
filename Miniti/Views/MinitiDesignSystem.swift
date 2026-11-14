@@ -805,27 +805,37 @@ enum AudioProcessingChoiceCopy {
     ]
 }
 
-/// The same readable provider comparison in Home and Settings.
+/// What each provider means, as caption text beneath its picker in Settings.
 struct AudioProcessingComparison: View {
     let options: [(provider: String, benefit: String)]
+    /// Prefix for per-line accessibility identifiers, so layout checks can find each line.
+    var identifier: String? = nil
 
     var body: some View {
-        Grid(alignment: .topLeading,
-             horizontalSpacing: MinitiDesignSystem.Spacing.section,
-             verticalSpacing: MinitiDesignSystem.Spacing.standard) {
+        // Plain stacks, not a Grid: inside a Form row a Grid reported less height than its
+        // wrapped benefit text needed, so the text drew over the row below (3.10.0 ST1).
+        VStack(alignment: .leading, spacing: MinitiDesignSystem.Spacing.standard) {
             ForEach(options.indices, id: \.self) { index in
-                GridRow {
-                    Text(options[index].provider)
-                        .fontWeight(.medium)
-                        .foregroundStyle(ColorPalette.Text.primary)
-                        .fixedSize()
+                HStack(alignment: .firstTextBaseline, spacing: MinitiDesignSystem.Spacing.section) {
+                    // Every provider name is laid out, hidden, so the column is as wide as the longest.
+                    ZStack(alignment: .leading) {
+                        ForEach(options.indices, id: \.self) { other in
+                            Text(options[other].provider).hidden().accessibilityHidden(true)
+                        }
+                        Text(options[index].provider)
+                            .foregroundStyle(ColorPalette.Text.primary)
+                    }
+                    .fontWeight(.medium)
+                    .fixedSize()
                     Text(options[index].benefit)
                         .foregroundStyle(ColorPalette.Text.secondary)
                         .fixedSize(horizontal: false, vertical: true)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .accessibilityIdentifier(identifier.map { "\($0).benefit.\(index)" } ?? "")
                 }
             }
         }
-        .font(.callout)
+        .font(.caption)
         .lineSpacing(MinitiDesignSystem.Spacing.hairline)
         .frame(maxWidth: .infinity, alignment: .leading)
     }

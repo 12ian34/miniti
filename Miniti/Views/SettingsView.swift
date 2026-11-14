@@ -2042,17 +2042,12 @@ private struct TranscriptionModelsSection: View {
 
     var body: some View {
         Section {
-            AudioProcessingComparison(options: AudioProcessingChoiceCopy.transcription)
-            Picker("Transcription", selection: Binding(
-                get: { appState.onDeviceTranscriptionEnabled },
-                set: { appState.onDeviceTranscriptionEnabled = $0; appState.refreshOnDeviceTranscriptionAvailability() }
-            )) {
-                Text("Deepgram").tag(false)
-                Text("This Mac").tag(true)
-            }
-            .pickerStyle(.segmented)
-            .id("transcription.model")
-            .disabled(appState.privateModeEnabled || !OnDeviceTranscriptionService.isHardwareSupported)
+            choice("Transcription", identifier: "transcription.model",
+                   options: AudioProcessingChoiceCopy.transcription,
+                   selection: Binding(
+                    get: { appState.onDeviceTranscriptionEnabled },
+                    set: { appState.onDeviceTranscriptionEnabled = $0; appState.refreshOnDeviceTranscriptionAvailability() }),
+                   disabled: appState.privateModeEnabled || !OnDeviceTranscriptionService.isHardwareSupported)
             if appState.onDeviceTranscriptionEnabled {
                 OnDeviceTranscriptionStatusText(service: appState.onDeviceTranscription)
             }
@@ -2064,17 +2059,12 @@ private struct TranscriptionModelsSection: View {
                     .foregroundStyle(.secondary)
             }
 
-            AudioProcessingComparison(options: AudioProcessingChoiceCopy.speakers)
-            Picker("Speaker separation", selection: Binding(
-                get: { appState.onDeviceSpeakerSeparationEnabled },
-                set: { appState.onDeviceSpeakerSeparationEnabled = $0; appState.refreshOnDeviceDiarizationAvailability() }
-            )) {
-                Text("Deepgram").tag(false)
-                Text("This Mac").tag(true)
-            }
-            .pickerStyle(.segmented)
-            .id("transcription.speakers")
-            .disabled(appState.privateModeEnabled || !OnDeviceDiarizationService.isHardwareSupported)
+            choice("Speaker separation", identifier: "transcription.speakers",
+                   options: AudioProcessingChoiceCopy.speakers,
+                   selection: Binding(
+                    get: { appState.onDeviceSpeakerSeparationEnabled },
+                    set: { appState.onDeviceSpeakerSeparationEnabled = $0; appState.refreshOnDeviceDiarizationAvailability() }),
+                   disabled: appState.privateModeEnabled || !OnDeviceDiarizationService.isHardwareSupported)
             if appState.onDeviceSpeakerSeparationEnabled {
                 OnDeviceSpeakerSeparationStatusText(service: appState.onDeviceDiarization)
             }
@@ -2089,6 +2079,30 @@ private struct TranscriptionModelsSection: View {
         }
 
         VoicePrintSettingsSection(store: appState.voicePrints, embedder: appState.voicePrintEmbedder)
+    }
+
+    /// One Form row per choice: the title and picker first, what each option means beneath.
+    /// As separate rows the comparison did not get the height its wrapped text needed and
+    /// ran into the picker below it (3.10.0 ST1).
+    private func choice(_ title: String, identifier: String, options: [(provider: String, benefit: String)],
+                        selection: Binding<Bool>, disabled: Bool) -> some View {
+        VStack(alignment: .leading, spacing: MinitiDesignSystem.Spacing.standard) {
+            HStack {
+                Text(title).accessibilityIdentifier("\(identifier).title")
+                Spacer(minLength: MinitiDesignSystem.Spacing.section)
+                Picker(title, selection: selection) {
+                    Text("Deepgram").tag(false)
+                    Text("This Mac").tag(true)
+                }
+                .pickerStyle(.segmented)
+                .labelsHidden()
+                .fixedSize()
+                .accessibilityIdentifier("\(identifier).picker")
+                .disabled(disabled)
+            }
+            AudioProcessingComparison(options: options, identifier: identifier)
+        }
+        .id(identifier)
     }
 }
 
