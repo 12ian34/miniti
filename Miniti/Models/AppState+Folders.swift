@@ -172,8 +172,8 @@ extension AppState {
                   regroupManual || meeting.folderManual != true,
                   let folder = matchingFolder(for: meeting, custom: custom, prepared: prepared, broad: broad, precedents: precedents,
                                               titled: titled[meeting.id],
-                                              summarized: titled[meeting.id] == nil ? summaryCategory(meeting) : nil,
-                                              attended: titled[meeting.id] == nil ? attendedCategory(meeting) : nil, preview: preview),
+                                              summarized: { summaryCategory(meeting) },
+                                              attended: { attendedCategory(meeting) }, preview: preview),
                   folder.id != meeting.folderID else { return nil }
             return .init(owner: meetingFolders.owner, meeting: meeting, title: meeting.title, previousFolder: meeting.folderID,
                          previousManual: meeting.folderManual, previousLocalOnly: meeting.folderLocalOnly, folder: folder)
@@ -218,8 +218,9 @@ extension AppState {
     private func matchingFolder(for meeting: Meeting, custom: [MeetingFolder], prepared: FolderMatcher.Prepared,
                                 broad: [FolderMatcher.Category: MeetingFolder],
                                 precedents: [String: [SeriesPrecedent]] = [:],
-                                titled: FolderMatcher.Category?, summarized: FolderMatcher.Category?,
-                                attended: FolderMatcher.Category?,
+                                titled: FolderMatcher.Category?,
+                                // Read only when nothing stronger matched: tokenising a summary is the costly step.
+                                summarized: () -> FolderMatcher.Category?, attended: () -> FolderMatcher.Category?,
                                 preview: Bool) -> MeetingFolder? {
         let title = meeting.calendarEventTitle ?? meeting.title
         let precedent = seriesPrecedent(for: meeting, title: title, in: precedents)
@@ -250,11 +251,11 @@ extension AppState {
         // Preview may also use one proposed in this batch, which Apply then creates.
         // Without such a folder the meeting stays unfiled: `attended` is already nil
         // when the summary disagrees with it.
-        if let summarized, let folder = broad[summarized], preview || meetingFolders.folder(folder.id) != nil {
+        if let summarized = summarized(), let folder = broad[summarized], preview || meetingFolders.folder(folder.id) != nil {
             return folder
         }
         // Who was there: colleagues only is Team, an outside company is Customers.
-        if let attended, let folder = broad[attended] { return folder }
+        if let attended = attended(), let folder = broad[attended] { return folder }
         return nil
     }
 

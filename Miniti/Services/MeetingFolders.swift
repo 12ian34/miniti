@@ -338,8 +338,10 @@ enum FolderMatcher {
             let words = Set(tokens)
             let normalized = " " + tokens.joined(separator: " ") + " "
             // Single words are a set lookup; only the few multi-word phrases scan the text.
+            // A phrase can only be there if its first word is, which spares most text scans.
             func present(_ phrase: String) -> Bool {
-                phrase.contains(" ") ? normalized.contains(" " + phrase + " ") : words.contains(phrase)
+                guard let space = phrase.firstIndex(of: " ") else { return words.contains(phrase) }
+                return words.contains(String(phrase[..<space])) && normalized.contains(" " + phrase + " ")
             }
             let scores = allCases.map { category -> (Self, Int) in
                 let stems = Set(category.phrases.filter(present).map { phrase in
