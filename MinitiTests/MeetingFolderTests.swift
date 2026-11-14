@@ -543,4 +543,151 @@ final class MeetingFolderTests: XCTestCase {
         XCTAssertLessThanOrEqual(result.count, 1000)
         XCTAssertEqual(Set(result.map(\.id)).count, result.count)
     }
+
+    // MARK: 3.10.0 FO2 fixture
+
+    /// Field report on 3.9.0: about 10 unfiled meetings and Preview proposed none.
+    /// Titles of the reported shape with no folders yet, with the creation toggle on and off.
+    func testReportedShapeOfTenUnfiledMeetingsBaseline() {
+        let titles = ["Priya Nair", "Tom Okafor", "Acme x miniti", "Intro: Sam / Ian", "Zoom meeting",
+                      "Untitled", "Lee Chen", "Brightwell <> miniti weekly", "Google Meet", "Catch up with Ana"]
+        for creation in [true, false] {
+            let state = AppState(); state.automaticFolderCreation = creation
+            let meetings = titles.map { Meeting(title: $0, endTime: Date()) }
+            XCTAssertTrue(state.folderProposals(meetings: meetings).isEmpty,
+                          "Titles alone, with no attendees or summary, give no evidence (creation \(creation))")
+        }
+    }
+
+    func testFolderFixtureCoverageAndPrecision() {
+        let state = AppState(); state.automaticFolderCreation = true
+        let rows = FolderFixture.rows
+        let meetings = rows.map(FolderFixture.meeting)
+        let proposals = Dictionary(uniqueKeysWithValues: state.folderProposals(meetings: meetings).map { ($0.meeting.id, $0.folder.name) })
+        var withEvidence = 0, proposed = 0, correct = 0
+        var misses: [String] = []
+        for (row, meeting) in zip(rows, meetings) {
+            let evidence = row.summary != nil || !row.attendees.isEmpty
+            if evidence { withEvidence += 1 }
+            guard let name = proposals[meeting.id] else {
+                if evidence, row.expected != nil { misses.append("unfiled: \(row.title) (want \(row.expected!))") }
+                continue
+            }
+            if evidence { proposed += 1 }
+            if name == row.expected { if evidence { correct += 1 } }
+            else { misses.append("wrong: \(row.title) got \(name), want \(row.expected ?? "unfiled")") }
+        }
+        let coverage = Double(proposed) / Double(withEvidence)
+        let precision = proposed == 0 ? 1 : Double(correct) / Double(proposed)
+        print("FO2 fixture: \(rows.count) rows, \(withEvidence) with a summary or attendees, \(proposed) proposed, \(correct) correct; coverage \(coverage), precision \(precision)\n" + misses.joined(separator: "\n"))
+        // 3.9.0 baseline, recorded before FO2.2 and FO2.3 change the rules.
+        XCTAssertEqual(withEvidence, FolderFixture.rows.filter { $0.summary != nil || !$0.attendees.isEmpty }.count)
+        XCTAssertLessThan(coverage, 0.5, "Baseline: most meetings with evidence get no proposal")
+    }
+}
+
+/// Synthetic meetings shaped like real histories: person names, company pairs, intros,
+/// default meeting-app titles, untitled recordings, internal-only and mixed external.
+/// No customer data. `expected` is the broad folder a person would choose, nil for
+/// "leave unfiled". Some rows are honest misses for any local rule.
+enum FolderFixture {
+    struct Row {
+        let title: String
+        let attendees: [String]
+        let summary: String?
+        let expected: String?
+        init(_ title: String, _ attendees: [String] = [], _ summary: String? = nil, _ expected: String?) {
+            self.title = title; self.attendees = attendees; self.summary = summary; self.expected = expected
+        }
+    }
+    static let me = "sam@harborlabs.io"
+    static let priya = "priya@harborlabs.io", tom = "tom@harborlabs.io", pat = "pat@harborlabs.io"
+    static let lee = "lee@acmefreight.com", dana = "dana@brightwell.co", ana = "ana@northstar.vc"
+    static let raj = "raj@payflow.com", kai = "kai@lumen.dev", eli = "eli@vega.ai"
+
+    static func meeting(_ row: Row) -> Meeting {
+        let meeting = Meeting(title: row.title, endTime: Date(), summaryText: row.summary)
+        meeting.attendees = row.attendees.map { email in
+            MeetingAttendee(email: email, displayName: nil, domain: String(email.split(separator: "@").last ?? ""),
+                            responseStatus: "accepted", isOrganizer: email == me, isSelf: email == me)
+        }
+        return meeting
+    }
+
+    static let customerSummary = "The client asked for a discount on the renewal. Sales will send a proposal and the prospect wants a demo for the wider team next week."
+    static let productSummary = "Reviewed the sprint backlog, the roadmap and two architecture options for the sync engine."
+    static let hiringSummary = "Interview for the backend role. The candidate walked through past projects. Next step is a second interview after the screening call."
+    static let investorSummary = "Talked through runway, the fundraising timeline and the next investor update ahead of the board meeting."
+
+    static let rows: [Row] = [
+        // Person names
+        .init("Priya / Sam", [me, priya], nil, "Team"),
+        .init("Tom Okafor", [me, tom], "Caught up on workload and holiday cover.", "Team"),
+        .init("Sam <> Priya weekly", [me, priya], nil, "Team"),
+        .init("Pat / Sam", [me, pat], nil, "Team"),
+        .init("Lee Chen", [me, lee], customerSummary, "Customers"),
+        .init("Dana and Sam", [me, dana], nil, "Customers"),
+        .init("Catch up with Ana", [me, ana], investorSummary, "Investors"),
+        .init("Jo Park", [me, "jo.park@gmail.com"], hiringSummary, "Hiring"),
+        .init("Chat with Mika", [me, "mika@gmail.com"], nil, nil),
+        .init("Taylor Reed", [], nil, nil),
+        // Company pairs
+        .init("Acme x Harbor", [me, lee, priya], nil, "Customers"),
+        .init("Brightwell <> Harbor weekly", [me, dana], nil, "Customers"),
+        .init("Harbor / Payflow integration", [me, raj], "Agreed the partnership scope. Payflow is the vendor for payments and their partner team handles the procurement paperwork.", "Partners"),
+        .init("Acme Freight onboarding", [me, lee, tom], "Walked through setup and imported their first meetings. They will invite two more people.", "Customers"),
+        .init("Northstar x Harbor", [me, ana], nil, "Investors"),
+        .init("Brightwell QBR", [me, dana, priya], nil, "Customers"),
+        // Intros
+        .init("Intro: Sam / Kai", [me, kai], nil, "Intros"),
+        .init("Intro call", [me, "noor@gmail.com"], nil, "Intros"),
+        .init("Introduction to the Vega team", [me, eli, "ora@vega.ai"], nil, "Intros"),
+        .init("Kai <> Sam intro", [me, kai], nil, "Intros"),
+        .init("Coffee chat", [me, "bea@outlook.com"], "Bea is thinking about a move into product management and asked how we work.", nil),
+        // Default meeting-app titles
+        .init("Zoom meeting", [], customerSummary, "Customers"),
+        .init("Zoom meeting", [], nil, nil),
+        .init("Google Meet", [me, priya, tom], productSummary, "Product"),
+        .init("Microsoft Teams Meeting", [me, dana], nil, "Customers"),
+        .init("Meeting", [], "Agreed the budget and the forecast for next quarter, and how the strategy changes the plan.", "Planning"),
+        .init("Personal Meeting Room", [me, lee], nil, "Customers"),
+        .init("Huddle", [], "Standup: everyone shared blockers. The team sync moves to Thursday and the offsite dates are confirmed.", "Team"),
+        // Untitled
+        .init("Untitled", [], nil, nil),
+        .init("Untitled", [], hiringSummary, "Hiring"),
+        .init("Untitled meeting", [], "A short chat about the weekend and one open question on the invoice.", nil),
+        .init("New recording", [], customerSummary, "Customers"),
+        .init("Untitled", [], "A workshop on prompt design. Training materials were shared and a follow-up webinar is planned.", "Learning"),
+        .init("Watch recording", [], nil, nil),
+        // Internal only
+        .init("Monday standup", [me, priya, tom], nil, "Team"),
+        .init("Sprint planning", [me, priya, tom], nil, "Product"),
+        .init("Roadmap review", [me, priya], nil, "Product"),
+        .init("Design crit", [me, tom], nil, "Product"),
+        .init("All hands", [me, priya, tom, pat], nil, "Team"),
+        .init("Q1 OKRs", [me, priya], nil, "Planning"),
+        .init("Budget review", [me, pat], nil, "Planning"),
+        .init("Pricing discussion", [me, priya, tom], "Compared three price points and agreed to test the middle one.", "Team"),
+        .init("Launch checklist", [me, priya, tom], productSummary, "Product"),
+        .init("Friday wrap", [me, priya, tom], nil, "Team"),
+        .init("Board prep", [me, pat], nil, "Investors"),
+        .init("Hiring sync", [me, pat], nil, "Hiring"),
+        // Mixed external
+        .init("Acme customer review", [me, lee], nil, "Customers"),
+        .init("Sales demo: Brightwell", [me, dana], nil, "Customers"),
+        .init("Interview: Jo Park", [me, "jo.park@gmail.com"], nil, "Hiring"),
+        .init("Candidate debrief", [me, priya], nil, "Hiring"),
+        .init("Investor update", [me, ana], nil, "Investors"),
+        .init("Seed round catch-up", [me, ana], investorSummary, "Investors"),
+        .init("Vendor review: Payflow", [me, raj], nil, "Partners"),
+        .init("Agency kickoff", [me, "zed@studiokiln.com"], nil, "Partners"),
+        .init("Security training", [me, priya, tom], nil, "Learning"),
+        .init("Lunch and learn: SwiftData", [me, tom], nil, "Learning"),
+        .init("Webinar: AI in sales", [], nil, "Learning"),
+        .init("Discovery call", [me, "eve@quartz.io"], nil, "Customers"),
+        .init("Renewal: Acme", [me, lee], nil, "Customers"),
+        .init("Lumen partnership sync", [me, kai], nil, "Partners"),
+        .init("Vega pilot kickoff", [me, eli], nil, "Customers"),
+        .init("Dentist", [], nil, nil),
+    ]
 }
