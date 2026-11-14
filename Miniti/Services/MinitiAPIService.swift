@@ -69,7 +69,13 @@ final class MinitiAPIService: @unchecked Sendable {
     /// writes, one silent retry after an expired token, and local sign-out when the server
     /// says this installation was revoked. `requiresAuth: false` lets public metadata
     /// (`/version`) go out without an account.
-    func send(_ original: URLRequest, requiresAuth: Bool = true, expectedOwner: (account: String, generation: Int)? = nil) async throws -> (Data, URLResponse) {
+    ///
+    /// A failure while signing the request in (refreshing the token, using the device key)
+    /// is thrown as `ServiceError.serverError`, as every caller has always seen it. Cloud
+    /// calls pass `preservingSignInCause` and get a `SignInFailure` with the cause instead,
+    /// so sync can say what happened (3.10.0 SE1, E-7).
+    func send(_ original: URLRequest, requiresAuth: Bool = true, expectedOwner: (account: String, generation: Int)? = nil,
+              preservingSignInCause: Bool = false) async throws -> (Data, URLResponse) {
         try Task.checkCancellation()
         var correlated = original
         let context = AIRequestDiagnostics.current
@@ -81,9 +87,44 @@ final class MinitiAPIService: @unchecked Sendable {
             correlation = id
             correlated.setValue(id.uuidString.lowercased(), forHTTPHeaderField: "X-Client-Request-ID")
         }
-        let result = try await sendAuthorized(correlated, requiresAuth: requiresAuth, expectedOwner: expectedOwner)
+        let result: (Data, URLResponse)
+        do {
+            result = try await sendAuthorized(correlated, requiresAuth: requiresAuth, expectedOwner: expectedOwner)
+        } catch let failure as SignInFailure {
+            if preservingSignInCause { throw failure }
+            throw ServiceError.serverError(failure.error.localizedDescription)
+        }
         if let correlation { context?.received(status: (result.1 as? HTTPURLResponse)?.statusCode, requestID: correlation) }
         return result
+    }
+
+    /// Why a request could not be signed in. Internal to `send`; see `preservingSignInCause`.
+    struct SignInFailure: Error {
+        enum Cause: Equatable {
+            /// The refresh request did not reach the server.
+            case transport
+            case rateLimited
+            /// The device key is locked or denied for now, as on a Mac that has just woken.
+            case keyNotUsableNow
+            /// The device key can never sign again; the user must sign in again.
+            case keyUnusable
+            /// The server failed while refreshing.
+            case server
+            case other
+        }
+        let error: ClientAuthError
+        var cause: Cause {
+            switch error {
+            case .network: return .transport
+            case .rateLimited: return .rateLimited
+            case .keyUnavailable: return .keyNotUsableNow
+            case .keyUnusable: return .keyUnusable
+            case .unavailable: return .server
+            case .server(_, let status): return status >= 500 ? .server : .other
+            default: return .other
+            }
+        }
+        init(_ error: ClientAuthError) { self.error = error }
     }
 
     private func sendAuthorized(_ original: URLRequest, requiresAuth: Bool, expectedOwner: (account: String, generation: Int)?) async throws -> (Data, URLResponse) {
@@ -103,10 +144,10 @@ final class MinitiAPIService: @unchecked Sendable {
             } catch ClientAuthError.revoked {
                 throw ServiceError.authRevoked
             } catch let error as ClientAuthError {
-                throw ServiceError.serverError(error.localizedDescription)
+                throw SignInFailure(error)
             }
         } else if requiresAuth {
-            if auth.credentialState == .keyUnusable { throw ServiceError.serverError(ClientAuthError.keyUnusable.localizedDescription) }
+            if auth.credentialState == .keyUnusable { throw SignInFailure(.keyUnusable) }
             throw ServiceError.notEnrolled
         }
 
@@ -131,7 +172,7 @@ final class MinitiAPIService: @unchecked Sendable {
             } catch ClientAuthError.revoked {
                 throw ServiceError.authRevoked
             } catch let error as ClientAuthError {
-                throw ServiceError.serverError(error.localizedDescription)
+                throw SignInFailure(error)
             }
             return try await session.data(for: retry)
         case "installation_revoked", "device_auth_required":

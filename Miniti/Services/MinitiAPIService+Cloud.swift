@@ -125,6 +125,11 @@ enum CloudSyncError: Error, Equatable {
     /// The server revoked this installation (credentials were cleared locally).
     case revoked
     case offline
+    /// The device key can never sign again. The user signs in again in Settings, Account.
+    case signInUnusable
+    /// Signing the request in failed for a reason with no line of its own. The text is
+    /// for the debug log only.
+    case signIn(String)
     case server(code: String, status: Int)
     /// The pass lost its authority (account or credential changed, bookkeeping reset) while a
     /// request was in flight: nothing it learned may be applied (R3).
@@ -160,7 +165,16 @@ extension MinitiAPIService: CloudSyncTransport {
         let data: Data
         let response: URLResponse
         do {
-            (data, response) = try await send(request)
+            (data, response) = try await send(request, preservingSignInCause: true)
+        } catch let failure as SignInFailure {
+            // Not reaching the server, a key that is locked for now and a server fault while
+            // refreshing all mean the same to the user: sync waits and tries again.
+            switch failure.cause {
+            case .transport, .keyNotUsableNow, .server: throw CloudSyncError.offline
+            case .rateLimited: throw CloudSyncError.rateLimited
+            case .keyUnusable: throw CloudSyncError.signInUnusable
+            case .other: throw CloudSyncError.signIn(String(describing: failure.error))
+            }
         } catch ServiceError.notEnrolled {
             throw CloudSyncError.notEnrolled
         } catch ServiceError.authRevoked {

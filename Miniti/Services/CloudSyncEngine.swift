@@ -581,12 +581,20 @@ final class CloudSyncEngine: ObservableObject {
         } catch {
             guard isCurrent(context) else { rerunRequested = true; return }
             DiagnosticTimeline.shared.record(.cloudFailed, fields: DiagnosticTimeline.errorFields(error))
-            phase = .failed("Sync failed")
-            lastError = String(describing: type(of: error))
-            note(.error, "Sync failed", String(describing: type(of: error)))
+            // Never a type name or code in what the user reads; those go to the debug log.
+            phase = .failed(Self.genericFailure)
+            lastError = nil
+            note(.error, Self.genericFailure)
             DebugLogger.shared.log(.app, "Cloud sync FAILED: \(type(of: error))", level: .warning)
         }
     }
+
+    nonisolated static let genericFailure = "Could not sync. Trying again."
+    #if os(macOS)
+    nonisolated static let signInUnusableFailure = "This Mac can no longer sign in. Open Settings, Account to sign in again."
+    #else
+    nonisolated static let signInUnusableFailure = "This device can no longer sign in. Open Settings, Account to sign in again."
+    #endif
 
     private func handle(_ error: CloudSyncError) {
         switch error {
@@ -627,9 +635,12 @@ final class CloudSyncEngine: ObservableObject {
             return
         case .rateLimited:
             phase = .failed("Too many requests, trying again later")
-        case .server(let code, _):
-            phase = .failed("Sync failed (\(code))")
-            lastError = code
+        case .signInUnusable:
+            phase = .failed(Self.signInUnusableFailure)
+        case .signIn, .server:
+            // The code or cause is in the debug log and the diagnostic timeline below.
+            phase = .failed(Self.genericFailure)
+            lastError = nil
         case .superseded:
             break
         }
@@ -638,6 +649,8 @@ final class CloudSyncEngine: ObservableObject {
         switch error {
         case .server(_, let status): DiagnosticTimeline.shared.record(.cloudFailed, fields: ["reason": "server", "status": String(status)])
         case .rateLimited: DiagnosticTimeline.shared.record(.cloudFailed, fields: ["reason": "rate_limited"])
+        case .signInUnusable: DiagnosticTimeline.shared.record(.cloudFailed, fields: ["reason": "sign_in_key_unusable"])
+        case .signIn: DiagnosticTimeline.shared.record(.cloudFailed, fields: ["reason": "sign_in"])
         case .cursorExpired: DiagnosticTimeline.shared.record(.cloudFailed, fields: ["reason": "cursor_expired"])
         default: break
         }

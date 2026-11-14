@@ -757,6 +757,7 @@ extension AppState {
         case CloudSyncError.requiresManaged: return "Email needs the managed plan."
         case CloudSyncError.notEnrolled: return "Not signed in."
         case CloudSyncError.revoked: return "This device was signed out."
+        case CloudSyncError.signInUnusable: return CloudSyncEngine.signInUnusableFailure
         case CloudSyncError.server(let code, let status):
             if code == "email_unavailable" { return "Email delivery is not available right now. Try again later." }
             if code == "email_send_failed" { return "The confirmation email could not be sent. Try again in a minute." }

@@ -1050,6 +1050,59 @@ final class ClientAuthTests: XCTestCase {
         } catch { XCTFail("expected cancellation, got \(error)") }
     }
 
+    /// 3.10.0 SE1: a cloud call whose sign-in token cannot be refreshed reports why, in
+    /// sync's own terms. Before, each of these reached sync as an untyped ServiceError.
+    func testCloudCallReportsWhyRefreshingTheSignInFailed() async throws {
+        let cases: [(String, (URLRequest) throws -> StubURLProtocol.Reply, CloudSyncError)] = [
+            ("refresh cannot reach the server", { _ in throw URLError(.notConnectedToInternet) }, .offline),
+            ("refresh connection drops", { _ in throw URLError(.networkConnectionLost) }, .offline),
+            ("refresh is rate limited", { _ in StubURLProtocol.json(429, #"{"error":"rate_limited","message":"x"}"#) }, .rateLimited),
+            ("refresh answers 503", { _ in StubURLProtocol.json(503, #"{"error":"unavailable","message":"x"}"#) }, .offline),
+            ("refresh answers 500", { _ in StubURLProtocol.json(500, #"{"error":"internal","message":"x"}"#) }, .offline),
+        ]
+        for (name, refresh, expected) in cases {
+            StubURLProtocol.reset()
+            let (stored, _) = repairableCredentials()
+            let manager = managerFor(stored, loader: { InstallationKey.load(stored: $0) })
+            let api = MinitiAPIService(session: stubbedSession(), auth: manager)
+            StubURLProtocol.script = { request in
+                if request.url?.path.hasPrefix("/api/auth/") == true { return try refresh(request) }
+                return StubURLProtocol.json(401, #"{"error":"token_expired","message":"x"}"#)
+            }
+            do { _ = try await api.status(); XCTFail("\(name): expected a failure") }
+            catch { XCTAssertEqual(error as? CloudSyncError, expected, "\(name): \(error)") }
+            // Every other caller still sees the error it always saw, so a webhook or CRM send
+            // tried at the same moment stays queued for retry (E-7).
+            var request = URLRequest(url: URL(string: "https://api.test/api/usage")!)
+            request.httpMethod = "GET"
+            do { _ = try await api.send(request); XCTFail("\(name): expected a failure") }
+            catch { if case MinitiAPIService.ServiceError.serverError = error {} else { XCTFail("\(name): \(error)") } }
+        }
+        StubURLProtocol.reset()
+    }
+
+    func testCloudCallWaitsWhenTheDeviceKeyIsLockedAndSaysSoWhenItIsUnusable() async throws {
+        StubURLProtocol.reset()
+        defer { StubURLProtocol.reset() }
+        // Locked for now, as on a Mac that has just woken: sync waits like it does offline.
+        var (stored, _) = repairableCredentials()
+        stored.accessExpiresAt = Int64(Date().timeIntervalSince1970) - 10
+        let locked = managerFor(stored, loader: signingFaultLoader(for: stored.installationKey, domain: NSOSStatusErrorDomain, code: -25308))
+        restoreStub()
+        do { _ = try await MinitiAPIService(session: stubbedSession(), auth: locked).status(); XCTFail("expected a failure") }
+        catch { XCTAssertEqual(error as? CloudSyncError, .offline, "\(error)") }
+        // The typed causes map one to one.
+        typealias Failure = MinitiAPIService.SignInFailure
+        XCTAssertEqual(Failure(.network("x")).cause, .transport)
+        XCTAssertEqual(Failure(.keyUnavailable("x")).cause, .keyNotUsableNow)
+        XCTAssertEqual(Failure(.keyUnusable).cause, .keyUnusable)
+        XCTAssertEqual(Failure(.rateLimited).cause, .rateLimited)
+        XCTAssertEqual(Failure(.unavailable).cause, .server)
+        XCTAssertEqual(Failure(.server(code: "internal", status: 502)).cause, .server)
+        XCTAssertEqual(Failure(.server(code: "weird", status: 418)).cause, .other)
+        XCTAssertEqual(Failure(.storage).cause, .other)
+    }
+
     func testACloudRequestsRetryNeverRunsUnderANewerCredential() async throws {
         // Review 2026-10-27: a delete on A answered token_expired after a switch to B must not be
         // replayed with B's credential.

@@ -49,6 +49,8 @@ final class FakeCloudTransport: CloudSyncTransport, @unchecked Sendable {
     var respectsTaskCancellation = false
     var cancelNext = false
     var failNext: CloudSyncError?
+    /// An error the engine has no case for, to reach its last catch.
+    var failNextUnknown: Error?
     var failStatus: CloudSyncError?
     var failManifest: CloudSyncError?
     var omitBatchRows = false
@@ -71,6 +73,7 @@ final class FakeCloudTransport: CloudSyncTransport, @unchecked Sendable {
         if respectsTaskCancellation { try Task.checkCancellation() }
         if cancelNext { cancelNext = false; throw CancellationError() }
         if let error = failNext { failNext = nil; throw error }
+        if let error = failNextUnknown { failNextUnknown = nil; throw error }
     }
 
     private func record(_ id: UUID) -> Int { seq += 1; changes.append((seq, id)); return seq }
@@ -1342,6 +1345,38 @@ final class CloudSyncEngineTests: XCTestCase {
         host.pause = nil
         engine.refreshPause()
         XCTAssertEqual(engine.phase, .idle)
+    }
+
+    /// 3.10.0 SE1: what the user reads never contains a type name or an internal code.
+    func testSyncFailuresUsePlainLinesNeverTypeNamesOrCodes() async throws {
+        struct Unmapped: Error {}
+        finished("Alpha")
+        transport.failNextUnknown = Unmapped()
+        await tick()
+        XCTAssertEqual(engine.phase, .failed("Could not sync. Trying again."))
+        XCTAssertNil(engine.lastError)
+        for failure in [CloudSyncError.server(code: "url_error_-1005", status: 0), .server(code: "http_503", status: 503),
+                        .signIn("server(code: \"weird\", status: 418)")] {
+            await tick()
+            XCTAssertEqual(engine.phase, .idle, "The next poll retries")
+            transport.failNext = failure
+            await tick()
+            XCTAssertEqual(engine.phase, .failed("Could not sync. Trying again."), "A real server failure still shows a failure line")
+            XCTAssertNil(engine.lastError)
+        }
+        await tick()
+        transport.failNext = .signInUnusable
+        await tick()
+        guard case .failed(let line) = engine.phase else { return XCTFail("\(engine.phase)") }
+        XCTAssertTrue(line.hasSuffix("can no longer sign in. Open Settings, Account to sign in again."), line)
+        await tick()
+        transport.failNext = .rateLimited
+        await tick()
+        XCTAssertEqual(engine.phase, .failed("Too many requests, trying again later"))
+        let shown = engine.log.map { $0.title + " " + ($0.detail ?? "") }.joined(separator: "\n")
+        for forbidden in ["Unmapped", "ServiceError", "url_error", "http_503", "weird", "\u{2014}", "&"] {
+            XCTAssertFalse(shown.contains(forbidden), "\(forbidden) in the Cloud log:\n\(shown)")
+        }
     }
 
     func testProRequiredPausesAndTellsTheHost() async throws {
