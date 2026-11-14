@@ -1038,6 +1038,7 @@ private struct EventConfirmSheet: View {
     }
 
     @State private var keyMonitor: Any?
+    @State private var escapeHandler: UUID?
 
     var body: some View {
         ZStack {
@@ -1139,6 +1140,7 @@ private struct EventConfirmSheet: View {
                             .stroke(ColorPalette.Border.primary, lineWidth: 1)
                     )
                     .accessibilityLabel("Prep notes for \(event.title)")
+                    .accessibilityIdentifier("home.event.prepNotes")
 
                 HStack(spacing: 10) {
                     Button {
@@ -1230,11 +1232,13 @@ private struct EventConfirmSheet: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .onAppear {
+            // Escape goes through the shared shortcut monitor; a second Escape monitor here
+            // lost to it whenever AppKit happened to run that one first.
+            if escapeHandler == nil {
+                escapeHandler = KeyboardShortcutsService.shared.addOverlayEscapeHandler { onCancel() }
+            }
+            guard keyMonitor == nil else { return }
             keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
-                if event.keyCode == 53 { // Escape
-                    onCancel()
-                    return nil
-                }
                 if event.modifierFlags.contains(.command) && event.keyCode == 36 { // ⌘↩
                     onStart()
                     return nil
@@ -1243,6 +1247,10 @@ private struct EventConfirmSheet: View {
             }
         }
         .onDisappear {
+            if let escapeHandler {
+                KeyboardShortcutsService.shared.removeOverlayEscapeHandler(escapeHandler)
+                self.escapeHandler = nil
+            }
             if let monitor = keyMonitor {
                 NSEvent.removeMonitor(monitor)
                 keyMonitor = nil

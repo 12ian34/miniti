@@ -113,6 +113,21 @@ final class AccountJourneys: XCTestCase {
         XCTAssertTrue(updated.contains("UI1 minimum note"))
         XCTAssertEqual(updated.count, original.count + " UI1 minimum note".count)
     }
+
+    func testMacEventPrepClosesWithEscape() {
+        launch("prepPresentation", screenshotScene: "home")
+        let event = app.buttons.matching(NSPredicate(format: "label CONTAINS %@", "Halcyon Labs: pricing follow-up")).firstMatch
+        XCTAssertTrue(event.waitForExistence(timeout: 10), app.debugDescription)
+        let notes = app.textViews["home.event.prepNotes"]
+        for focusNotes in [false, false, true, false, true, false] {
+            event.click()
+            XCTAssertTrue(notes.waitForExistence(timeout: 5), app.debugDescription)
+            if focusNotes { notes.click() }
+            app.typeKey(XCUIKeyboardKey.escape, modifierFlags: [])
+            XCTAssertTrue(notes.waitForNonExistence(timeout: 5),
+                          "Escape must close the event card (prep notes focused: \(focusNotes))")
+        }
+    }
     #endif
 
     #if os(macOS)

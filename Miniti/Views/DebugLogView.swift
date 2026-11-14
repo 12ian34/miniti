@@ -422,6 +422,8 @@ struct DebugLogView: View {
         guard localEscapeMonitor == nil else { return }
         localEscapeMonitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown, .keyUp]) { event in
             guard event.keyCode == 53 else { return event } // Esc
+            // Escape typed in the main window belongs to it, not to this window.
+            if event.window?.identifier == AppDelegate.mainWindowIdentifier { return event }
             if event.type == .keyDown {
                 dismiss()
             }

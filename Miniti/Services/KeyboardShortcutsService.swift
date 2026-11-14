@@ -24,6 +24,21 @@ final class KeyboardShortcutsService: ObservableObject {
     var onDismissSearch: (() -> Bool)?
     
     @Published var showingHelp = false
+
+    /// Escape handlers for in-window overlays that are not AppKit sheets, newest last.
+    /// AppKit does not guarantee the order local monitors run in, and this service's
+    /// monitor always consumes Escape, so an overlay must not rely on its own monitor.
+    private var overlayEscapeHandlers: [(id: UUID, dismiss: () -> Void)] = []
+
+    func addOverlayEscapeHandler(_ dismiss: @escaping () -> Void) -> UUID {
+        let id = UUID()
+        overlayEscapeHandlers.append((id, dismiss))
+        return id
+    }
+
+    func removeOverlayEscapeHandler(_ id: UUID) {
+        overlayEscapeHandlers.removeAll { $0.id == id }
+    }
     
     private init() {}
     
@@ -54,11 +69,21 @@ final class KeyboardShortcutsService: ObservableObject {
             if closeSettingsWindowIfActive() {
                 return nil
             }
-            if closeAnyVisibleSettingsWindowIfNeeded() {
-                return nil
+            // Another window (such as the Debug Log) is key: leave Escape to that
+            // window's own handler rather than acting on the main window behind it.
+            if let keyWindow = NSApp.keyWindow, keyWindow.identifier != AppDelegate.mainWindowIdentifier {
+                return event
             }
+            // The shortcuts help draws above in-window overlays, so it closes first.
             if showingHelp {
                 showingHelp = false
+                return nil
+            }
+            if let overlay = overlayEscapeHandlers.last {
+                overlay.dismiss()
+                return nil
+            }
+            if closeAnyVisibleSettingsWindowIfNeeded() {
                 return nil
             }
             if let dismiss = onDismissSearch, dismiss() {
@@ -160,7 +185,7 @@ final class KeyboardShortcutsService: ObservableObject {
     
     private func dismissAnyActiveSheetIfNeeded() -> Bool {
         if let keyWindow = NSApp.keyWindow {
-            // If the sheet itself is key (e.g. debug log opened from Settings),
+            // If the sheet itself is key (e.g. a CRM send sheet),
             // ask the sheet to close itself first so SwiftUI `.sheet` bindings
             // are updated. Do not force `endSheet` here; that can desync state
             // and cause the sheet to immediately re-present ("flash").
