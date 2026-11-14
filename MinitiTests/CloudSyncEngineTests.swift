@@ -1836,7 +1836,14 @@ final class CloudSyncAppStateTests: XCTestCase {
         XCTAssertEqual(decide(local: false, server: nil, version: 0), .none)
         // Nothing new since the last applied version.
         XCTAssertEqual(decide(local: false, server: true, version: 3, applied: 3), .none)
-        XCTAssertEqual(decide(local: true, server: false, version: 2, applied: 5), .none)
+        XCTAssertEqual(decide(local: false, server: false, version: 3, applied: 3), .none, "already agrees: no write and no change")
+        XCTAssertEqual(decide(local: true, server: true, version: 3, applied: 3), .none)
+        // On here, off on the account, nothing new and nothing pending: nobody owns that
+        // state, so it heals to off. The opposite case stays as it is.
+        XCTAssertEqual(decide(local: true, server: false, version: 3, applied: 3), .follow(false))
+        XCTAssertEqual(decide(local: true, server: false, version: 2, applied: 5), .follow(false))
+        XCTAssertEqual(decide(local: true, pending: true, server: false, version: 3, applied: 3), .push(true), "a pending offline choice still wins")
+        XCTAssertEqual(decide(local: false, server: true, version: 3, applied: 3, pro: false), .none, "a free device waits")
         // Another device flipped it: follow. Off always applies; on waits for Pro and the end of private mode.
         XCTAssertEqual(decide(local: true, server: false, version: 4, applied: 3), .follow(false))
         XCTAssertEqual(decide(local: false, server: true, version: 4, applied: 3), .follow(true))

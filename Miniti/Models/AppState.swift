@@ -1232,6 +1232,8 @@ final class AppState: ObservableObject {
     private(set) var accountGeneration = 0
     /// Bumped by every email read and mutation; only the latest read may apply.
     var accountEmailSequence = 0
+    /// The account cloud switch value being written right now, if any (`pushCloudAccountFlag`).
+    var cloudFlagPushInFlight: Bool?
     var accountEmailLastLoaded: Date?
     var accountEmailInFlight = false
     /// One coalesced refresh waiting for the in-flight read or mutation to finish (F2).

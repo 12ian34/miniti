@@ -208,6 +208,9 @@ extension AppState: CloudSyncHost {
         if source == .account {
             cloudSync.note(.info, on ? "Cloud on" : "Cloud off", "turned \(on ? "on" : "off") on another device")
         } else if appMode == .managed {
+            // Marked pending now, not when the write starts: a usage check that lands in
+            // between must see this device's own choice and leave it alone.
+            if let account = cloudAccountID { UserDefaults.standard.set(on, forKey: Self.cloudFlagPendingKey(account)) }
             Task { await pushCloudAccountFlag(on) }
         }
     }
@@ -235,13 +238,17 @@ extension AppState: CloudSyncHost {
     /// - A version this device has not applied means another device changed the switch:
     ///   follow it. "On" waits for Pro and the end of private mode, and leaves the version
     ///   unapplied so the next usage check tries again; "off" always applies.
+    /// - With nothing new and nothing pending, a device that is on while its account says
+    ///   off turns off (3.10.0 CS1.4). That state has no owner, and off is the safe
+    ///   direction: nothing is uploaded that the account said to stop. The opposite case,
+    ///   off while the account says on, stays as it is.
     nonisolated static func cloudAccountFlagAction(
         localOn: Bool, pending: Bool?, serverEnabled: Bool?, serverVersion: Int, appliedVersion: Int,
         isPro: Bool, privateMode: Bool
     ) -> CloudAccountFlagAction {
         if let pending { return .push(pending) }
         guard let serverEnabled else { return localOn ? .push(true) : .none }
-        guard serverVersion > appliedVersion else { return .none }
+        guard serverVersion > appliedVersion else { return localOn && !serverEnabled ? .follow(false) : .none }
         if serverEnabled == localOn { return .acknowledge }
         if serverEnabled { return isPro && !privateMode ? .follow(true) : .none }
         return .follow(false)
@@ -271,6 +278,8 @@ extension AppState: CloudSyncHost {
         case .acknowledge:
             defaults.set(version, forKey: Self.cloudFlagVersionKey(account))
         case .push(let on):
+            // Several usage checks finish close together at launch. One write is enough.
+            guard cloudFlagPushInFlight != on else { break }
             Task { await pushCloudAccountFlag(on) }
         case .follow(let on):
             defaults.set(version, forKey: Self.cloudFlagVersionKey(account))
@@ -285,6 +294,8 @@ extension AppState: CloudSyncHost {
         let defaults = UserDefaults.standard
         defaults.set(on, forKey: Self.cloudFlagPendingKey(account))
         guard let api = minitiAPIService else { return }
+        cloudFlagPushInFlight = on
+        defer { if cloudFlagPushInFlight == on { cloudFlagPushInFlight = nil } }
         do {
             let version = try await api.setAccountCloud(enabled: on)
             // A newer flip made while this one was in flight keeps its own pending mark.
