@@ -845,11 +845,17 @@ struct HomeSetupButton: View {
                     } label: {
                         MinitiHomeActionLabel(icon: "checklist", label: "set up miniti \(appState.homeSetupProgress)", isEmphasized: appState.isHomeSetupExpanded || isHighlighted, fillsFooterCell: fillsFooterCell)
                             .overlay {
+                                // Inside the edge: anything drawn outside it, even hidden, widens the
+                                // button's frame beyond its equal footer neighbours on iOS.
                                 RoundedRectangle(cornerRadius: MinitiDesignSystem.Radius.control)
-                                    .stroke(ColorPalette.Accent.green, lineWidth: 2)
+                                    .strokeBorder(ColorPalette.Accent.green, lineWidth: 2)
                                     .opacity(isHighlighted ? 1 : 0)
                                     .allowsHitTesting(false)
                             }
+                            // While highlighted, trim the outer half of the label's own 1pt border so no
+                            // neutral line shows outside the ring. Clipping draws nothing, so the frame holds.
+                            .clipShape(RoundedRectangle(cornerRadius: MinitiDesignSystem.Radius.control)
+                                .inset(by: isHighlighted ? 0 : -1))
                             .scaleEffect(isHighlighted && !reduceMotion ? 1.06 : 1)
                     }
                     .buttonStyle(.plain)

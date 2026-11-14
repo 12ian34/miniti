@@ -2176,6 +2176,9 @@ struct MeetingDetailView: View {
                 Text("¶")
                 Text("\(meeting.segments.count)")
             }
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel(meeting.segments.count == 1 ? "1 segment" : "\(meeting.segments.count) segments")
+            .accessibilityIdentifier("meeting.segmentCount")
             if let provenance = meeting.provenanceDisplayName {
                 HStack(spacing: 4) {
                     Image(systemName: "tray.and.arrow.down")

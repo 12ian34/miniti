@@ -67,15 +67,45 @@ final class AccountJourneys: XCTestCase {
         }
     }
 
+    /// Scroll until an element is fully on screen: swipes on iOS, scroll-wheel steps in the
+    /// frontmost sheet (or window) on Mac, where swipe gestures have no hit point.
+    private func reveal(_ element: XCUIElement, attempts: Int = 8, slowSwipe: Bool = false) {
+        #if os(macOS)
+        guard element.waitForExistence(timeout: 5) else {
+            XCTFail("Nothing to reveal: \(element)\n\(app.debugDescription)"); return
+        }
+        let sheetScroll = app.sheets.scrollViews.firstMatch
+        let scroller = sheetScroll.exists ? sheetScroll : app.windows.firstMatch.scrollViews.firstMatch
+        guard scroller.exists else {
+            XCTFail("No scroll view to reveal \(element) in\n\(app.debugDescription)"); return
+        }
+        for _ in 0..<attempts where !(element.isHittable && scroller.frame.contains(element.frame)) {
+            scroller.scroll(byDeltaX: 0, deltaY: element.frame.midY < scroller.frame.minY ? 140 : -140)
+        }
+        #else
+        for _ in 0..<attempts where !element.isHittable {
+            if slowSwipe { app.swipeUp(velocity: .slow) } else { app.swipeUp() }
+        }
+        #endif
+    }
+
+    /// iOS has a History tab; the Mac sidebar shows "history, <count>" (collapsed: a clock
+    /// icon) once there are saved meetings. The count suffix keeps Coaching's "history" tab out.
+    private func openHistory() {
+        #if os(macOS)
+        let history = app.buttons.matching(NSPredicate(format: "identifier == 'clock.fill' OR label BEGINSWITH[c] 'history, '")).firstMatch
+        XCTAssertTrue(history.waitForExistence(timeout: 10), app.debugDescription)
+        history.click()
+        #else
+        app.buttons["History"].firstMatch.clickOrTap()
+        #endif
+    }
+
     private func openCoachingHistory(narrow: Bool = false) {
         launch(narrow ? "narrowCoaching" : "first", screenshotScene: "coaching")
         let history = app.buttons["coaching.tab.history"]
         XCTAssertTrue(history.waitForExistence(timeout: 10), app.debugDescription)
-        #if os(macOS)
-        history.click()
-        #else
-        history.tap()
-        #endif
+        history.clickOrTap()
         XCTAssertTrue(app.buttons["coaching.sort.date"].waitForExistence(timeout: 10), app.debugDescription)
     }
 
@@ -149,11 +179,7 @@ final class AccountJourneys: XCTestCase {
         launch(screenshotScene: "coaching")
         let stats = app.buttons["coaching.tab.stats"]
         XCTAssertTrue(stats.waitForExistence(timeout: 5), app.debugDescription)
-        #if os(macOS)
-        stats.click()
-        #else
-        stats.tap()
-        #endif
+        stats.clickOrTap()
         let values = app.staticTexts.matching(NSPredicate(format: "identifier BEGINSWITH %@", "coaching.stats.all."))
         XCTAssertTrue(values.firstMatch.waitForExistence(timeout: 5), app.debugDescription)
         XCTAssertEqual(values.count, 6, app.debugDescription)
@@ -226,11 +252,7 @@ final class AccountJourneys: XCTestCase {
 
     private func activateCoachingSort(_ button: XCUIElement) {
         let padding = button.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(dx: 2, dy: 2))
-        #if os(macOS)
-        padding.click()
-        #else
-        padding.tap()
-        #endif
+        padding.clickOrTap()
     }
 
     private func captureAppScreen(_ name: String, fullScreen: Bool = false) {
@@ -258,11 +280,11 @@ final class AccountJourneys: XCTestCase {
         let completionButtons = app.buttons.matching(NSPredicate(format: "label IN %@", ["[ ]", "[x]"]))
         XCTAssertEqual(completionButtons.count, 0,
                        "Meeting actions must not imply a completion state that is never saved")
-        action.tap()
+        action.clickOrTap()
         XCTAssertEqual(completionButtons.count, 0)
         XCTAssertFalse(app.keyboards.firstMatch.exists, "Action text is selectable, not editable")
-        app.buttons["meeting.section.notes"].tap()
-        app.buttons["meeting.section.insights"].tap()
+        app.buttons["meeting.section.notes"].clickOrTap()
+        app.buttons["meeting.section.insights"].clickOrTap()
         XCTAssertTrue(action.waitForExistence(timeout: 5))
         XCTAssertEqual(completionButtons.count, 0)
     }
@@ -366,7 +388,7 @@ final class AccountJourneys: XCTestCase {
         XCTAssertTrue(app.buttons["meeting.section.insights"].isSelected)
         for section in ["transcript", "notes"] {
             app.buttons["meeting.section.\(section)"].coordinate(withNormalizedOffset: .zero)
-                .withOffset(CGVector(dx: 2, dy: 2)).tap()
+                .withOffset(CGVector(dx: 2, dy: 2)).clickOrTap()
             for candidate in sections {
                 XCTAssertEqual(app.buttons["meeting.section.\(candidate)"].isSelected, candidate == section)
             }
@@ -374,14 +396,14 @@ final class AccountJourneys: XCTestCase {
         }
         let notes = app.textViews["meeting.notes.editor"]
         XCTAssertTrue(notes.waitForExistence(timeout: 5))
-        notes.tap()
+        notes.clickOrTap()
         notes.typeText(" UI2 retained note")
         let edited = notes.value as? String
         XCTAssertTrue(edited?.contains("UI2 retained note") == true)
-        app.buttons["meeting.section.insights"].tap()
+        app.buttons["meeting.section.insights"].clickOrTap()
         XCTAssertTrue(app.buttons["insights.update"].waitForExistence(timeout: 5))
         XCTAssertFalse(notes.exists)
-        app.buttons["meeting.section.notes"].tap()
+        app.buttons["meeting.section.notes"].clickOrTap()
         XCTAssertEqual(notes.value as? String, edited)
     }
 
@@ -418,7 +440,7 @@ final class AccountJourneys: XCTestCase {
         let title = app.staticTexts["Fillers"]
         XCTAssertTrue(title.exists)
         XCTAssertEqual(title.frame.midY, close.frame.midY, accuracy: 1)
-        close.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(dx: 2, dy: 2)).tap()
+        close.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(dx: 2, dy: 2)).clickOrTap()
         XCTAssertTrue(close.waitForNonExistence(timeout: 5))
         XCTAssertEqual(fillers.value as? String, originalSort,
                        "Opening metric help must not also change the sort")
@@ -502,10 +524,10 @@ final class AccountJourneys: XCTestCase {
         XCTAssertTrue(sales.waitForExistence(timeout: 5), app.debugDescription)
         sales.click()
         #else
-        more.tap()
+        more.clickOrTap()
         let sales = app.buttons["Sales"]
         XCTAssertTrue(sales.waitForExistence(timeout: 5), app.debugDescription)
-        sales.tap()
+        sales.clickOrTap()
         #endif
         assertSalesSectionOrder()
         captureAppScreen("Saved Sales sections")
@@ -632,11 +654,7 @@ final class AccountJourneys: XCTestCase {
             XCTAssertGreaterThanOrEqual(control.frame.width, minimum)
             XCTAssertGreaterThanOrEqual(control.frame.height, minimum)
             let coordinate = control.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(dx: 2, dy: 1))
-            #if os(macOS)
-            coordinate.click()
-            #else
-            coordinate.tap()
-            #endif
+            coordinate.clickOrTap()
         }
         let counts = app.staticTexts["update.fixture.counts"]
         let expected = "update=1 regenerate=1 disabled=0"
@@ -1181,7 +1199,7 @@ final class AccountJourneys: XCTestCase {
         listCapture.name = "Coaching list with minimum help targets"
         listCapture.lifetime = .keepAlways
         add(listCapture)
-        help.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(dx: 2, dy: 2)).tap()
+        help.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(dx: 2, dy: 2)).clickOrTap()
         let close = app.buttons["Close metric help"]
         XCTAssertTrue(close.waitForExistence(timeout: 5), app.debugDescription)
         XCTAssertGreaterThanOrEqual(close.frame.width, 44)
@@ -1194,7 +1212,7 @@ final class AccountJourneys: XCTestCase {
         capture.name = "Metric help with reachable named close action"
         capture.lifetime = .keepAlways
         add(capture)
-        close.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(dx: 2, dy: 2)).tap()
+        close.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(dx: 2, dy: 2)).clickOrTap()
         XCTAssertTrue(close.waitForNonExistence(timeout: 5))
         XCTAssertTrue(help.exists)
     }
@@ -1226,14 +1244,14 @@ final class AccountJourneys: XCTestCase {
         let ready = app.staticTexts["ui-test.readingMetrics"]
         XCTAssertTrue(ready.waitForExistence(timeout: 5))
         XCTAssertEqual(ready.label, "Reading scale \(scale), text \(largest ? "largest" : "normal")")
-        app.buttons["ui-test.hideStatus"].tap()
+        app.buttons["ui-test.hideStatus"].clickOrTap()
         XCTAssertTrue(app.staticTexts["ui-test.ready"].waitForNonExistence(timeout: 5))
         let guest = app.buttons["account.continueAnonymous"]
         for _ in 0..<8 {
             if guest.isHittable { break }
             app.swipeUp(velocity: .slow)
         }
-        XCTAssertTrue(guest.isHittable); guest.tap()
+        XCTAssertTrue(guest.isHittable); guest.clickOrTap()
         XCTAssertTrue(guest.waitForNonExistence(timeout: 10))
     }
 
@@ -1257,7 +1275,7 @@ final class AccountJourneys: XCTestCase {
         for title in ["Coaching", "History", "Record"] {
             let tab = navigationItem(title)
             XCTAssertTrue(tab.waitForExistence(timeout: 5))
-            XCTAssertTrue(tab.isHittable); tab.tap()
+            XCTAssertTrue(tab.isHittable); tab.clickOrTap()
             XCTAssertTrue(tab.isSelected)
         }
         let tabs = ["Record", "Coaching", "History"].map(navigationItem)
@@ -1274,12 +1292,12 @@ final class AccountJourneys: XCTestCase {
         // Native accessibility rectangles overlap on iOS 27. Centre dispatch
         // above is verified; these rectangles do not prove exclusive hit regions.
         captureAppScreen("Native tabs \(largest ? "largest" : "normal") scale \(scale)")
-        app.buttons["Settings"].tap()
+        app.buttons["Settings"].clickOrTap()
         let scope = app.buttons["ui-test.readingScope.settings"]
         XCTAssertTrue(scope.waitForExistence(timeout: 5))
         XCTAssertEqual(scope.label, "scale \(scale); reading \(largest ? "largest" : "normal"); controls \(largest ? "accessibility5" : ["large", "xLarge", "xxLarge"][scale])")
-        scope.tap(); XCTAssertTrue(scope.waitForNonExistence(timeout: 5))
-        app.staticTexts["Account"].firstMatch.tap()
+        scope.clickOrTap(); XCTAssertTrue(scope.waitForNonExistence(timeout: 5))
+        app.staticTexts["Account"].firstMatch.clickOrTap()
         let form = app.collectionViews.firstMatch
         let purchase = app.buttons["billing.purchase"]
         for _ in 0..<20 {
@@ -1322,7 +1340,7 @@ final class AccountJourneys: XCTestCase {
                           "Requires the coordinated simulator text-size run and restoration of the original setting.")
         executionTimeAllowance = 150
         enterBillingFixture(scale: 2, largest: false, realSystem: true)
-        app.buttons["Settings"].tap()
+        app.buttons["Settings"].clickOrTap()
         let scope = app.buttons["ui-test.readingScope.settings"]
         XCTAssertTrue(scope.waitForExistence(timeout: 5))
         XCTAssertEqual(scope.label, "scale 2; reading normal; controls xxLarge")
@@ -1330,8 +1348,8 @@ final class AccountJourneys: XCTestCase {
         let changed = XCTNSPredicateExpectation(predicate: NSPredicate(format: "label == %@", "scale 2; reading largest; controls accessibility5"), object: scope)
         XCTAssertEqual(XCTWaiter.wait(for: [changed], timeout: 90), .completed)
         captureAppScreen("Open Settings adopts actual OS largest text without relaunch")
-        scope.tap(); XCTAssertTrue(scope.waitForNonExistence(timeout: 5))
-        app.buttons["Done"].firstMatch.tap()
+        scope.clickOrTap(); XCTAssertTrue(scope.waitForNonExistence(timeout: 5))
+        app.buttons["Done"].firstMatch.clickOrTap()
         XCTAssertTrue(app.tabBars.firstMatch.waitForExistence(timeout: 5))
     }
 
@@ -1343,7 +1361,7 @@ final class AccountJourneys: XCTestCase {
         let ready = app.staticTexts["ui-test.readingMetrics"]
         XCTAssertTrue(ready.waitForExistence(timeout: 5))
         XCTAssertEqual(ready.label, "Reading scale 2, text largest")
-        app.buttons["ui-test.hideStatus"].tap()
+        app.buttons["ui-test.hideStatus"].clickOrTap()
         let transcript = app.buttons["meeting.section.transcript"]
         XCTAssertTrue(transcript.waitForExistence(timeout: 5))
         // The result recording is inspected during this hold, not after release.
@@ -1351,7 +1369,7 @@ final class AccountJourneys: XCTestCase {
         transcript.press(forDuration: 3)
         captureAppScreen("Meeting picker after native large-content hold")
         let notes = app.buttons["meeting.section.notes"]
-        notes.tap(); XCTAssertTrue(notes.isSelected)
+        notes.clickOrTap(); XCTAssertTrue(notes.isSelected)
         XCTAssertTrue(app.textViews["meeting.notes.editor"].waitForExistence(timeout: 5))
     }
 
@@ -1370,13 +1388,13 @@ final class AccountJourneys: XCTestCase {
                 if guest.isHittable { break }
                 app.swipeUp(velocity: .slow)
             }
-            guest.tap()
+            guest.clickOrTap()
             XCTAssertTrue(guest.waitForNonExistence(timeout: 10))
-            app.buttons["Settings"].tap()
+            app.buttons["Settings"].clickOrTap()
             let scope = app.buttons["ui-test.readingScope.settings"]
-            XCTAssertTrue(scope.waitForExistence(timeout: 5)); scope.tap()
+            XCTAssertTrue(scope.waitForExistence(timeout: 5)); scope.clickOrTap()
             XCTAssertTrue(scope.waitForNonExistence(timeout: 5))
-            app.staticTexts["Account"].firstMatch.tap()
+            app.staticTexts["Account"].firstMatch.clickOrTap()
             let id = "550e8400-e29b-41d4-a716-446655440000"
             let rename = app.buttons["account.rename.\(id)"]
             let remove = app.buttons["account.device.remove.\(id)"]
@@ -1398,13 +1416,13 @@ final class AccountJourneys: XCTestCase {
             frames.name = "Account device row \(largest ? "largest" : "normal")"
             frames.lifetime = .keepAlways; add(frames)
             captureAppScreen("Account device actions \(largest ? "largest" : "normal")")
-            rename.tap()
+            rename.clickOrTap()
             XCTAssertTrue(app.alerts.textFields["Device name"].waitForExistence(timeout: 5))
-            app.alerts.buttons["Cancel"].tap()
+            app.alerts.buttons["Cancel"].clickOrTap()
             XCTAssertTrue(app.alerts.firstMatch.waitForNonExistence(timeout: 5))
-            remove.tap()
+            remove.clickOrTap()
             XCTAssertTrue(app.alerts.firstMatch.waitForExistence(timeout: 5))
-            app.alerts.buttons["Cancel"].tap()
+            app.alerts.buttons["Cancel"].clickOrTap()
             XCTAssertTrue(app.alerts.firstMatch.waitForNonExistence(timeout: 5))
             XCTAssertTrue(rename.exists, "Cancelling removal keeps the fixture device")
             XCTAssertFalse(app.buttons["account.continueAnonymous"].exists)
@@ -1425,13 +1443,13 @@ final class AccountJourneys: XCTestCase {
             if guest.isHittable { break }
             app.swipeUp(velocity: .slow)
         }
-        guest.tap()
+        guest.clickOrTap()
         XCTAssertTrue(guest.waitForNonExistence(timeout: 10))
-        app.buttons["Settings"].tap()
+        app.buttons["Settings"].clickOrTap()
         let scope = app.buttons["ui-test.readingScope.settings"]
-        XCTAssertTrue(scope.waitForExistence(timeout: 5)); scope.tap()
+        XCTAssertTrue(scope.waitForExistence(timeout: 5)); scope.clickOrTap()
         XCTAssertTrue(scope.waitForNonExistence(timeout: 5))
-        app.staticTexts["Account"].firstMatch.tap()
+        app.staticTexts["Account"].firstMatch.clickOrTap()
         let form = app.collectionViews.firstMatch
         let identifiers = pending ? ["account.email.resend", "Change", "account.email.remove"] : ["account.email.retry"]
         for identifier in identifiers {
@@ -1475,13 +1493,13 @@ final class AccountJourneys: XCTestCase {
             if guest.isHittable { break }
             app.swipeUp(velocity: .slow)
         }
-        guest.tap()
+        guest.clickOrTap()
         XCTAssertTrue(guest.waitForNonExistence(timeout: 10))
-        app.buttons["Settings"].tap()
+        app.buttons["Settings"].clickOrTap()
         let scope = app.buttons["ui-test.readingScope.settings"]
-        XCTAssertTrue(scope.waitForExistence(timeout: 5)); scope.tap()
+        XCTAssertTrue(scope.waitForExistence(timeout: 5)); scope.clickOrTap()
         XCTAssertTrue(scope.waitForNonExistence(timeout: 5))
-        app.staticTexts["Account"].firstMatch.tap()
+        app.staticTexts["Account"].firstMatch.clickOrTap()
         let form = app.collectionViews.firstMatch
         let addEmail = app.buttons["account.email.add"]
         for _ in 0..<16 {
@@ -1490,7 +1508,7 @@ final class AccountJourneys: XCTestCase {
         }
         XCTAssertTrue(addEmail.isHittable)
         captureAppScreen("Account email entry \(largest ? "largest" : "normal") scale \(scale)")
-        addEmail.tap()
+        addEmail.clickOrTap()
         let field = app.textFields["account.email.draft"]
         XCTAssertTrue(field.waitForExistence(timeout: 5))
         // An address needs a usable editing width on this 393pt iPhone fixture.
@@ -1499,7 +1517,7 @@ final class AccountJourneys: XCTestCase {
         let cancel = app.buttons["account.email.cancel"]
         XCTAssertFalse(send.isEnabled)
         XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 5))
-        field.tap()
+        field.clickOrTap()
         field.typeText("layout@example.invalid")
         XCTAssertTrue(NSPredicate(format: "value == %@", "layout@example.invalid").evaluate(with: field))
         XCTAssertTrue(send.isEnabled)
@@ -1535,7 +1553,7 @@ final class AccountJourneys: XCTestCase {
         }
         XCTAssertFalse(send.frame.intersects(cancel.frame))
         captureAppScreen("Account email editing \(largest ? "largest" : "normal") scale \(scale)")
-        cancel.tap()
+        cancel.clickOrTap()
         XCTAssertTrue(field.waitForNonExistence(timeout: 5))
         XCTAssertTrue(app.keyboards.firstMatch.waitForNonExistence(timeout: 5))
     }
@@ -1558,13 +1576,13 @@ final class AccountJourneys: XCTestCase {
             if guest.isHittable { break }
             app.swipeUp(velocity: .slow)
         }
-        guest.tap()
+        guest.clickOrTap()
         XCTAssertTrue(guest.waitForNonExistence(timeout: 10))
-        app.buttons["Settings"].tap()
+        app.buttons["Settings"].clickOrTap()
         let scope = app.buttons["ui-test.readingScope.settings"]
-        XCTAssertTrue(scope.waitForExistence(timeout: 5)); scope.tap()
+        XCTAssertTrue(scope.waitForExistence(timeout: 5)); scope.clickOrTap()
         XCTAssertTrue(scope.waitForNonExistence(timeout: 5))
-        app.staticTexts["Account"].firstMatch.tap()
+        app.staticTexts["Account"].firstMatch.clickOrTap()
         let form = app.collectionViews.firstMatch
         let title = app.staticTexts["account.recovery.title"]
         for _ in 0..<16 {
@@ -1589,13 +1607,13 @@ final class AccountJourneys: XCTestCase {
             let sibling = app.buttons[identifier == "account.recovery.show" ? "account.recovery.replace" : "account.recovery.show"]
             XCTAssertFalse(button.frame.intersects(sibling.frame))
             captureAppScreen("Recovery row \(largest ? "largest" : "normal") scale \(scale) \(identifier)")
-            button.tap()
+            button.clickOrTap()
             let confirmation = app.buttons[identifier == "account.recovery.show" ? "Show key" : "Replace key"]
             XCTAssertTrue(confirmation.waitForExistence(timeout: 5))
             XCTAssertFalse(app.buttons[identifier == "account.recovery.show" ? "Replace key" : "Show key"].exists)
             let cancel = app.buttons["Cancel"].firstMatch
             if cancel.exists {
-                cancel.tap()
+                cancel.clickOrTap()
             } else {
                 // iOS 27 presents this native confirmation as a popover, with
                 // a dismissal region rather than a visible Cancel action.
@@ -1604,7 +1622,7 @@ final class AccountJourneys: XCTestCase {
                 let point = CGPoint(x: backdrop.frame.minX + backdrop.frame.width * 0.02,
                                     y: backdrop.frame.midY)
                 XCTAssertFalse(app.popovers.firstMatch.frame.contains(point))
-                backdrop.coordinate(withNormalizedOffset: CGVector(dx: 0.02, dy: 0.5)).tap()
+                backdrop.coordinate(withNormalizedOffset: CGVector(dx: 0.02, dy: 0.5)).clickOrTap()
             }
             XCTAssertTrue(confirmation.waitForNonExistence(timeout: 5))
             XCTAssertFalse(app.buttons["Hide"].exists)
@@ -1644,17 +1662,17 @@ final class AccountJourneys: XCTestCase {
         launch(waitsForApproval ? "accountFallbackWaiting" : succeeds ? "accountFallbackSuccess" : "accountFallbackFailure", largeText: largeText, interfaceScale: largeText ? 2 : 0)
         let settings = app.buttons["Settings"]
         XCTAssertTrue(settings.waitForExistence(timeout: 5))
-        settings.tap()
+        settings.clickOrTap()
         let scope = app.buttons["ui-test.readingScope.settings"]
         XCTAssertTrue(scope.waitForExistence(timeout: 5))
-        scope.tap()
-        app.staticTexts["Account"].firstMatch.tap()
+        scope.clickOrTap()
+        app.staticTexts["Account"].firstMatch.clickOrTap()
         let entry = app.buttons[recovery ? "Sign in with recovery key…" : "Sign in with email…"]
         XCTAssertTrue(entry.waitForExistence(timeout: 15), app.debugDescription)
-        entry.tap()
+        entry.clickOrTap()
         let probe = app.buttons["ui-test.readingScope.account" + (recovery ? "Key" : "Email") + "Restore"]
         XCTAssertTrue(probe.waitForExistence(timeout: 5))
-        probe.tap()
+        probe.clickOrTap()
         XCTAssertTrue(probe.waitForNonExistence(timeout: 5))
         let field = recovery
             ? app.textFields.matching(NSPredicate(format: "placeholderValue BEGINSWITH 'M1-'")).firstMatch
@@ -1667,13 +1685,13 @@ final class AccountJourneys: XCTestCase {
             }
         }
         XCTAssertTrue(field.isHittable)
-        field.tap()
+        field.clickOrTap()
         field.typeText(recovery ? "M1-000G-40R4-0M30-E209-185G-R38E-1WET-S870" : "fixture@example.invalid")
         let submit = recovery
             ? app.buttons.matching(NSPredicate(format: "label == %@ AND identifier != %@", "Sign in", "account.signIn")).element
             : app.buttons["Send link"]
         XCTAssertTrue(submit.isEnabled)
-        submit.tap()
+        submit.clickOrTap()
         if waitsForApproval {
             let status = app.staticTexts["account.emailSignIn.waiting"]
             XCTAssertTrue(status.waitForExistence(timeout: 10))
@@ -1681,7 +1699,7 @@ final class AccountJourneys: XCTestCase {
             XCTAssertFalse(field.isEnabled)
             XCTAssertFalse(submit.isEnabled)
             captureAppScreen("Email awaiting approval at largest text")
-            app.buttons["Cancel"].firstMatch.tap()
+            app.buttons["Cancel"].firstMatch.clickOrTap()
             XCTAssertTrue(app.buttons["Cancel"].firstMatch.waitForNonExistence(timeout: 5))
         } else if succeeds {
             XCTAssertTrue(app.buttons["Cancel"].firstMatch.waitForNonExistence(timeout: 20))
@@ -1718,7 +1736,7 @@ final class AccountJourneys: XCTestCase {
                 XCTAssertLessThanOrEqual(sheetError.frame.maxY, keyboard.frame.minY)
             }
             captureAppScreen("Fallback restore failure retains sheet and input")
-            app.buttons["Cancel"].firstMatch.tap()
+            app.buttons["Cancel"].firstMatch.clickOrTap()
             XCTAssertTrue(app.buttons["Cancel"].firstMatch.waitForNonExistence(timeout: 5))
             XCTAssertTrue(entry.waitForExistence(timeout: 5))
         }
@@ -1782,21 +1800,21 @@ final class AccountJourneys: XCTestCase {
                 app.swipeUp(velocity: .slow)
             }
             XCTAssertTrue(guest.isHittable)
-            guest.tap()
+            guest.clickOrTap()
             XCTAssertTrue(guest.waitForNonExistence(timeout: 10))
         }
         let settings = app.buttons["Settings"]
         XCTAssertTrue(settings.waitForExistence(timeout: 5))
         XCTAssertTrue(settings.isHittable)
-        settings.tap()
+        settings.clickOrTap()
         let settingsScope = app.buttons["ui-test.readingScope.settings"]
         XCTAssertTrue(settingsScope.waitForExistence(timeout: 5))
-        settingsScope.tap()
+        settingsScope.clickOrTap()
         XCTAssertTrue(settingsScope.waitForNonExistence(timeout: 5))
         let account = app.staticTexts["Account"].firstMatch
         XCTAssertTrue(account.waitForExistence(timeout: 5))
         XCTAssertTrue(account.isHittable)
-        account.tap()
+        account.clickOrTap()
         let form = app.collectionViews.firstMatch
         XCTAssertTrue(form.waitForExistence(timeout: 5))
         let menu = app.buttons[move ? "Switch account…" : "Sign in again…"]
@@ -1825,15 +1843,15 @@ final class AccountJourneys: XCTestCase {
         menu.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(
             dx: menuLabel.frame.midX - menu.frame.minX,
             dy: menuLabel.frame.midY - menu.frame.minY
-        )).tap()
+        )).clickOrTap()
         let method = app.buttons[recovery ? "With recovery key…" : "With email…"]
         XCTAssertTrue(method.waitForExistence(timeout: 5))
-        method.tap()
+        method.clickOrTap()
         let name = "account" + (recovery ? "Key" : "Email") + (move ? "Move" : "Restore")
         let probe = app.buttons["ui-test.readingScope.\(name)"]
         XCTAssertTrue(probe.waitForExistence(timeout: 5))
         XCTAssertEqual(probe.label, "scale 2; reading \(largeText ? "largest" : "normal"); controls \(largeText ? "accessibility5" : "xxLarge")")
-        probe.tap()
+        probe.clickOrTap()
         XCTAssertTrue(probe.waitForNonExistence(timeout: 5))
         let submit = recovery && !move
             ? app.buttons.matching(NSPredicate(format: "label == %@ AND identifier != %@", "Sign in", "account.signIn")).element
@@ -1846,7 +1864,7 @@ final class AccountJourneys: XCTestCase {
         let cancel = app.buttons["Cancel"].firstMatch
         XCTAssertTrue(cancel.waitForExistence(timeout: 5))
         XCTAssertTrue(cancel.isHittable)
-        cancel.tap()
+        cancel.clickOrTap()
         XCTAssertTrue(cancel.waitForNonExistence(timeout: 5))
         XCTAssertTrue(app.navigationBars["Account"].waitForExistence(timeout: 5))
         app.terminate()
@@ -1889,21 +1907,21 @@ final class AccountJourneys: XCTestCase {
             app.swipeUp(velocity: .slow)
         }
         XCTAssertTrue(signIn.isHittable)
-        signIn.tap()
+        signIn.clickOrTap()
         let email = app.textFields["Email"]
         XCTAssertTrue(email.waitForExistence(timeout: 5))
         if recovery {
             let useKey = app.buttons["Use a recovery key"]
             XCTAssertTrue(useKey.waitForExistence(timeout: 5))
             XCTAssertTrue(useKey.isHittable)
-            useKey.tap()
+            useKey.clickOrTap()
             XCTAssertTrue(app.textFields.matching(NSPredicate(format: "placeholderValue BEGINSWITH 'M1-'")).firstMatch.waitForExistence(timeout: 5))
         }
         let name = recovery ? "accessRecovery" : "accessEmail"
         let probe = app.buttons["ui-test.readingScope.\(name)"]
         XCTAssertTrue(probe.waitForExistence(timeout: 5))
         XCTAssertEqual(probe.label, "scale \(scale); reading \(largeText ? "largest" : "normal"); controls \(largeText ? "accessibility5" : ["large", "xLarge", "xxLarge"][scale])")
-        probe.tap()
+        probe.clickOrTap()
         XCTAssertTrue(probe.waitForNonExistence(timeout: 5))
         let submit = app.buttons.matching(NSPredicate(
             format: "label == %@ AND identifier != %@", recovery ? "Sign in" : "Send link", "account.signIn"
@@ -1916,7 +1934,7 @@ final class AccountJourneys: XCTestCase {
         let cancel = app.buttons["Cancel"].firstMatch
         XCTAssertTrue(cancel.waitForExistence(timeout: 5))
         XCTAssertTrue(cancel.isHittable)
-        cancel.tap()
+        cancel.clickOrTap()
         XCTAssertTrue(cancel.waitForNonExistence(timeout: 5))
         XCTAssertTrue(app.buttons["account.continueAnonymous"].waitForExistence(timeout: 5))
         app.terminate()
@@ -1934,7 +1952,7 @@ final class AccountJourneys: XCTestCase {
             app.scrollViews["account.emailSignIn.scroll"].swipeUp(velocity: .slow)
         }
         XCTAssertTrue(field.isHittable)
-        field.tap()
+        field.clickOrTap()
         let keyboard = app.keyboards.firstMatch
         XCTAssertTrue(keyboard.waitForExistence(timeout: 5))
         field.typeText("layout@example.invalid")
@@ -1983,7 +2001,7 @@ final class AccountJourneys: XCTestCase {
         XCTAssertTrue(field.isHittable)
         XCTAssertGreaterThanOrEqual(field.frame.width, 280)
         if largeText { XCTAssertGreaterThanOrEqual(field.frame.height, 40) }
-        field.tap()
+        field.clickOrTap()
         let key = "M1-000G-40R4-0M30-E209-185G-R38E-1WET-S870"
         field.typeText(key)
         XCTAssertEqual(field.value as? String, key)
@@ -2054,19 +2072,19 @@ final class AccountJourneys: XCTestCase {
         if preparing {
             XCTAssertTrue(event.waitForExistence(timeout: 10), app.debugDescription)
             XCTAssertTrue(event.isHittable)
-            event.tap()
+            event.clickOrTap()
         }
         let scope = app.buttons["ui-test.readingScope.\(name)"]
         XCTAssertTrue(scope.waitForExistence(timeout: 10), app.debugDescription)
         XCTAssertEqual(scope.label, "scale \(scale); reading \(largeText ? "largest" : "normal"); controls \(largeText ? "accessibility5" : ["large", "xLarge", "xxLarge"][scale])")
-        scope.tap()
+        scope.clickOrTap()
         XCTAssertTrue(scope.waitForNonExistence(timeout: 5))
         captureAppScreen("\(name) \(largeText ? "largest" : "normal") scale \(scale)")
         if preparing { assertEventPreparationLayout(largeText: largeText, scale: scale) }
         let close = app.buttons[name == "liveCatchUp" ? "close" : "Done"]
         XCTAssertTrue(close.waitForExistence(timeout: 5))
         XCTAssertTrue(close.isHittable)
-        close.tap()
+        close.clickOrTap()
         XCTAssertTrue(close.waitForNonExistence(timeout: 5))
         if preparing { XCTAssertTrue(event.waitForExistence(timeout: 5)) }
         else { XCTAssertTrue(app.buttons["meeting.section.transcript"].waitForExistence(timeout: 5)) }
@@ -2158,23 +2176,23 @@ final class AccountJourneys: XCTestCase {
         if renaming {
             let transcript = app.buttons["meeting.section.transcript"]
             XCTAssertTrue(transcript.waitForExistence(timeout: 10))
-            transcript.tap()
+            transcript.clickOrTap()
             entry = app.buttons["Marcus Lee"].firstMatch
         } else {
             entry = app.buttons["About fillers"].firstMatch
         }
         XCTAssertTrue(entry.waitForExistence(timeout: 10), app.debugDescription)
-        entry.tap()
+        entry.clickOrTap()
         let scope = app.buttons["ui-test.readingScope.\(renaming ? "speakerRename" : "savedMetricHelp")"]
         XCTAssertTrue(scope.waitForExistence(timeout: 5), app.debugDescription)
         XCTAssertEqual(scope.label, "scale \(scale); reading \(largeText ? "largest" : "normal"); controls \(largeText ? "accessibility5" : ["large", "xLarge", "xxLarge"][scale])")
-        scope.tap()
+        scope.clickOrTap()
         XCTAssertTrue(scope.waitForNonExistence(timeout: 5))
         captureAppScreen("History \(renaming ? "speaker rename" : "metric help") \(largeText ? "largest" : "normal") scale \(scale)")
         let close = app.buttons[renaming ? "cancel" : "Close metric help"]
         XCTAssertTrue(close.waitForExistence(timeout: 5))
         XCTAssertTrue(close.isHittable)
-        close.tap()
+        close.clickOrTap()
         XCTAssertTrue(close.waitForNonExistence(timeout: 5))
         XCTAssertTrue(entry.waitForExistence(timeout: 5))
         app.terminate()
@@ -2185,13 +2203,13 @@ final class AccountJourneys: XCTestCase {
         let guest = app.buttons["Fixture guest"]
         XCTAssertTrue(guest.waitForExistence(timeout: 5), app.debugDescription)
         XCTAssertTrue(app.staticTexts["(you + 1 remote)"].exists)
-        guest.tap()
+        guest.clickOrTap()
         XCTAssertTrue(app.staticTexts["Action: rename:0"].waitForExistence(timeout: 2))
         let attendee = app.buttons.matching(NSPredicate(format: "label CONTAINS %@", "ada@example.invalid")).firstMatch
         for _ in 0..<3 where !attendee.isHittable { app.swipeUp() }
         XCTAssertTrue(attendee.isHittable, app.debugDescription)
         XCTAssertTrue(app.staticTexts["diarization sometimes splits one person across IDs. mark each one."].exists)
-        attendee.tap()
+        attendee.clickOrTap()
         XCTAssertTrue(app.staticTexts["Action: picked:ada@example.invalid"].waitForExistence(timeout: 2))
         captureAppScreen("Speaker guidance and attendee selection")
     }
@@ -2214,7 +2232,7 @@ final class AccountJourneys: XCTestCase {
         let row = app.buttons["docs.topic.fixture topic"]
         XCTAssertTrue(row.waitForExistence(timeout: 5), app.debugDescription)
         XCTAssertTrue(app.staticTexts["no docs match this topic"].exists)
-        row.tap()
+        row.clickOrTap()
         XCTAssertTrue(app.staticTexts["lookups=1"].waitForExistence(timeout: 2))
         captureAppScreen("Docs no-match retry dispatch")
 
@@ -2231,14 +2249,14 @@ final class AccountJourneys: XCTestCase {
             let row = app.buttons["docs.topic.fixture topic"]
             XCTAssertTrue(row.waitForExistence(timeout: 5), app.debugDescription)
             XCTAssertTrue(app.buttons["Copy answer"].exists)
-            row.tap()
+            row.clickOrTap()
             XCTAssertTrue(app.images["chevron.down"].waitForExistence(timeout: 2), app.debugDescription)
             XCTAssertFalse(app.buttons["Copy answer"].exists)
             XCTAssertFalse(app.textViews.firstMatch.exists)
             if scenario == "docsGuidance-answered" {
                 XCTAssertFalse(app.staticTexts["A synthetic grounded citation snippet."].exists)
             }
-            row.tap()
+            row.clickOrTap()
             XCTAssertTrue(app.images["chevron.up"].waitForExistence(timeout: 2))
             XCTAssertTrue(app.buttons["Copy answer"].exists)
             XCTAssertTrue(app.textViews.firstMatch.exists)
@@ -2268,7 +2286,7 @@ final class AccountJourneys: XCTestCase {
         XCTAssertTrue(copy.waitForExistence(timeout: 10), app.debugDescription)
         XCTAssertGreaterThanOrEqual(copy.frame.width, 44)
         XCTAssertGreaterThanOrEqual(copy.frame.height, 44)
-        copy.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(dx: 2, dy: 2)).tap()
+        copy.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(dx: 2, dy: 2)).clickOrTap()
         XCTAssertTrue(app.buttons["Answer copied"].waitForExistence(timeout: 2))
         captureAppScreen("Shared docs Copy feedback")
     }
@@ -2279,7 +2297,7 @@ final class AccountJourneys: XCTestCase {
         XCTAssertTrue(copy.waitForExistence(timeout: 10), app.debugDescription)
         XCTAssertGreaterThanOrEqual(copy.frame.width, 44)
         XCTAssertGreaterThanOrEqual(copy.frame.height, 44)
-        copy.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(dx: 2, dy: 2)).tap()
+        copy.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(dx: 2, dy: 2)).clickOrTap()
         XCTAssertTrue(app.buttons["Question copied"].waitForExistence(timeout: 2))
         captureAppScreen("Shared question Copy feedback")
     }
@@ -2295,39 +2313,39 @@ final class AccountJourneys: XCTestCase {
         XCTAssertEqual(left.frame.maxX, right.frame.minX, accuracy: 0.5)
         XCTAssertLessThanOrEqual(left.frame.maxX, right.frame.minX)
         // The top two points are outside the unchanged 30-point visual chrome.
-        left.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(dx: 2, dy: 2)).tap()
+        left.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(dx: 2, dy: 2)).clickOrTap()
         XCTAssertEqual(app.staticTexts["target.counts"].label, "left=1 right=0")
         let edge = left.coordinate(withNormalizedOffset: .zero)
             .withOffset(CGVector(dx: left.frame.width, dy: left.frame.height / 2))
-        edge.withOffset(CGVector(dx: -1, dy: 0)).tap()
+        edge.withOffset(CGVector(dx: -1, dy: 0)).clickOrTap()
         XCTAssertEqual(app.staticTexts["target.counts"].label, "left=2 right=0")
-        edge.withOffset(CGVector(dx: 1, dy: 0)).tap()
+        edge.withOffset(CGVector(dx: 1, dy: 0)).clickOrTap()
         XCTAssertEqual(app.staticTexts["target.counts"].label, "left=2 right=1")
-        edge.tap()
+        edge.clickOrTap()
         XCTAssertEqual(app.staticTexts["target.counts"].label, "left=2 right=2", "The trailing control owns the exact shared edge")
 
         let focus = app.buttons["target.tab.focus"], stats = app.buttons["target.tab.stats"], history = app.buttons["target.tab.history"]
         XCTAssertLessThanOrEqual(focus.frame.maxX, stats.frame.minX)
         XCTAssertLessThanOrEqual(stats.frame.maxX, history.frame.minX)
-        stats.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(dx: 2, dy: 2)).tap()
+        stats.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(dx: 2, dy: 2)).clickOrTap()
         XCTAssertEqual(app.staticTexts["target.selected"].label, "stats")
         XCTAssertTrue(stats.isSelected)
 
         let menu = app.buttons["target.menu"]
         XCTAssertGreaterThanOrEqual(menu.frame.height, 44)
-        menu.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(dx: 2, dy: 2)).tap()
-        app.buttons["Choose"].tap()
+        menu.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(dx: 2, dy: 2)).clickOrTap()
+        app.buttons["Choose"].clickOrTap()
         XCTAssertEqual(app.staticTexts["target.menuCounts"].label, "menu=1 disabled=0")
         let disabled = app.buttons["target.disabled"]
         XCTAssertFalse(disabled.isEnabled)
-        disabled.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(dx: 2, dy: 2)).tap()
+        disabled.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(dx: 2, dy: 2)).clickOrTap()
         XCTAssertEqual(app.staticTexts["target.menuCounts"].label, "menu=1 disabled=0")
         XCTAssertFalse(app.buttons["Choose"].exists, "Disabled padding must not open the neighbouring menu")
         let details = app.buttons["details"]
         XCTAssertGreaterThanOrEqual(details.frame.height, 44)
         // Native grouped Forms clip the row's rounded corners. Probe its top
         // centre, inside that native surface and outside the compact label.
-        details.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(dx: details.frame.width / 2, dy: 2)).tap()
+        details.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(dx: details.frame.width / 2, dy: 2)).clickOrTap()
         XCTAssertTrue(app.staticTexts["target.disclosed"].waitForExistence(timeout: 3))
         let capture = XCTAttachment(screenshot: app.screenshot())
         capture.name = "Shared controls, native target frames and actions"
@@ -2341,7 +2359,7 @@ final class AccountJourneys: XCTestCase {
         XCTAssertTrue(associate.waitForExistence(timeout: 10), app.debugDescription)
         XCTAssertTrue(app.buttons["Keep recording"].exists)
         XCTAssertFalse(app.buttons["End meeting"].exists)
-        associate.tap()
+        associate.clickOrTap()
         XCTAssertTrue(associate.waitForNonExistence(timeout: 5))
         XCTAssertFalse(app.buttons["resume recording"].exists)
         XCTAssertTrue(app.buttons["stop"].exists, "Association must keep the current recording running")
@@ -2389,9 +2407,9 @@ final class AccountJourneys: XCTestCase {
             let scope = app.buttons["ui-test.readingScope.consent.\(first ? "first" : "sheet")"]
             XCTAssertTrue(scope.waitForExistence(timeout: 5))
             XCTAssertEqual(scope.label, "scale \(scale); reading \(largest ? "largest" : "normal"); controls \(largest ? "accessibility5" : "large")")
-            scope.tap(); XCTAssertTrue(scope.waitForNonExistence(timeout: 5))
+            scope.clickOrTap(); XCTAssertTrue(scope.waitForNonExistence(timeout: 5))
             if first {
-                app.buttons["ui-test.hideStatus"].tap()
+                app.buttons["ui-test.hideStatus"].clickOrTap()
                 XCTAssertTrue(app.staticTexts["ui-test.ready"].waitForNonExistence(timeout: 5))
             }
             for id in ["consent.allow", "consent.decline"] {
@@ -2452,9 +2470,9 @@ final class AccountJourneys: XCTestCase {
         XCTAssertTrue(signIn.isHittable, app.debugDescription)
         XCTAssertGreaterThanOrEqual(signIn.frame.height, 44)
         if requiresFullBounds { revealLandscapeChoice(signIn) }
-        signIn.tap()
+        signIn.clickOrTap()
         XCTAssertTrue(app.textFields["Email"].waitForExistence(timeout: 5))
-        app.buttons["Cancel"].firstMatch.tap()
+        app.buttons["Cancel"].firstMatch.clickOrTap()
         let continueButton = app.buttons["account.continueAnonymous"]
         for _ in 0..<3 where !continueButton.isHittable { app.swipeUp() }
         XCTAssertTrue(continueButton.isHittable, app.debugDescription)
@@ -2464,7 +2482,7 @@ final class AccountJourneys: XCTestCase {
         evidence.name = "First launch choices after sign-in cancellation"
         evidence.lifetime = .keepAlways
         self.add(evidence)
-        continueButton.tap()
+        continueButton.clickOrTap()
         XCTAssertTrue(app.buttons["Test microphone"].waitForExistence(timeout: 10))
     }
     #endif
@@ -2472,23 +2490,23 @@ final class AccountJourneys: XCTestCase {
     func testUnavailableEnrollmentAllowsExplicitOfflineSetup() {
         launch("onboardingOffline")
         XCTAssertFalse(app.buttons["account.continueOffline"].exists)
-        app.buttons["account.continueAnonymous"].tap()
+        app.buttons["account.continueAnonymous"].clickOrTap()
         let offline = app.buttons["account.continueOffline"]
         XCTAssertTrue(offline.waitForExistence(timeout: 15), app.debugDescription)
-        offline.tap()
+        offline.clickOrTap()
         XCTAssertTrue(app.buttons["Test microphone"].waitForExistence(timeout: 10))
-        app.buttons["Set up microphone later"].tap()
+        app.buttons["Set up microphone later"].clickOrTap()
         #if os(macOS)
-        app.buttons["I'll start recordings myself"].tap()
+        app.buttons["I'll start recordings myself"].clickOrTap()
         #endif
-        XCTAssertTrue(app.buttons["start meeting"].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.buttons["home.start"].waitForExistence(timeout: 10))
         XCTAssertTrue(app.buttons["account.signIn"].exists, "Offline setup must not invent an enrolled account")
     }
 
     func testAnonymousContinueShowsProgressWhileEnrollmentIsPending() {
         launch("onboardingPending")
         let button = app.buttons["account.continueAnonymous"]
-        button.tap()
+        button.clickOrTap()
         XCTAssertTrue(app.staticTexts["Setting up your account..."].waitForExistence(timeout: 5))
         XCTAssertFalse(button.isEnabled)
         XCTAssertFalse(app.buttons["Test microphone"].exists)
@@ -2496,11 +2514,11 @@ final class AccountJourneys: XCTestCase {
 
     func testHomeAnonymousContinueShowsProgressWhileEnrollmentIsPending() {
         launch("homePending")
-        XCTAssertTrue(app.buttons["start meeting"].exists)
+        XCTAssertTrue(app.buttons["home.start"].exists)
         let initialCapture = XCTAttachment(screenshot: app.screenshot())
         initialCapture.name = "Home account choices and centered feedback"; initialCapture.lifetime = .keepAlways; add(initialCapture)
         let button = app.buttons["account.continueAnonymous"]
-        button.tap()
+        button.clickOrTap()
         XCTAssertTrue(app.staticTexts["Setting up your account..."].waitForExistence(timeout: 5))
         XCTAssertFalse(button.isEnabled)
         let capture = XCTAttachment(screenshot: app.screenshot())
@@ -2510,53 +2528,49 @@ final class AccountJourneys: XCTestCase {
     func testHomeAnonymousContinueShowsFailureAndAllowsRetry() {
         launch("homeOffline")
         let button = app.buttons["account.continueAnonymous"]
-        button.tap()
-        let error = app.staticTexts.matching(NSPredicate(format: "identifier == 'account.setupMessage' AND label CONTAINS[c] 'unavailable'")).firstMatch
+        button.clickOrTap()
+        let error = app.staticTexts.matching(NSPredicate(format: "identifier == 'account.setupMessage' AND (label CONTAINS[c] 'unavailable' OR value CONTAINS[c] 'unavailable')")).firstMatch
         XCTAssertTrue(error.waitForExistence(timeout: 5), app.debugDescription)
         XCTAssertTrue(button.isEnabled)
-        XCTAssertTrue(app.buttons["start meeting"].exists)
+        XCTAssertTrue(app.buttons["home.start"].exists)
     }
 
     func testAnonymousContinueDoesNotWaitForUsageAfterEnrollment() {
         launch("onboardingSlowUsage")
-        app.buttons["account.continueAnonymous"].tap()
+        app.buttons["account.continueAnonymous"].clickOrTap()
         XCTAssertTrue(app.buttons["Test microphone"].waitForExistence(timeout: 5), app.debugDescription)
     }
 
     func testAnonymousContinueSelectsManagedModeFromPreviousBYOKChoice() {
         launch("onboardingBYOK")
-        app.buttons["account.continueAnonymous"].tap()
+        app.buttons["account.continueAnonymous"].clickOrTap()
         XCTAssertTrue(app.buttons["Test microphone"].waitForExistence(timeout: 5), app.debugDescription)
     }
 
     func testOnboardingOffersExplicitChoicesAndCancellationKeepsFirstStep() {
         launch("onboarding")
         XCTAssertTrue(app.buttons["account.continueAnonymous"].exists)
-        app.buttons["account.signIn"].tap()
+        app.buttons["account.signIn"].clickOrTap()
         XCTAssertTrue(app.textFields["Email"].waitForExistence(timeout: 5))
-        app.buttons["Cancel"].firstMatch.tap()
+        app.buttons["Cancel"].firstMatch.clickOrTap()
         XCTAssertTrue(app.buttons["account.continueAnonymous"].waitForExistence(timeout: 5))
         XCTAssertFalse(app.buttons["Test microphone"].exists)
-        app.buttons["account.continueAnonymous"].tap()
+        app.buttons["account.continueAnonymous"].clickOrTap()
         XCTAssertTrue(app.buttons["Test microphone"].waitForExistence(timeout: 10), app.debugDescription)
-        app.buttons["Set up microphone later"].tap()
+        app.buttons["Set up microphone later"].clickOrTap()
         #if os(macOS)
-        app.buttons["I'll start recordings myself"].tap()
+        app.buttons["I'll start recordings myself"].clickOrTap()
         #endif
-        XCTAssertTrue(app.buttons["start meeting"].waitForExistence(timeout: 10), app.debugDescription)
+        XCTAssertTrue(app.buttons["home.start"].waitForExistence(timeout: 10), app.debugDescription)
         XCTAssertFalse(app.buttons["account.continueAnonymous"].exists)
     }
 
     func testFirstUseCancellationDoesNotCreateAnAccount() {
         launch()
         XCTAssertTrue(app.buttons["account.continueAnonymous"].exists)
-        #if os(macOS)
-        app.buttons["account.signIn"].click()
-        #else
-        app.buttons["account.signIn"].tap()
-        #endif
+        app.buttons["account.signIn"].clickOrTap()
         XCTAssertTrue(app.textFields["Email"].waitForExistence(timeout: 5))
-        app.buttons["Cancel"].firstMatch.tap()
+        app.buttons["Cancel"].firstMatch.clickOrTap()
         XCTAssertTrue(app.buttons["account.continueAnonymous"].waitForExistence(timeout: 5))
         app.terminate()
         launch()
@@ -2565,7 +2579,7 @@ final class AccountJourneys: XCTestCase {
 
     func testExplicitContinuePersistsAndHealthyLaunchKeepsAccount() {
         launch()
-        app.buttons["account.continueAnonymous"].tap()
+        app.buttons["account.continueAnonymous"].clickOrTap()
         XCTAssertTrue(app.buttons["account.continueAnonymous"].waitForNonExistence(timeout: 10))
         app.terminate()
         launch()
@@ -2577,25 +2591,31 @@ final class AccountJourneys: XCTestCase {
         XCTAssertFalse(app.buttons["Set up this device again"].exists)
         XCTAssertTrue(app.buttons["Try again"].exists)
         XCTAssertFalse(app.buttons["account.continueAnonymous"].exists)
-        app.buttons["account.signIn"].tap()
-        app.buttons["Use a recovery key"].tap()
+        app.buttons["account.signIn"].clickOrTap()
+        app.buttons["Use a recovery key"].clickOrTap()
         XCTAssertTrue(app.textFields.matching(NSPredicate(format: "placeholderValue BEGINSWITH 'M1-'")).firstMatch.waitForExistence(timeout: 5))
     }
 
     func testCorruptCredentialOffersExplicitResetConfirmation() {
         launch("corrupt")
-        app.buttons["Set up this device again"].tap()
-        XCTAssertTrue(app.buttons["Cancel"].firstMatch.waitForExistence(timeout: 5), app.debugDescription)
-        app.buttons["Cancel"].firstMatch.tap()
+        app.buttons["Set up this device again"].clickOrTap()
+        #if os(macOS)
+        // Touch Bar mirrors of Cancel cannot be clicked; stay inside the windows.
+        let cancel = app.windows.buttons["Cancel"].firstMatch
+        #else
+        let cancel = app.buttons["Cancel"].firstMatch
+        #endif
+        XCTAssertTrue(cancel.waitForExistence(timeout: 5), app.debugDescription)
+        cancel.clickOrTap()
         XCTAssertTrue(app.buttons["account.signIn"].exists)
     }
     func testThrottledContinueShowsPersistedRetryDeadline() {
         launch("throttled")
-        app.buttons["account.continueAnonymous"].tap()
+        app.buttons["account.continueAnonymous"].clickOrTap()
         let retry = app.buttons["account.retrySetup"]
         XCTAssertTrue(retry.waitForExistence(timeout: 10), app.debugDescription)
         XCTAssertFalse(retry.isEnabled)
-        XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "label CONTAINS 'Try again after'")).firstMatch.exists)
+        XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "label CONTAINS 'Try again after' OR value CONTAINS 'Try again after'")).firstMatch.exists)
         app.terminate(); launch("throttled")
         XCTAssertTrue(app.buttons["account.retrySetup"].exists)
         XCTAssertFalse(app.buttons["account.retrySetup"].isEnabled)
@@ -2604,8 +2624,8 @@ final class AccountJourneys: XCTestCase {
     func testRevokedChoicePersistsAndRecordDoesNotCreateAnAccount() {
         launch("revoked")
         XCTAssertTrue(app.buttons["account.continueAnonymous"].exists)
-        let start = app.buttons["start meeting"]
-        if start.exists { start.tap() }
+        let start = app.buttons["home.start"]
+        if start.exists { start.clickOrTap() }
         XCTAssertTrue(app.buttons["account.signIn"].waitForExistence(timeout: 5))
         app.terminate(); launch("revoked")
         XCTAssertTrue(app.buttons["account.continueAnonymous"].exists)
@@ -2613,11 +2633,11 @@ final class AccountJourneys: XCTestCase {
 
     func testEmailSignInCompletesThroughTheActualSheet() {
         launch()
-        app.buttons["account.signIn"].tap()
+        app.buttons["account.signIn"].clickOrTap()
         let email = app.textFields["Email"]
         XCTAssertTrue(email.waitForExistence(timeout: 5))
-        email.tap(); email.typeText("fixture@example.invalid")
-        app.buttons["Send link"].tap()
+        email.clickOrTap(); email.typeText("fixture@example.invalid")
+        app.buttons["Send link"].clickOrTap()
         XCTAssertTrue(app.buttons["account.continueAnonymous"].waitForNonExistence(timeout: 15), app.debugDescription)
         app.terminate(); launch()
         XCTAssertFalse(app.buttons["account.continueAnonymous"].exists)
@@ -2625,16 +2645,19 @@ final class AccountJourneys: XCTestCase {
 
     func testSettingsDeviceNameCancelAndSignOutKeepExplicitChoice() {
         launch()
-        app.buttons["account.continueAnonymous"].tap()
+        app.buttons["account.continueAnonymous"].clickOrTap()
         XCTAssertTrue(app.buttons["account.continueAnonymous"].waitForNonExistence(timeout: 10))
         #if os(iOS)
-        app.buttons["gearshape"].tap()
+        app.buttons["gearshape"].clickOrTap()
         let account = app.staticTexts["Account"].firstMatch
         XCTAssertTrue(account.waitForExistence(timeout: 5), app.debugDescription)
-        account.tap()
+        account.clickOrTap()
         #else
         app.typeKey(",", modifierFlags: .command)
-        app.buttons["Account"].firstMatch.tap()
+        let settingsWindow = app.windows.containing(.textField, identifier: "Search settings").firstMatch
+        XCTAssertTrue(settingsWindow.waitForExistence(timeout: 5), app.debugDescription)
+        let accountTab = settingsWindow.staticTexts["Account"].firstMatch
+        XCTAssertTrue(accountTab.waitForExistence(timeout: 5)); accountTab.click()
         #endif
         let rename = app.buttons["account.rename.550e8400-e29b-41d4-a716-446655440000"]
         #if os(iOS)
@@ -2645,16 +2668,27 @@ final class AccountJourneys: XCTestCase {
             form.swipeUp(velocity: .slow)
         }
         #else
-        for _ in 0..<8 where !rename.isHittable { app.swipeUp() }
+        revealMacAccountControl(rename, in: settingsWindow)
         #endif
         XCTAssertTrue(rename.isHittable, app.debugDescription)
-        rename.tap()
+        rename.clickOrTap()
         XCTAssertTrue(app.textFields["Device name"].waitForExistence(timeout: 5), app.debugDescription)
-        app.buttons["Cancel"].firstMatch.tap()
+        #if os(macOS)
+        // Touch Bar mirrors of Cancel cannot be clicked; stay inside the windows.
+        app.windows.buttons["Cancel"].firstMatch.click()
+        #else
+        app.buttons["Cancel"].firstMatch.clickOrTap()
+        #endif
         let signOut = app.buttons["Sign out"].firstMatch
-        signOut.tap()
-        XCTAssertTrue(app.alerts.firstMatch.waitForExistence(timeout: 5), app.debugDescription)
-        app.alerts.buttons["Sign out"].tap()
+        signOut.clickOrTap()
+        #if os(macOS)
+        // AppKit presents SwiftUI alerts as window sheets.
+        let confirmation = app.sheets.firstMatch
+        #else
+        let confirmation = app.alerts.firstMatch
+        #endif
+        XCTAssertTrue(confirmation.waitForExistence(timeout: 5), app.debugDescription)
+        confirmation.buttons["Sign out"].clickOrTap()
         XCTAssertTrue(app.buttons["account.continueAnonymous"].waitForExistence(timeout: 10), app.debugDescription)
         app.terminate(); launch()
         XCTAssertTrue(app.buttons["account.continueAnonymous"].exists)
@@ -2665,16 +2699,16 @@ final class AccountJourneys: XCTestCase {
         launch(largeText: true)
         let account = app.buttons["account.continueAnonymous"]
         for _ in 0..<5 where !account.isHittable { app.swipeUp() }
-        account.tap()
+        account.clickOrTap()
         XCTAssertTrue(account.waitForNonExistence(timeout: 10))
-        app.buttons["History"].firstMatch.tap()
-        app.buttons["Manage folders"].tap()
+        openHistory()
+        app.buttons["Manage folders"].clickOrTap()
         XCTAssertFalse(app.textFields["folders.name"].exists, "Overview should not show an unrelated editor")
         XCTAssertFalse(app.buttons["folders.save"].exists)
         let create = app.buttons["folders.create"]
         for _ in 0..<10 where !create.isHittable { app.swipeUp() }
         XCTAssertTrue(create.isHittable, app.debugDescription)
-        create.tap()
+        create.clickOrTap()
         let name = app.textFields["folders.name"]
         // Swipe in the form, above its fixed action area at accessibility sizes.
         func scrollForm() {
@@ -2683,13 +2717,13 @@ final class AccountJourneys: XCTestCase {
         }
         for _ in 0..<20 where !name.isHittable { scrollForm() }
         XCTAssertTrue(name.isHittable, app.debugDescription)
-        name.tap(); name.typeText("Accessible project")
+        name.clickOrTap(); name.typeText("Accessible project")
         let save = app.buttons["folders.save"]
         XCTAssertTrue(save.isHittable, "Create must stay above the keyboard")
         let keyboardEvidence = XCTAttachment(screenshot: app.screenshot())
         keyboardEvidence.name = "Folder editor at accessibility size with keyboard"
         keyboardEvidence.lifetime = .keepAlways; add(keyboardEvidence)
-        save.tap()
+        save.clickOrTap()
         let created = app.staticTexts["Accessible project"].firstMatch
         for _ in 0..<20 where !created.isHittable { scrollForm() }
         XCTAssertTrue(created.isHittable, "The folder must actually be saved")
@@ -2697,55 +2731,57 @@ final class AccountJourneys: XCTestCase {
         evidence.name = "Folders at accessibility text size"
         evidence.lifetime = .keepAlways; self.add(evidence)
         XCTAssertTrue(app.buttons["Close"].firstMatch.isHittable)
-        app.buttons["Close"].firstMatch.tap()
+        app.buttons["Close"].firstMatch.clickOrTap()
     }
     #endif
 
     func testUpgradeConsentLeadsToOneGuideAndWorkingEmailAction() {
         launch("setup")
-        app.buttons["account.continueAnonymous"].tap()
+        app.buttons["account.continueAnonymous"].clickOrTap()
         XCTAssertTrue(app.buttons["account.continueAnonymous"].waitForNonExistence(timeout: 10))
         app.terminate(); launch("setupUpgrade")
         let allow = app.buttons["allow sending meeting audio and text to Deepgram and OpenAI"]
         XCTAssertTrue(allow.waitForExistence(timeout: 10), app.debugDescription)
-        allow.tap()
+        allow.clickOrTap()
         let accountStep = app.buttons["setup.step.account"]
         for _ in 0..<10 where !accountStep.isHittable || accountStep.frame.maxY >= app.buttons["setup.reopen"].frame.minY { app.swipeUp() }
-        if accountStep.exists && !app.buttons["setup.action.account"].exists { accountStep.tap() }
+        if accountStep.exists && !app.buttons["setup.action.account"].exists { accountStep.clickOrTap() }
         let add = app.buttons["setup.action.account"]
         for _ in 0..<8 where !add.isHittable || add.frame.maxY >= app.buttons["setup.reopen"].frame.minY { app.swipeUp() }
         XCTAssertTrue(add.isHittable, app.debugDescription)
         XCTAssertFalse(app.buttons["setup.action.calendar"].exists)
         XCTAssertFalse(app.buttons["account.continueAnonymous"].exists)
-        add.tap()
+        add.clickOrTap()
         XCTAssertTrue(app.textFields["setup.email"].waitForExistence(timeout: 10), app.debugDescription)
-        app.buttons["Close"].firstMatch.tap()
+        app.buttons["Close"].firstMatch.clickOrTap()
     }
 
     func testHomeSetupStagesEmailAndCalendarWithCancellationAndPersistence() {
         launch("setup")
-        app.buttons["account.continueAnonymous"].tap()
+        app.buttons["account.continueAnonymous"].clickOrTap()
         XCTAssertTrue(app.buttons["account.continueAnonymous"].waitForNonExistence(timeout: 10))
         let accountStep = app.buttons["setup.step.account"]
         for _ in 0..<10 where !accountStep.isHittable || accountStep.frame.maxY >= app.buttons["setup.reopen"].frame.minY { app.swipeUp() }
-        if accountStep.exists && !app.buttons["setup.action.account"].exists { accountStep.tap() }
+        if accountStep.exists && !app.buttons["setup.action.account"].exists { accountStep.clickOrTap() }
         let add = app.buttons["setup.action.account"]
         for _ in 0..<6 where !add.isHittable || add.frame.maxY >= app.buttons["setup.reopen"].frame.minY { app.swipeUp() }
         XCTAssertTrue(add.isHittable, app.debugDescription)
         XCTAssertFalse(app.buttons["setup.action.calendar"].exists)
-        add.tap()
+        add.clickOrTap()
         let email = app.textFields["setup.email"]
         XCTAssertTrue(email.waitForExistence(timeout: 10), app.debugDescription)
-        app.buttons["Close"].firstMatch.tap()
+        app.buttons["Close"].firstMatch.clickOrTap()
         XCTAssertTrue(add.waitForExistence(timeout: 5))
-        add.tap()
+        add.clickOrTap()
         XCTAssertTrue(email.waitForExistence(timeout: 5))
-        email.tap(); email.typeText("setup@example.invalid")
-        app.buttons["setup.sendEmail"].tap()
+        email.clickOrTap(); email.typeText("setup@example.invalid")
+        app.buttons["setup.sendEmail"].clickOrTap()
         XCTAssertTrue(app.staticTexts["setup.emailNotice"].waitForExistence(timeout: 10), app.debugDescription)
-        XCTAssertTrue(app.staticTexts["setup.emailNotice"].label.contains("Link sent"))
-        app.buttons["Close"].firstMatch.tap()
-        app.buttons["setup.step.calendar"].tap()
+        let notice = app.staticTexts["setup.emailNotice"]
+        // Mac exposes SwiftUI text as the accessibility value; iOS as the label.
+        XCTAssertTrue(notice.label.contains("Link sent") || (notice.value as? String)?.contains("Link sent") == true)
+        app.buttons["Close"].firstMatch.clickOrTap()
+        app.buttons["setup.step.calendar"].clickOrTap()
         XCTAssertTrue(app.buttons["setup.action.calendar"].exists)
         XCTAssertFalse(app.buttons["setup.action.account"].exists)
         let evidence = XCTAttachment(screenshot: app.screenshot())
@@ -2753,11 +2789,11 @@ final class AccountJourneys: XCTestCase {
         let collapse = app.buttons["setup.collapse"]
         for _ in 0..<8 where !collapse.isHittable { app.swipeDown() }
         XCTAssertTrue(collapse.isHittable, app.debugDescription)
-        collapse.tap()
+        collapse.clickOrTap()
         XCTAssertTrue(app.buttons["setup.reopen"].exists)
         app.terminate(); launch("setup")
         XCTAssertTrue(app.buttons["setup.reopen"].waitForExistence(timeout: 5))
-        app.buttons["setup.reopen"].tap()
+        app.buttons["setup.reopen"].clickOrTap()
         let calendar = app.buttons["setup.step.calendar"]
         XCTAssertTrue(calendar.waitForExistence(timeout: 5))
         let home = app.scrollViews.firstMatch
@@ -2765,7 +2801,7 @@ final class AccountJourneys: XCTestCase {
             home.swipeUp(velocity: .slow)
         }
         XCTAssertTrue(calendar.isHittable, app.debugDescription)
-        if (calendar.value as? String)?.contains("collapsed") == true { calendar.tap() }
+        if (calendar.value as? String)?.contains("collapsed") == true { calendar.clickOrTap() }
         XCTAssertTrue(app.buttons["setup.action.calendar"].waitForExistence(timeout: 5), app.debugDescription)
     }
 
@@ -2782,7 +2818,7 @@ final class AccountJourneys: XCTestCase {
         launch("setup", largeText: largeText)
         let account = app.buttons["account.continueAnonymous"]
         for _ in 0..<8 where !account.isHittable { app.swipeUp() }
-        account.tap()
+        account.clickOrTap()
         XCTAssertTrue(account.waitForNonExistence(timeout: 10))
         let info = app.buttons["docs.calendar"]
         let scroll = app.scrollViews.firstMatch
@@ -2796,7 +2832,7 @@ final class AccountJourneys: XCTestCase {
         XCTAssertTrue(info.isHittable, app.debugDescription)
         let before = app.buttons["setup.reopen"].value as? String
         let calendarBefore = app.buttons["setup.step.calendar"].value as? String
-        info.tap()
+        info.clickOrTap()
         let docs = app.descendants(matching: .any)["docs.open.calendar"].firstMatch
         XCTAssertTrue(docs.waitForExistence(timeout: 5), app.debugDescription)
         let helpBody = app.scrollViews["docs.body.calendar"]
@@ -2807,7 +2843,7 @@ final class AccountJourneys: XCTestCase {
         let capture = XCTAttachment(screenshot: app.screenshot())
         capture.name = largeText ? "Setup calendar help at largest text" : "Setup calendar help"
         capture.lifetime = .keepAlways; add(capture)
-        close.tap()
+        close.clickOrTap()
         XCTAssertEqual(app.buttons["setup.reopen"].value as? String, before)
         XCTAssertEqual(app.buttons["setup.step.calendar"].value as? String, calendarBefore,
                        "Help must not connect or complete the task")
@@ -2815,7 +2851,7 @@ final class AccountJourneys: XCTestCase {
 
     func testHomeCalendarAndSetupShareOneSpace() {
         launch("calendar")
-        app.buttons["account.continueAnonymous"].tap()
+        app.buttons["account.continueAnonymous"].clickOrTap()
         XCTAssertTrue(app.buttons["account.continueAnonymous"].waitForNonExistence(timeout: 10))
         let header = app.buttons["calendar.section.tomorrow"]
         let toggle = app.buttons["home.calendar.toggle"]
@@ -2825,29 +2861,29 @@ final class AccountJourneys: XCTestCase {
         XCTAssertFalse(app.staticTexts["miniti"].exists)
         XCTAssertFalse(app.staticTexts["multi-dimensional meetings"].exists)
         XCTAssertEqual(toggle.value as? String, "shown")
-        let start = app.buttons["start meeting"]
+        let start = app.buttons["home.start"]
         XCTAssertTrue(start.isHittable)
         let startY = start.frame.minY
         assertHomeFooterGeometry()
-        setup.tap()
+        setup.clickOrTap()
         XCTAssertTrue(header.waitForNonExistence(timeout: 5))
         XCTAssertEqual(toggle.value as? String, "hidden")
         XCTAssertTrue(app.buttons["setup.collapse"].exists)
         XCTAssertEqual(start.frame.minY, startY, accuracy: 1, "Opening setup must not recenter Start meeting")
-        toggle.tap()
+        toggle.clickOrTap()
         XCTAssertTrue(header.waitForExistence(timeout: 5))
         XCTAssertFalse(app.buttons["setup.collapse"].exists)
         XCTAssertEqual(start.frame.minY, startY, accuracy: 1)
-        toggle.tap()
+        toggle.clickOrTap()
         XCTAssertTrue(header.waitForNonExistence(timeout: 5))
         XCTAssertEqual(start.frame.minY, startY, accuracy: 1)
         app.terminate(); launch("calendar")
         XCTAssertEqual(toggle.value as? String, "hidden")
         XCTAssertFalse(header.exists)
-        setup.tap()
+        setup.clickOrTap()
         let collapse = app.buttons["setup.collapse"]
         for _ in 0..<8 where !collapse.isHittable { app.swipeDown() }
-        collapse.tap()
+        collapse.clickOrTap()
         XCTAssertTrue(header.waitForExistence(timeout: 5))
         let capture = XCTAttachment(screenshot: app.screenshot())
         capture.name = "Home calendar with shared presentation controls"; capture.lifetime = .keepAlways; add(capture)
@@ -2857,10 +2893,10 @@ final class AccountJourneys: XCTestCase {
         launch("calendar", largeText: true)
         let account = app.buttons["account.continueAnonymous"]
         for _ in 0..<8 where !account.isHittable { app.scrollViews.firstMatch.swipeUp() }
-        account.tap()
+        account.clickOrTap()
         XCTAssertTrue(account.waitForNonExistence(timeout: 10))
         assertHomeFooterGeometry()
-        app.buttons["setup.reopen"].tap()
+        app.buttons["setup.reopen"].clickOrTap()
         assertHomeFooterGeometry()
         let capture = XCTAttachment(screenshot: app.screenshot())
         capture.name = "Home footer at largest text size"; capture.lifetime = .keepAlways; add(capture)
@@ -2871,7 +2907,7 @@ final class AccountJourneys: XCTestCase {
         let root = app.staticTexts["ui-test.readingMetrics"]
         XCTAssertTrue(root.waitForExistence(timeout: 5))
         XCTAssertEqual(root.label, "Reading scale 2, text largest")
-        app.buttons["Settings"].tap()
+        app.buttons["Settings"].clickOrTap()
         let scope = app.buttons["ui-test.readingScope.settings"]
         XCTAssertTrue(scope.waitForExistence(timeout: 5))
         captureAppScreen("Settings inherited control-size probe")
@@ -2923,13 +2959,13 @@ final class AccountJourneys: XCTestCase {
             let scope = app.buttons["ui-test.readingScope.\(name)"]
             XCTAssertTrue(scope.waitForExistence(timeout: 5))
             XCTAssertEqual(scope.label, "scale \(scale); reading \(category); controls \(largeText ? "accessibility5" : ["large", "xLarge", "xxLarge"][scale])")
-            scope.tap()
+            scope.clickOrTap()
             XCTAssertTrue(scope.waitForNonExistence(timeout: 5))
             captureAppScreen("\(name) \(category) text, scale \(scale)")
             if debugLog { assertDebugLogHeaderFits() }
             let close = debugLog ? app.buttons["close"] : app.navigationBars["Filter"].buttons["Done"]
             XCTAssertTrue(close.isHittable)
-            close.tap()
+            close.clickOrTap()
             XCTAssertTrue(close.waitForNonExistence(timeout: 5))
             XCTAssertTrue(app.navigationBars[debugLog ? "About" : "History"].exists)
             if !debugLog {
@@ -2942,7 +2978,7 @@ final class AccountJourneys: XCTestCase {
         openDebugLog(largeText: false, scale: 2)
         let scope = app.buttons["ui-test.readingScope.debugLog"]
         XCTAssertTrue(scope.waitForExistence(timeout: 5))
-        scope.tap()
+        scope.clickOrTap()
         XCTAssertTrue(scope.waitForNonExistence(timeout: 5))
         assertDebugLogHeaderFits()
         let options = app.buttons["debugLog.options"]
@@ -2951,30 +2987,30 @@ final class AccountJourneys: XCTestCase {
             XCTAssertEqual(XCTWaiter.wait(for: [changed], timeout: 5), .completed)
         }
         expectOptionsValue("all categories, routine hidden, pretty")
-        options.tap()
+        options.clickOrTap()
         for name in ["audio", "deepgram", "app", "show routine", "raw", "copy", "clear"] {
             XCTAssertTrue(app.buttons[name].waitForExistence(timeout: 5))
         }
-        app.buttons["audio"].tap()
+        app.buttons["audio"].clickOrTap()
         expectOptionsValue("audio, routine hidden, pretty")
-        options.tap()
+        options.clickOrTap()
         captureAppScreen("Debug Log options with audio selected")
-        app.buttons["audio"].tap()
+        app.buttons["audio"].clickOrTap()
         expectOptionsValue("all categories, routine hidden, pretty")
-        options.tap()
-        app.buttons["show routine"].tap()
+        options.clickOrTap()
+        app.buttons["show routine"].clickOrTap()
         expectOptionsValue("all categories, routine shown, pretty")
-        options.tap()
-        app.buttons["hide routine"].tap()
+        options.clickOrTap()
+        app.buttons["hide routine"].clickOrTap()
         expectOptionsValue("all categories, routine hidden, pretty")
-        options.tap()
-        app.buttons["raw"].tap()
+        options.clickOrTap()
+        app.buttons["raw"].clickOrTap()
         expectOptionsValue("all categories, routine hidden, raw")
-        options.tap()
-        app.buttons["pretty"].tap()
+        options.clickOrTap()
+        app.buttons["pretty"].clickOrTap()
         expectOptionsValue("all categories, routine hidden, pretty")
         captureAppScreen("Debug Log after options round trip")
-        app.buttons["close"].tap()
+        app.buttons["close"].clickOrTap()
         XCTAssertTrue(app.navigationBars["About"].waitForExistence(timeout: 5))
     }
 
@@ -2982,11 +3018,11 @@ final class AccountJourneys: XCTestCase {
         openDebugLog(largeText: false, scale: 0)
         let scope = app.buttons["ui-test.readingScope.debugLog"]
         XCTAssertTrue(scope.waitForExistence(timeout: 5))
-        scope.tap()
+        scope.clickOrTap()
         XCTAssertTrue(scope.waitForNonExistence(timeout: 5))
         let close = app.buttons["close"]
         XCTAssertGreaterThanOrEqual(close.frame.height, 44 - 0.001)
-        close.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(dx: 2, dy: 1)).tap()
+        close.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(dx: 2, dy: 1)).clickOrTap()
         XCTAssertTrue(close.waitForNonExistence(timeout: 5))
         XCTAssertTrue(app.navigationBars["About"].exists)
     }
@@ -3006,9 +3042,9 @@ final class AccountJourneys: XCTestCase {
             let scope = app.buttons["ui-test.readingScope.historyFilters"]
             XCTAssertTrue(scope.waitForExistence(timeout: 5))
             XCTAssertEqual(scope.label, "scale \(scale); reading \(largeText ? "largest" : "normal"); controls \(largeText ? "accessibility5" : ["large", "xLarge", "xxLarge"][scale])")
-            scope.tap()
+            scope.clickOrTap()
             XCTAssertTrue(scope.waitForNonExistence(timeout: 5))
-            app.navigationBars["Filter"].buttons["Done"].tap()
+            app.navigationBars["Filter"].buttons["Done"].clickOrTap()
             let picker = app.buttons.matching(NSPredicate(format: "label CONTAINS %@", "Filter meetings by folder")).firstMatch
             XCTAssertTrue(picker.waitForExistence(timeout: 5))
             let manage = app.buttons["Manage folders"]
@@ -3019,11 +3055,11 @@ final class AccountJourneys: XCTestCase {
             XCTAssertFalse(picker.frame.intersects(manage.frame))
             XCTAssertTrue(picker.isHittable)
             XCTAssertTrue(manage.isHittable)
-            picker.tap()
-            app.buttons["Unfiled"].tap()
+            picker.clickOrTap()
+            app.buttons["Unfiled"].clickOrTap()
             XCTAssertTrue(picker.staticTexts["Unfiled"].waitForExistence(timeout: 5))
-            picker.tap()
-            app.buttons["All meetings"].tap()
+            picker.clickOrTap()
+            app.buttons["All meetings"].clickOrTap()
             XCTAssertTrue(picker.staticTexts["All meetings"].waitForExistence(timeout: 5))
         }
     }
@@ -3032,7 +3068,7 @@ final class AccountJourneys: XCTestCase {
         openHistoryFilters(largeText: true, scale: 2)
         let scope = app.buttons["ui-test.readingScope.historyFilters"]
         XCTAssertTrue(scope.waitForExistence(timeout: 5))
-        scope.tap()
+        scope.clickOrTap()
         XCTAssertTrue(scope.waitForNonExistence(timeout: 5))
         let range = app.buttons["Apply range"]
         var swipes = 0
@@ -3045,17 +3081,17 @@ final class AccountJourneys: XCTestCase {
         XCTAssertLessThanOrEqual(range.frame.maxY, app.frame.maxY - 50)
         XCTAssertGreaterThan(swipes, 0)
         captureAppScreen("History Date range at largest text")
-        range.tap()
-        app.navigationBars["Filter"].buttons["Done"].tap()
+        range.clickOrTap()
+        app.navigationBars["Filter"].buttons["Done"].clickOrTap()
         let search = app.searchFields["Search meetings..."]
         XCTAssertTrue(search.waitForExistence(timeout: 5))
         captureAppScreen("History query after Date range")
         XCTAssertTrue((search.value as? String ?? "").contains("after:"), "Actual search value: \(String(describing: search.value))")
         XCTAssertTrue((search.value as? String ?? "").contains("before:"))
-        app.buttons["Filter meetings by person or date"].tap()
+        app.buttons["Filter meetings by person or date"].clickOrTap()
         let newScope = app.buttons["ui-test.readingScope.historyFilters"]
         XCTAssertTrue(newScope.waitForExistence(timeout: 5))
-        newScope.tap()
+        newScope.clickOrTap()
         XCTAssertTrue(newScope.waitForNonExistence(timeout: 5))
         let clear = app.buttons["Clear filters"]
         for _ in 0..<16 {
@@ -3064,8 +3100,8 @@ final class AccountJourneys: XCTestCase {
         }
         XCTAssertTrue(clear.isHittable)
         XCTAssertLessThanOrEqual(clear.frame.maxY, app.frame.maxY - 50)
-        clear.tap()
-        app.navigationBars["Filter"].buttons["Done"].tap()
+        clear.clickOrTap()
+        app.navigationBars["Filter"].buttons["Done"].clickOrTap()
         let cleared = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
             guard search.exists, let value = search.value as? String else { return false }
             return !value.contains("after:") && !value.contains("before:")
@@ -3096,21 +3132,21 @@ final class AccountJourneys: XCTestCase {
         let guest = app.buttons["account.continueAnonymous"]
         XCTAssertTrue(guest.waitForExistence(timeout: 5))
         for _ in 0..<8 where !guest.isHittable { app.scrollViews.firstMatch.swipeUp() }
-        guest.tap()
+        guest.clickOrTap()
         XCTAssertTrue(guest.waitForNonExistence(timeout: 5))
-        app.buttons["History"].firstMatch.tap()
+        openHistory()
         let filter = app.buttons["Filter meetings by person or date"]
         XCTAssertTrue(filter.waitForExistence(timeout: 5))
-        filter.tap()
+        filter.clickOrTap()
     }
 
     private func openDebugLog(largeText: Bool, scale: Int) {
         executionTimeAllowance = 360
         launch("first", largeText: largeText, interfaceScale: scale)
-        app.buttons["Settings"].tap()
+        app.buttons["Settings"].clickOrTap()
         let settingsScope = app.buttons["ui-test.readingScope.settings"]
         XCTAssertTrue(settingsScope.waitForExistence(timeout: 5))
-        settingsScope.tap()
+        settingsScope.clickOrTap()
         XCTAssertTrue(settingsScope.waitForNonExistence(timeout: 5))
         let about = app.staticTexts["settings.title.about"]
         let search = app.searchFields["Search settings"]
@@ -3121,7 +3157,7 @@ final class AccountJourneys: XCTestCase {
         }
         XCTAssertTrue(about.isHittable)
         XCTAssertLessThan(about.frame.maxY, search.frame.minY - 24)
-        about.tap()
+        about.clickOrTap()
         let version = app.staticTexts["settings.about.version"]
         XCTAssertTrue(version.waitForExistence(timeout: 5))
         version.tap(withNumberOfTaps: 5, numberOfTouches: 1)
@@ -3133,8 +3169,8 @@ final class AccountJourneys: XCTestCase {
         XCTAssertTrue(scope.waitForExistence(timeout: 5))
         captureAppScreen("Privacy consent normal Large category probe")
         XCTAssertEqual(scope.label, "scale 2; reading normal; controls xxLarge")
-        scope.tap()
-        app.buttons["consent.decline"].tap()
+        scope.clickOrTap()
+        app.buttons["consent.decline"].clickOrTap()
         XCTAssertTrue(app.navigationBars["Privacy"].waitForExistence(timeout: 5))
     }
 
@@ -3155,7 +3191,7 @@ final class AccountJourneys: XCTestCase {
             let scope = app.buttons["ui-test.readingScope.consent.sheet"]
             XCTAssertTrue(scope.waitForExistence(timeout: 5))
             XCTAssertEqual(scope.label, "scale \(scale); reading \(category); controls \(largeText ? "accessibility5" : ["large", "xLarge", "xxLarge"][scale])")
-            scope.tap()
+            scope.clickOrTap()
             XCTAssertTrue(scope.waitForNonExistence(timeout: 5))
             assertConsentSheetActions("Privacy consent \(category) text, scale \(scale)", requiresScroll: largeText, returnButton: "Allow…")
             XCTAssertTrue(app.navigationBars["Privacy"].exists)
@@ -3167,10 +3203,10 @@ final class AccountJourneys: XCTestCase {
     private func openPrivacyConsent(largeText: Bool, scale: Int) {
         executionTimeAllowance = 360
         launch("privacyConsent", largeText: largeText, interfaceScale: scale)
-        app.buttons["Settings"].tap()
+        app.buttons["Settings"].clickOrTap()
         let settingsScope = app.buttons["ui-test.readingScope.settings"]
         XCTAssertTrue(settingsScope.waitForExistence(timeout: 5))
-        settingsScope.tap()
+        settingsScope.clickOrTap()
         XCTAssertTrue(settingsScope.waitForNonExistence(timeout: 5))
         let privacy = app.staticTexts["settings.title.privacy"]
         let search = app.searchFields["Search settings"]
@@ -3183,12 +3219,12 @@ final class AccountJourneys: XCTestCase {
         XCTAssertTrue(privacy.isHittable, app.debugDescription)
         XCTAssertLessThan(privacy.frame.maxY, search.frame.minY - 24)
         captureAppScreen("Privacy destination clear of search, scale \(scale), largest \(largeText)")
-        privacy.tap()
+        privacy.clickOrTap()
         XCTAssertTrue(app.navigationBars["Privacy"].waitForExistence(timeout: 5))
         let showConsent = app.buttons["Allow…"]
         for _ in 0..<12 where !showConsent.isHittable { app.collectionViews.firstMatch.swipeUp() }
         XCTAssertTrue(showConsent.isHittable, app.debugDescription)
-        showConsent.tap()
+        showConsent.clickOrTap()
     }
 
     func testConsentDisclosureGrowsAtLargestText() {
@@ -3208,18 +3244,18 @@ final class AccountJourneys: XCTestCase {
     func testFirstConsentResetsPriorFixtureDecline() {
         launch("consentSheet", interfaceScale: 0)
         XCTAssertTrue(app.buttons["consent.decline"].waitForExistence(timeout: 5))
-        app.buttons["consent.decline"].tap()
+        app.buttons["consent.decline"].clickOrTap()
         app.terminate()
         launch("setupUpgrade", interfaceScale: 0)
         let first = app.buttons["ui-test.readingScope.consent.first"]
         XCTAssertTrue(first.waitForExistence(timeout: 5))
-        first.tap()
-        app.buttons["ui-test.hideStatus"].tap()
+        first.clickOrTap()
+        app.buttons["ui-test.hideStatus"].clickOrTap()
         XCTAssertTrue(app.staticTexts["ui-test.ready"].waitForNonExistence(timeout: 5))
         let decline = app.buttons["consent.decline"]
         XCTAssertTrue(decline.isHittable)
         XCTAssertTrue(decline.label.hasPrefix("not now:"))
-        decline.tap()
+        decline.clickOrTap()
         XCTAssertTrue(app.buttons["Settings"].waitForExistence(timeout: 5))
     }
 
@@ -3234,7 +3270,7 @@ final class AccountJourneys: XCTestCase {
         launch("consentSheet", largeText: true, interfaceScale: 2)
         let scope = app.buttons["ui-test.readingScope.consent.sheet"]
         XCTAssertTrue(scope.waitForExistence(timeout: 5))
-        scope.tap()
+        scope.clickOrTap()
         XCTAssertTrue(scope.waitForNonExistence(timeout: 5))
         assertConsentSheetActions()
     }
@@ -3256,8 +3292,8 @@ final class AccountJourneys: XCTestCase {
             let scope = app.buttons["ui-test.readingScope.consent.first"]
             XCTAssertTrue(scope.waitForExistence(timeout: 5))
             XCTAssertEqual(scope.label, "scale \(scale); reading \(category); controls \(largeText ? "accessibility5" : ["large", "xLarge", "xxLarge"][scale])")
-            scope.tap()
-            app.buttons["ui-test.hideStatus"].tap()
+            scope.clickOrTap()
+            app.buttons["ui-test.hideStatus"].clickOrTap()
             XCTAssertTrue(app.staticTexts["ui-test.ready"].waitForNonExistence(timeout: 5))
             XCTAssertTrue(app.buttons["consent.decline"].label.hasPrefix("not now:"))
             assertConsentSheetActions("First consent \(category) text, scale \(scale)", requiresScroll: largeText)
@@ -3281,7 +3317,7 @@ final class AccountJourneys: XCTestCase {
             let scope = app.buttons["ui-test.readingScope.consent.sheet"]
             XCTAssertTrue(scope.waitForExistence(timeout: 5))
             XCTAssertEqual(scope.label, "scale \(scale); reading \(category); controls \(largeText ? "accessibility5" : ["large", "xLarge", "xxLarge"][scale])")
-            scope.tap()
+            scope.clickOrTap()
             XCTAssertTrue(scope.waitForNonExistence(timeout: 5))
             assertConsentSheetActions("Consent \(category) text, scale \(scale)", requiresScroll: largeText)
         }
@@ -3316,18 +3352,18 @@ final class AccountJourneys: XCTestCase {
         XCTAssertTrue(cancel.isHittable)
         XCTAssertEqual(allow.frame.minY, initialAllowY, accuracy: 0.5)
         captureAppScreen(name + " disclosure end", fullScreen: fullScreen)
-        cancel.tap()
+        cancel.clickOrTap()
         XCTAssertTrue(cancel.waitForNonExistence(timeout: 5))
         XCTAssertTrue(app.buttons[returnButton].waitForExistence(timeout: 5))
     }
 
     func testSettingsLabelsAtLargestText() {
         launch("first", largeText: true, interfaceScale: 2)
-        app.buttons["Settings"].tap()
+        app.buttons["Settings"].clickOrTap()
         let scope = app.buttons["ui-test.readingScope.settings"]
         XCTAssertTrue(scope.waitForExistence(timeout: 5))
         XCTAssertEqual(scope.label, "scale 2; reading largest; controls accessibility5")
-        scope.tap()
+        scope.clickOrTap()
         XCTAssertTrue(scope.waitForNonExistence(timeout: 5))
         let icon = app.images["settings.icon.general"]
         let title = app.staticTexts["settings.title.general"]
@@ -3338,7 +3374,7 @@ final class AccountJourneys: XCTestCase {
         captureAppScreen("Settings labels at largest text without probe")
         XCTAssertFalse(icon.frame.intersects(title.frame))
         XCTAssertFalse(icon.frame.intersects(subtitle.frame))
-        title.tap()
+        title.clickOrTap()
         let slider = app.sliders["Interface scale"]
         for _ in 0..<8 where !slider.isHittable { app.collectionViews.firstMatch.swipeUp() }
         XCTAssertTrue(slider.isHittable)
@@ -3380,7 +3416,7 @@ final class AccountJourneys: XCTestCase {
             XCTAssertTrue(account.waitForExistence(timeout: 5))
             for _ in 0..<8 where !account.isHittable { app.scrollViews.firstMatch.swipeUp() }
             XCTAssertTrue(account.isHittable)
-            account.tap()
+            account.clickOrTap()
             XCTAssertTrue(account.waitForNonExistence(timeout: 10))
             XCTAssertTrue(app.buttons["calendar.section.tomorrow"].waitForExistence(timeout: 5))
             assertHomeFooterGeometry()
@@ -3390,12 +3426,12 @@ final class AccountJourneys: XCTestCase {
             }
             XCTAssertTrue(app.buttons["home.start"].isHittable)
             captureAppScreen("Home \(category) text, interface scale \(scale)")
-            app.buttons["setup.reopen"].tap()
+            app.buttons["setup.reopen"].clickOrTap()
             assertHomeFooterGeometry()
             captureAppScreen("Home setup \(category) text, interface scale \(scale)")
             let settings = app.buttons["Settings"]
             XCTAssertTrue(settings.isHittable)
-            settings.tap()
+            settings.clickOrTap()
             let general = app.staticTexts["General"].firstMatch
             XCTAssertTrue(general.waitForExistence(timeout: 5))
             for _ in 0..<4 where !general.isHittable { app.collectionViews.firstMatch.swipeDown() }
@@ -3403,21 +3439,21 @@ final class AccountJourneys: XCTestCase {
             let settingsScope = app.buttons["ui-test.readingScope.settings"]
             XCTAssertTrue(settingsScope.waitForExistence(timeout: 5))
             XCTAssertEqual(settingsScope.label, "scale \(scale); reading \(category); controls \(largeText ? "accessibility5" : ["large", "xLarge", "xxLarge"][scale])")
-            settingsScope.tap()
+            settingsScope.clickOrTap()
             XCTAssertTrue(settingsScope.waitForNonExistence(timeout: 5))
             captureAppScreen("Settings list \(category) text, interface scale \(scale)")
-            general.tap()
+            general.clickOrTap()
             XCTAssertTrue(app.navigationBars["General"].waitForExistence(timeout: 5))
             let slider = app.sliders["Interface scale"]
             for _ in 0..<8 where !slider.isHittable { app.swipeUp() }
             XCTAssertTrue(slider.isHittable)
             XCTAssertEqual(slider.value as? String, ["Compact", "Standard", "Large"][scale])
             captureAppScreen("General Settings \(category) text, interface scale \(scale)")
-            app.navigationBars["General"].buttons["Settings"].tap()
+            app.navigationBars["General"].buttons["Settings"].clickOrTap()
             let done = app.buttons["Done"]
             XCTAssertTrue(done.waitForExistence(timeout: 5))
             XCTAssertTrue(done.isHittable)
-            done.tap()
+            done.clickOrTap()
             XCTAssertTrue(app.buttons["home.start"].waitForExistence(timeout: 5))
             XCTAssertTrue(app.buttons["home.start"].isHittable)
         }
@@ -3444,7 +3480,7 @@ final class AccountJourneys: XCTestCase {
 
     func testCalendarSectionSpacerTogglesWithoutOpeningMeeting() {
         launch("calendar")
-        app.buttons["account.continueAnonymous"].tap()
+        app.buttons["account.continueAnonymous"].clickOrTap()
         XCTAssertTrue(app.buttons["account.continueAnonymous"].waitForNonExistence(timeout: 10))
         let header = app.buttons["calendar.section.tomorrow"]
         XCTAssertTrue(header.waitForExistence(timeout: 5), app.debugDescription)
@@ -3453,10 +3489,10 @@ final class AccountJourneys: XCTestCase {
         XCTAssertEqual(header.label, "tomorrow, 1 meeting")
         let event = app.staticTexts["Fixture tomorrow call"]
         XCTAssertTrue(event.exists)
-        header.coordinate(withNormalizedOffset: CGVector(dx: 0.7, dy: 0.5)).tap()
+        header.coordinate(withNormalizedOffset: CGVector(dx: 0.7, dy: 0.5)).clickOrTap()
         XCTAssertTrue(event.waitForNonExistence(timeout: 5))
         XCTAssertEqual(header.value as? String, "collapsed")
-        header.coordinate(withNormalizedOffset: CGVector(dx: 0.7, dy: 0.5)).tap()
+        header.coordinate(withNormalizedOffset: CGVector(dx: 0.7, dy: 0.5)).clickOrTap()
         XCTAssertTrue(event.waitForExistence(timeout: 5))
         XCTAssertEqual(header.value as? String, "expanded")
         let capture = XCTAttachment(screenshot: app.screenshot())
@@ -3465,39 +3501,39 @@ final class AccountJourneys: XCTestCase {
 
     func testSetupTasksAndGuideCanBeHiddenAndRestoredFromGeneral() {
         launch("setup")
-        app.buttons["account.continueAnonymous"].tap()
+        app.buttons["account.continueAnonymous"].clickOrTap()
         XCTAssertTrue(app.buttons["account.continueAnonymous"].waitForNonExistence(timeout: 10))
         let footer = app.buttons["setup.reopen"]
         XCTAssertTrue(footer.waitForExistence(timeout: 5))
         let progress = footer.value as? String
         let collapse = app.buttons["setup.collapse"]
         for _ in 0..<6 where !collapse.isHittable { app.swipeUp() }
-        collapse.tap()
+        collapse.clickOrTap()
         XCTAssertTrue(collapse.waitForNonExistence(timeout: 5))
         XCTAssertTrue(footer.isHittable)
         XCTAssertEqual(footer.value as? String, progress)
-        footer.tap()
+        footer.clickOrTap()
         XCTAssertTrue(collapse.waitForExistence(timeout: 5))
         let calendar = app.buttons["setup.step.calendar"]
         for _ in 0..<6 where !calendar.isHittable || calendar.frame.maxY >= app.buttons["setup.reopen"].frame.minY { app.swipeUp() }
-        if !app.buttons["setup.skip.calendar"].exists { calendar.tap() }
+        if !app.buttons["setup.skip.calendar"].exists { calendar.clickOrTap() }
         let skip = app.buttons["setup.skip.calendar"]
         for _ in 0..<6 where !skip.isHittable || skip.frame.maxY >= app.buttons["setup.reopen"].frame.minY { app.swipeUp() }
-        skip.tap()
+        skip.clickOrTap()
         XCTAssertTrue(calendar.waitForNonExistence(timeout: 5))
         XCTAssertEqual(footer.value as? String, progress)
         let hide = app.buttons["setup.dismiss"]
         for _ in 0..<6 where !hide.isHittable || hide.frame.maxY >= app.buttons["setup.reopen"].frame.minY { app.swipeUp() }
-        hide.tap()
+        hide.clickOrTap()
         XCTAssertTrue(footer.waitForNonExistence(timeout: 5))
         app.terminate(); launch("setup")
         XCTAssertFalse(app.buttons["setup.reopen"].exists)
         XCTAssertFalse(app.buttons["setup.collapse"].exists)
-        app.buttons["Settings"].tap()
-        app.staticTexts["General"].firstMatch.tap()
+        app.buttons["Settings"].clickOrTap()
+        app.staticTexts["General"].firstMatch.clickOrTap()
         let restore = app.buttons["setup.restore.calendar"]
         XCTAssertTrue(restore.waitForExistence(timeout: 5), app.debugDescription)
-        restore.tap()
+        restore.clickOrTap()
         XCTAssertTrue(restore.waitForNonExistence(timeout: 5))
         XCTAssertEqual(app.switches["setup.settings.visible"].value as? String, "1")
         let evidence = XCTAttachment(screenshot: app.screenshot())
@@ -3519,14 +3555,14 @@ final class AccountJourneys: XCTestCase {
         executionTimeAllowance = 180
         launch("setup", largeText: largeText, interfaceScale: 2)
         let hideStatus = app.buttons["ui-test.hideStatus"]
-        if hideStatus.exists { hideStatus.tap() }
+        if hideStatus.exists { hideStatus.clickOrTap() }
         let account = app.buttons["account.continueAnonymous"]
         for _ in 0..<8 {
             if account.isHittable { break }
             app.swipeUp()
         }
         XCTAssertTrue(account.isHittable)
-        account.tap()
+        account.clickOrTap()
         XCTAssertTrue(account.waitForNonExistence(timeout: 10))
         let home = app.scrollViews.firstMatch
         let step = app.buttons["setup.step.account"]
@@ -3536,18 +3572,18 @@ final class AccountJourneys: XCTestCase {
         }
         XCTAssertTrue(step.isHittable)
         let open = app.buttons["setup.account.recovery"]
-        if !open.exists { step.tap() }
+        if !open.exists { step.clickOrTap() }
         for _ in 0..<12 {
             if open.isHittable && open.frame.maxY < home.frame.maxY { break }
             home.swipeUp(velocity: .slow)
         }
         XCTAssertTrue(open.isHittable)
-        open.tap()
+        open.clickOrTap()
         let probe = app.buttons["ui-test.readingScope.saveRecovery"]
         XCTAssertTrue(probe.waitForExistence(timeout: 5))
         XCTAssertTrue(probe.label.contains(largeText ? "reading largest" : "reading normal"))
         XCTAssertTrue(probe.label.contains("scale 2;"))
-        probe.tap()
+        probe.clickOrTap()
         XCTAssertTrue(probe.waitForNonExistence(timeout: 5))
         let heading = app.staticTexts["account.recoveryKey.heading"]
         XCTAssertTrue(heading.waitForExistence(timeout: 5))
@@ -3599,7 +3635,7 @@ final class AccountJourneys: XCTestCase {
         let toggleFrames = XCTAttachment(string: "saved=\(saved.frame); viewport=\(scroll.frame); value=\(String(describing: saved.value))")
         toggleFrames.name = "Acknowledgment before tap"; toggleFrames.lifetime = .keepAlways; add(toggleFrames)
         captureAppScreen("Complete acknowledgment before tap")
-        saved.tap()
+        saved.clickOrTap()
         let enabled = XCTNSPredicateExpectation(predicate: NSPredicate(format: "enabled == true"), object: next)
         XCTAssertEqual(XCTWaiter.wait(for: [enabled], timeout: 5), .completed)
         XCTAssertTrue(next.isHittable)
@@ -3607,7 +3643,7 @@ final class AccountJourneys: XCTestCase {
         frames.name = "Save recovery key action frames"; frames.lifetime = .keepAlways; add(frames)
         captureAppScreen("Recovery key acknowledgment enables Continue")
         // This key belongs only to FixtureCredentials. Never tap Copy or use a real account.
-        next.tap()
+        next.clickOrTap()
         XCTAssertTrue(heading.waitForNonExistence(timeout: 5))
         XCTAssertTrue(open.exists)
     }
@@ -3616,7 +3652,7 @@ final class AccountJourneys: XCTestCase {
         launch("setup", largeText: true)
         let account = app.buttons["account.continueAnonymous"]
         for _ in 0..<8 where !account.isHittable { app.swipeUp() }
-        account.tap()
+        account.clickOrTap()
         XCTAssertTrue(account.waitForNonExistence(timeout: 10))
         let home = app.scrollViews.firstMatch
         let accountStep = app.buttons["setup.step.account"]
@@ -3626,66 +3662,83 @@ final class AccountJourneys: XCTestCase {
         let headerEvidence = XCTAttachment(screenshot: app.screenshot())
         headerEvidence.name = "Home setup task header at accessibility text size"
         headerEvidence.lifetime = .keepAlways; self.add(headerEvidence)
-        if accountStep.exists && !app.buttons["setup.action.account"].exists { accountStep.tap() }
+        if accountStep.exists && !app.buttons["setup.action.account"].exists { accountStep.clickOrTap() }
         let add = app.buttons["setup.action.account"]
         for _ in 0..<10 where !add.isHittable || add.frame.maxY >= home.frame.maxY { home.swipeUp(velocity: .slow) }
         let evidence = XCTAttachment(screenshot: app.screenshot())
         evidence.name = "Home setup at accessibility text size"; evidence.lifetime = .keepAlways; self.add(evidence)
         XCTAssertTrue(add.isHittable, app.debugDescription)
-        add.tap()
+        add.clickOrTap()
         let email = app.textFields["setup.email"]
         XCTAssertTrue(email.waitForExistence(timeout: 10))
         for _ in 0..<8 where !email.isHittable { app.swipeUp() }
         XCTAssertTrue(email.isHittable)
         XCTAssertTrue(app.buttons["Close"].firstMatch.isHittable)
-        app.buttons["Close"].firstMatch.tap()
+        app.buttons["Close"].firstMatch.clickOrTap()
     }
     #endif
 
     func testFolderPreviewSummarizesBroadCategoriesBeforeApplying() {
         launch("folders")
-        app.buttons["account.continueAnonymous"].tap()
+        app.buttons["account.continueAnonymous"].clickOrTap()
         XCTAssertTrue(app.buttons["account.continueAnonymous"].waitForNonExistence(timeout: 10))
-        app.buttons["History"].firstMatch.tap()
-        app.buttons["Manage folders"].tap()
-        app.buttons["folders.preview"].tap()
+        openHistory()
+        app.buttons["Manage folders"].clickOrTap()
+        app.buttons["folders.preview"].clickOrTap()
         let total = app.staticTexts["4 meetings across 2 folders"]
         XCTAssertTrue(total.waitForExistence(timeout: 5), app.debugDescription)
+        #if os(macOS)
+        // Mac groups each folder in one disclosure row labelled with name, count and description.
+        for (name, detail) in [("Customers", "Customer conversations, sales calls and demos."),
+                               ("Team", "Team catch-ups, standups and one-to-ones.")] {
+            let row = app.disclosureTriangles["folders.preview.count.\(name)"]
+            reveal(row, attempts: 8)
+            XCTAssertTrue(row.isHittable, app.debugDescription)
+            XCTAssertTrue(row.label.hasPrefix("\(name), 2 meetings to file"), row.label)
+            XCTAssertTrue(row.label.contains(detail), row.label)
+        }
+        #else
         let customers = app.staticTexts["Customers"].firstMatch
-        for _ in 0..<8 where !customers.isHittable { app.swipeUp(velocity: .slow) }
+        reveal(customers, attempts: 8, slowSwipe: true)
         XCTAssertTrue(customers.isHittable, app.debugDescription)
         XCTAssertTrue(app.staticTexts["Customer conversations, sales calls and demos."].exists)
         XCTAssertEqual(app.staticTexts["folders.preview.count.Customers"].label, "2 meetings to file")
         let team = app.staticTexts["Team"].firstMatch
-        for _ in 0..<5 where !team.isHittable { app.swipeUp() }
+        reveal(team, attempts: 5)
         XCTAssertTrue(team.isHittable, app.debugDescription)
         XCTAssertTrue(app.staticTexts["Team catch-ups, standups and one-to-ones."].exists)
         XCTAssertEqual(app.staticTexts["folders.preview.count.Team"].label, "2 meetings to file")
+        #endif
         let evidence = XCTAttachment(screenshot: app.screenshot())
         evidence.name = "Broad folder preview with counts and descriptions"
         evidence.lifetime = .keepAlways; add(evidence)
         let apply = app.buttons["folders.apply"]
-        for _ in 0..<5 where !apply.isHittable { app.swipeUp() }
-        apply.tap()
+        reveal(apply, attempts: 5)
+        apply.clickOrTap()
         XCTAssertTrue(total.waitForNonExistence(timeout: 5))
-        app.buttons["Close"].firstMatch.tap()
+        app.buttons["Close"].firstMatch.clickOrTap()
     }
 
     func testFoldersCanBeCreatedAndRenamedInHistory() {
+        #if os(macOS)
+        // Mac shows History only once meetings exist; the folders fixture seeds four.
+        launch("folders")
+        #else
         launch()
-        app.buttons["account.continueAnonymous"].tap()
+        #endif
+        app.buttons["account.continueAnonymous"].clickOrTap()
         XCTAssertTrue(app.buttons["account.continueAnonymous"].waitForNonExistence(timeout: 10))
-        app.buttons["History"].firstMatch.tap()
-        app.buttons["Manage folders"].tap()
+        openHistory()
+        app.buttons["Manage folders"].clickOrTap()
         XCTAssertFalse(app.textFields["folders.name"].exists, "Overview should not show an unrelated editor")
         XCTAssertFalse(app.buttons["folders.save"].exists)
         let overviewEvidence = XCTAttachment(screenshot: app.screenshot())
         overviewEvidence.name = "Folder journey overview on iPhone"
         overviewEvidence.lifetime = .keepAlways; add(overviewEvidence)
         let create = app.buttons["folders.create"]
-        for _ in 0..<10 where !create.isHittable { app.swipeUp() }
+        reveal(create, attempts: 10)
         XCTAssertTrue(create.isHittable, app.debugDescription)
-        create.tap()
+        create.clickOrTap()
         let name = app.textFields["folders.name"]
         XCTAssertTrue(name.waitForExistence(timeout: 5), app.debugDescription)
         #if os(iOS)
@@ -3697,24 +3750,24 @@ final class AccountJourneys: XCTestCase {
         XCTAssertLessThan(name.frame.maxY, app.buttons["folders.save"].frame.minY)
         #endif
         XCTAssertTrue(name.isHittable, app.debugDescription)
-        name.tap(); name.typeText("Atlas project")
+        name.clickOrTap(); name.typeText("Atlas project")
         let save = app.buttons["folders.save"]
-        for _ in 0..<4 where !save.isHittable { app.swipeUp() }
+        reveal(save, attempts: 4)
         XCTAssertTrue(save.isHittable, app.debugDescription)
-        save.tap()
+        save.clickOrTap()
         let edit = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH 'folders.edit.'")).firstMatch
         XCTAssertTrue(edit.waitForExistence(timeout: 5), app.debugDescription)
         XCTAssertFalse(save.exists, "Save belongs only to the editor")
-        edit.tap()
+        edit.clickOrTap()
         XCTAssertTrue(name.waitForExistence(timeout: 5))
         XCTAssertEqual(name.value as? String, "Atlas project", app.debugDescription)
-        name.tap(); name.typeText(" launch")
-        for _ in 0..<4 where !save.isHittable { app.swipeUp() }
-        save.tap()
+        name.clickOrTap(); name.typeText(" launch")
+        reveal(save, attempts: 4)
+        save.clickOrTap()
         let screenshot = XCTAttachment(screenshot: app.screenshot())
         screenshot.name = "Folders with synthetic project"
         screenshot.lifetime = .keepAlways; add(screenshot)
-        app.buttons["Close"].firstMatch.tap()
+        app.buttons["Close"].firstMatch.clickOrTap()
         XCTAssertTrue(app.buttons["Manage folders"].exists)
     }
 
@@ -3722,35 +3775,35 @@ final class AccountJourneys: XCTestCase {
     func testFolderSetupRequiresConfirmationAndCanBeHiddenAndRestored() {
         executionTimeAllowance = 120
         launch("setup")
-        app.buttons["account.continueAnonymous"].tap()
+        app.buttons["account.continueAnonymous"].clickOrTap()
         XCTAssertTrue(app.buttons["account.continueAnonymous"].waitForNonExistence(timeout: 10))
         let step = app.buttons["setup.step.folders"]
         for _ in 0..<12 where !step.isHittable || step.frame.maxY >= app.buttons["setup.reopen"].frame.minY { app.swipeUp() }
         XCTAssertTrue(step.isHittable, app.debugDescription)
         XCTAssertTrue((step.value as? String)?.contains("optional") == true)
-        step.tap()
+        step.clickOrTap()
         let open = app.buttons["setup.action.folders"]
         for _ in 0..<5 where !open.isHittable || open.frame.maxY >= app.buttons["setup.reopen"].frame.minY { app.swipeUp() }
-        open.tap()
+        open.clickOrTap()
         XCTAssertTrue(app.buttons["folders.create"].waitForExistence(timeout: 5))
         XCTAssertFalse(app.textFields["folders.name"].exists)
-        app.buttons["Close"].firstMatch.tap()
+        app.buttons["Close"].firstMatch.clickOrTap()
         XCTAssertTrue((step.value as? String)?.contains("optional") == true, "Opening is not confirmation")
-        app.buttons["setup.skip.folders"].tap()
+        app.buttons["setup.skip.folders"].clickOrTap()
         XCTAssertTrue(step.waitForNonExistence(timeout: 5))
-        app.buttons["Settings"].tap()
-        app.staticTexts["General"].firstMatch.tap()
+        app.buttons["Settings"].clickOrTap()
+        app.staticTexts["General"].firstMatch.clickOrTap()
         let restore = app.buttons["setup.restore.folders"]
         for _ in 0..<8 where !restore.isHittable { app.swipeUp() }
-        restore.tap()
+        restore.clickOrTap()
         app.terminate(); launch("setup")
         for _ in 0..<12 where !step.isHittable || step.frame.maxY >= app.buttons["setup.reopen"].frame.minY { app.swipeUp() }
-        step.tap()
+        step.clickOrTap()
         for _ in 0..<5 where !open.isHittable || open.frame.maxY >= app.buttons["setup.reopen"].frame.minY { app.swipeUp() }
-        open.tap()
+        open.clickOrTap()
         let confirm = app.buttons["setup.folders.confirm"]
         for _ in 0..<8 where !confirm.isHittable { app.swipeUp() }
-        confirm.tap()
+        confirm.clickOrTap()
         let configured = XCTNSPredicateExpectation(predicate: NSPredicate(format: "value CONTAINS %@", "configured"), object: step)
         XCTAssertEqual(XCTWaiter.wait(for: [configured], timeout: 5), .completed, app.debugDescription)
         let evidence = XCTAttachment(screenshot: app.screenshot())
@@ -3761,22 +3814,56 @@ final class AccountJourneys: XCTestCase {
 
     func testRecordStopHistoryPreservesFinalWordsOnce() {
         launch()
-        app.buttons["account.continueAnonymous"].tap()
+        app.buttons["account.continueAnonymous"].clickOrTap()
         XCTAssertTrue(app.buttons["account.continueAnonymous"].waitForNonExistence(timeout: 10))
-        app.buttons["start meeting"].tap()
+        app.buttons["home.start"].clickOrTap()
         let stop = app.buttons.matching(NSPredicate(format: "label CONTAINS[c] 'stop'")).firstMatch
         XCTAssertTrue(stop.waitForExistence(timeout: 10), app.debugDescription)
-        stop.tap()
-        XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "label CONTAINS 'Fixture final words'")).firstMatch.waitForExistence(timeout: 15), app.debugDescription)
-        app.buttons["History"].firstMatch.tap()
+        stop.clickOrTap()
+        // iOS shows a static text; Mac renders the live transcript in a text view.
+        XCTAssertTrue(app.descendants(matching: .any).matching(NSPredicate(format: "label CONTAINS 'Fixture final words' OR value CONTAINS 'Fixture final words'")).firstMatch.waitForExistence(timeout: 15), app.debugDescription)
+        openHistory()
+        #if os(macOS)
+        // Mac History rows read "untitled, <date>, •, <duration>"; the segment count is checked
+        // in the meeting header below.
+        let saved = app.buttons.matching(NSPredicate(format: "label BEGINSWITH 'untitled, '"))
+        #else
         let saved = app.buttons.matching(NSPredicate(format: "label CONTAINS '2 segments'"))
+        #endif
         XCTAssertTrue(saved.firstMatch.waitForExistence(timeout: 10), app.debugDescription)
         XCTAssertEqual(saved.count, 1)
-        saved.firstMatch.tap()
+        saved.firstMatch.clickOrTap()
+        #if os(macOS)
+        let segments = app.descendants(matching: .any)["meeting.segmentCount"].firstMatch
+        XCTAssertTrue(segments.waitForExistence(timeout: 10), app.debugDescription)
+        XCTAssertEqual(segments.label, "2 segments")
+        #endif
         let transcript = app.buttons["transcript"].firstMatch
-        if transcript.waitForExistence(timeout: 5) { transcript.tap() }
+        if transcript.waitForExistence(timeout: 5) { transcript.clickOrTap() }
         let finalWords = app.descendants(matching: .any).matching(NSPredicate(format: "label CONTAINS 'Fixture final words' OR value CONTAINS 'Fixture final words'")).firstMatch
         XCTAssertTrue(finalWords.waitForExistence(timeout: 10), app.debugDescription)
     }
 
+}
+
+/// Mac UI journeys use native clicks; iOS keeps touch taps. A synthesized `tap()` on a
+/// Mac button can fail to trigger its action, so shared journeys call `clickOrTap()`.
+extension XCUIElement {
+    func clickOrTap() {
+        #if os(macOS)
+        click()
+        #else
+        tap()
+        #endif
+    }
+}
+
+extension XCUICoordinate {
+    func clickOrTap() {
+        #if os(macOS)
+        click()
+        #else
+        tap()
+        #endif
+    }
 }
