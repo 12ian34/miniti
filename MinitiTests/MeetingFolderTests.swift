@@ -546,24 +546,40 @@ final class MeetingFolderTests: XCTestCase {
 
     // MARK: 3.10.0 FO2 fixture
 
-    /// Field report on 3.9.0: about 10 unfiled meetings and Preview proposed none.
-    /// Titles of the reported shape with no folders yet, with the creation toggle on and off.
-    func testReportedShapeOfTenUnfiledMeetingsBaseline() {
-        let titles = ["Priya Nair", "Tom Okafor", "Acme x miniti", "Intro: Sam / Ian", "Zoom meeting",
-                      "Untitled", "Lee Chen", "Brightwell <> miniti weekly", "Google Meet", "Catch up with Ana"]
+    /// Field report on 3.9.0: about 10 unfiled meetings and Preview proposed none. Titles of
+    /// the reported shape alone still give no evidence; with the attendees a calendar
+    /// meeting carries, Preview now places most of them.
+    func testReportedShapeOfTenUnfiledMeetings() {
+        let me = FolderFixture.me, colleague = FolderFixture.priya, customer = FolderFixture.lee, other = FolderFixture.dana
+        let shape: [(String, [String])] = [
+            ("Priya Nair", [me, colleague]), ("Tom Okafor", [me, FolderFixture.tom]), ("Acme x miniti", [me, customer]),
+            ("Intro: Sam / Ian", [me, FolderFixture.kai]), ("Zoom meeting", []), ("Untitled", []), ("Lee Chen", [me, customer]),
+            ("Brightwell <> miniti weekly", [me, other]), ("Google Meet", [me, colleague]), ("Catch up with Ana", [me, FolderFixture.ana]),
+        ]
         for creation in [true, false] {
-            let state = AppState(); state.automaticFolderCreation = creation
-            let meetings = titles.map { Meeting(title: $0, endTime: Date()) }
-            XCTAssertTrue(state.folderProposals(meetings: meetings).isEmpty,
+            let bare = AppState(); bare.automaticFolderCreation = creation
+            XCTAssertTrue(bare.folderProposals(meetings: shape.map { Meeting(title: $0.0, endTime: Date()) }, preview: true).isEmpty,
                           "Titles alone, with no attendees or summary, give no evidence (creation \(creation))")
         }
+        let state = AppState(); state.automaticFolderCreation = true
+        let meetings = shape.map { FolderFixture.meeting(.init($0.0, $0.1, nil, nil)) }
+        let proposals = state.folderProposals(meetings: meetings, preview: true)
+        let names = Dictionary(uniqueKeysWithValues: proposals.map { ($0.title, $0.folder.name) })
+        XCTAssertEqual(proposals.count, 7, "\(names)")
+        XCTAssertEqual(names["Priya Nair"], "Team")
+        XCTAssertEqual(names["Acme x miniti"], "Customers")
+        XCTAssertNil(names["Intro: Sam / Ian"], "One introduction is not enough for a new folder")
+        XCTAssertNil(names["Zoom meeting"])
+        XCTAssertTrue(state.meetingFolders.active.isEmpty, "Preview creates nothing until Apply")
+        let off = AppState(); off.automaticFolderCreation = false
+        XCTAssertTrue(off.folderProposals(meetings: meetings, preview: true).isEmpty, "No broad folders exist and creation is off")
     }
 
     func testFolderFixtureCoverageAndPrecision() {
         let state = AppState(); state.automaticFolderCreation = true
         let rows = FolderFixture.rows
         let meetings = rows.map(FolderFixture.meeting)
-        let proposals = Dictionary(uniqueKeysWithValues: state.folderProposals(meetings: meetings).map { ($0.meeting.id, $0.folder.name) })
+        let proposals = Dictionary(uniqueKeysWithValues: state.folderProposals(meetings: meetings, preview: true).map { ($0.meeting.id, $0.folder.name) })
         var withEvidence = 0, proposed = 0, correct = 0
         var misses: [String] = []
         for (row, meeting) in zip(rows, meetings) {
@@ -573,16 +589,125 @@ final class MeetingFolderTests: XCTestCase {
                 if evidence, row.expected != nil { misses.append("unfiled: \(row.title) (want \(row.expected!))") }
                 continue
             }
-            if evidence { proposed += 1 }
-            if name == row.expected { if evidence { correct += 1 } }
+            XCTAssertTrue(evidence, "\(row.title) has no summary or attendees and must stay unfiled, got \(name)")
+            proposed += 1
+            if name == row.expected { correct += 1 }
             else { misses.append("wrong: \(row.title) got \(name), want \(row.expected ?? "unfiled")") }
         }
         let coverage = Double(proposed) / Double(withEvidence)
-        let precision = proposed == 0 ? 1 : Double(correct) / Double(proposed)
+        let precision = Double(correct) / Double(max(proposed, 1))
         print("FO2 fixture: \(rows.count) rows, \(withEvidence) with a summary or attendees, \(proposed) proposed, \(correct) correct; coverage \(coverage), precision \(precision)\n" + misses.joined(separator: "\n"))
-        // 3.9.0 baseline, recorded before FO2.2 and FO2.3 change the rules.
-        XCTAssertEqual(withEvidence, FolderFixture.rows.filter { $0.summary != nil || !$0.attendees.isEmpty }.count)
-        XCTAssertLessThan(coverage, 0.5, "Baseline: most meetings with evidence get no proposal")
+        // 3.9.0 baseline on this fixture (FO2.1): 22 of 56 proposed, 0.39 coverage.
+        XCTAssertGreaterThanOrEqual(coverage, 0.7, misses.joined(separator: "\n"))
+        XCTAssertGreaterThanOrEqual(precision, 0.9, misses.joined(separator: "\n"))
+    }
+
+    func testBroadCategoryNamesAreSingleWordsWithStableIdentity() {
+        for category in FolderMatcher.Category.allCases {
+            XCTAssertFalse(category.name.contains(" ") || category.name.contains("&"), category.name)
+            XCTAssertFalse(category.description.contains("&"), category.description)
+        }
+        XCTAssertEqual(Set(FolderMatcher.Category.allCases.map(\.name)).count, FolderMatcher.Category.allCases.count)
+        // Raw values feed folder IDs shared across devices and with 3.9.0.
+        XCTAssertEqual(FolderMatcher.Category.allCases.map(\.rawValue).sorted(),
+                       ["customers", "hiring", "intros", "investors", "learning", "partnerships", "planning", "product", "team"])
+        XCTAssertEqual(FolderMatcher.Category.product.id(owner: "local", localOnly: false),
+                       FolderMatcher.automaticID(title: "category-v1:product", owner: "local"))
+        XCTAssertEqual(FolderMatcher.Category.matching(title: "Board prep"), .investors)
+        XCTAssertEqual(FolderMatcher.Category.matching(title: "Intro: Sam / Kai"), .intros)
+        XCTAssertEqual(FolderMatcher.Category.matching(title: "Intro call with a customer"), .customers)
+        XCTAssertEqual(FolderMatcher.Category.matching(title: "Planning intro"), .intros)
+        XCTAssertNil(FolderMatcher.Category.matching(title: "Onboarding"), "Whole words only: not board")
+    }
+
+    func testUpgradeRenamesOnlyUntouchedDefaultFolders() {
+        let store = MeetingFolderStore(url: nil)
+        func legacy(_ category: FolderMatcher.Category, localOnly: Bool = false) -> MeetingFolder {
+            .init(id: category.id(owner: store.owner, localOnly: localOnly), name: category.legacyName!,
+                  description: category.description, localOnly: localOnly)
+        }
+        let product = legacy(.product), partnersLocal = legacy(.partnerships, localOnly: true)
+        var planningRenamed = legacy(.planning); planningRenamed.name = "Strategy"
+        var partnersEdited = legacy(.partnerships); partnersEdited.description = "Agencies we work with"
+        let userMade = MeetingFolder(id: UUID(), name: "Product & engineering")
+        var deleted = legacy(.planning); deleted.id = FolderMatcher.Category.planning.id(owner: store.owner, localOnly: true)
+        for folder in [product, partnersLocal, planningRenamed, partnersEdited, userMade, deleted] { XCTAssertTrue(store.edit(folder)) }
+        deleted.deleted = true; XCTAssertTrue(store.edit(deleted))
+        store.renameLegacyDefaults()
+        func name(_ id: UUID) -> String? { store.scope.folders.first { $0.id == id }?.name }
+        XCTAssertEqual(name(product.id), "Product")
+        XCTAssertEqual(name(partnersLocal.id), "Partners", "The device-only twin is renamed too")
+        XCTAssertEqual(name(planningRenamed.id), "Strategy", "A renamed folder is left alone")
+        XCTAssertEqual(name(partnersEdited.id), "Partners & suppliers", "An edited description means the user touched it")
+        XCTAssertEqual(name(userMade.id), "Product & engineering", "A folder the user created is left alone")
+        XCTAssertEqual(name(deleted.id), "Deleted folder")
+        XCTAssertEqual(store.scope.folders.first { $0.id == product.id }?.description, FolderMatcher.Category.product.description)
+        let before = store.scope
+        store.renameLegacyDefaults()
+        XCTAssertEqual(store.scope, before, "Idempotent")
+    }
+
+    func testTwoDevicesRenamingAtOnceMergeWithoutConflict() {
+        let owner = "local"
+        let legacy = MeetingFolder(id: FolderMatcher.Category.product.id(owner: owner, localOnly: false),
+                                   name: "Product & engineering", description: FolderMatcher.Category.product.description)
+        let store = MeetingFolderStore(url: nil)
+        XCTAssertTrue(store.merge(.init(revision: 1, folders: [legacy])))
+        XCTAssertEqual(store.active.map(\.name), ["Product"], "A 3.9.0 folder arriving by sync is renamed")
+        XCTAssertTrue(store.scope.dirty.contains(legacy.id))
+        var renamed = legacy; renamed.name = "Product"
+        XCTAssertTrue(store.merge(.init(revision: 2, folders: [renamed])))
+        XCTAssertTrue(store.scope.conflicts.isEmpty)
+        XCTAssertFalse(store.scope.dirty.contains(legacy.id), "The other device wrote the same bytes")
+        var edited = renamed; edited.description = "Changed elsewhere"
+        let second = MeetingFolderStore(url: nil)
+        XCTAssertTrue(second.merge(.init(revision: 1, folders: [legacy])))
+        XCTAssertTrue(second.merge(.init(revision: 2, folders: [edited])))
+        XCTAssertEqual(second.scope.conflicts.map(\.name), ["Product"], "A concurrent unrelated edit is a normal visible conflict")
+    }
+
+    func testParticipantDomainsDecideTeamOrCustomersAndWebmailAbstains() {
+        let own: Set<String> = ["harborlabs.io"]
+        XCTAssertEqual(FolderMatcher.domainCategory(others: ["harborlabs.io", "harborlabs.io"], ownDomains: own), .team)
+        XCTAssertEqual(FolderMatcher.domainCategory(others: ["harborlabs.io", "acmefreight.com"], ownDomains: own), .customers)
+        XCTAssertEqual(FolderMatcher.domainCategory(others: ["gmail.com", "acmefreight.com"], ownDomains: own), .customers)
+        XCTAssertNil(FolderMatcher.domainCategory(others: ["gmail.com"], ownDomains: own), "Webmail is not a company")
+        XCTAssertNil(FolderMatcher.domainCategory(others: ["harborlabs.io", "icloud.com"], ownDomains: own), "A webmail guest could be anyone")
+        XCTAssertNil(FolderMatcher.domainCategory(others: [], ownDomains: own))
+        XCTAssertNil(FolderMatcher.domainCategory(others: ["acmefreight.com"], ownDomains: []), "Unknown own domain")
+        XCTAssertNil(FolderMatcher.domainCategory(others: ["acmefreight.com"], ownDomains: ["gmail.com"]), "A webmail user has no company domain")
+        XCTAssertEqual(FolderMatcher.domain(ofEmail: " Lee@AcmeFreight.com "), "acmefreight.com")
+        XCTAssertNil(FolderMatcher.domain(ofEmail: "not-an-email"))
+    }
+
+    func testAutomaticFilingUsesAttendeesButNeverCreatesAFolderFromSummaries() throws {
+        let container = try TestSupport.makeInMemoryContainer()
+        let state = AppState(); state.modelContext = container.mainContext
+        state.automaticFolderCreation = true; state.automaticFolderFiling = true
+        let rows: [FolderFixture.Row] = [
+            .init("Untitled", [], FolderFixture.hiringSummary, nil), .init("Untitled", [], FolderFixture.hiringSummary, nil),
+            .init("Lee Chen", [FolderFixture.me, FolderFixture.lee], nil, nil), .init("Dana and Sam", [FolderFixture.me, FolderFixture.dana], nil, nil),
+        ]
+        let meetings = rows.map(FolderFixture.meeting)
+        meetings.forEach(container.mainContext.insert)
+        try container.mainContext.save()
+        XCTAssertTrue(state.folderProposals(meetings: meetings, onlyMeetingID: meetings[0].id).isEmpty,
+                      "Automatic filing keeps the rule: summary words never create a folder")
+        XCTAssertEqual(state.folderProposals(meetings: meetings, preview: true).filter { $0.folder.name == "Hiring" }.count, 2,
+                       "Preview may propose one when two meetings agree")
+        state.automaticallyFileMeeting(meetings[2])
+        XCTAssertEqual(state.meetingFolders.folder(meetings[2].folderID)?.name, "Customers")
+        XCTAssertEqual(meetings[2].folderManual, false)
+        XCTAssertNil(meetings[3].folderID, "Only the completed meeting moves")
+    }
+
+    func testFolderFromPrivateMeetingEvidenceStaysOnThisDevice() {
+        let state = AppState(); state.automaticFolderCreation = true
+        let meetings = (0..<2).map { _ in FolderFixture.meeting(.init("Untitled", [], FolderFixture.hiringSummary, nil)) }
+        meetings[0].syncExcluded = true
+        let proposals = state.folderProposals(meetings: meetings, preview: true)
+        XCTAssertEqual(proposals.count, 2)
+        XCTAssertTrue(proposals.allSatisfy { $0.folder.localOnly })
     }
 }
 

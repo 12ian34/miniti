@@ -391,7 +391,7 @@ struct MeetingFolderManager: View {
                 fetch.fetchLimit = 1000
                 source = try context.fetch(fetch)
             }
-            proposals = appState.folderProposals(meetings: source, regroupManual: regroupManual)
+            proposals = appState.folderProposals(meetings: source, regroupManual: regroupManual, preview: true)
             previewIssue = nil
         } catch {
             proposals = []; previewIssue = "Could not load meeting history. Try again."

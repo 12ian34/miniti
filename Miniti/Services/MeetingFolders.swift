@@ -42,6 +42,7 @@ final class MeetingFolderStore: ObservableObject {
         do { scopes = try JSONDecoder().decode([String: Scope].self, from: Data(contentsOf: url)) }
         catch { readable = false; issue = "Folders could not be read. The saved file has been kept." }
         scope = scopes[owner] ?? Scope()
+        renameLegacyDefaults()
     }
 
     func selectOwner(_ accountID: String?) {
@@ -50,6 +51,7 @@ final class MeetingFolderStore: ObservableObject {
         generation = UUID(); owner = next
         scope = scopes[next] ?? Scope()
         if readable { issue = nil }
+        renameLegacyDefaults()
     }
 
     func removeOwner(_ accountID: String) -> Bool {
@@ -62,6 +64,22 @@ final class MeetingFolderStore: ObservableObject {
             if owner == key { generation = UUID(); scope = Scope() }
             return true
         } catch { issue = "The account was deleted, but its local folder catalog could not be removed."; return false }
+    }
+
+    /// 3.10.0 renamed three broad folders to one word. An automatic folder that still has
+    /// its 3.9.0 default name, description and no title rule is renamed in one catalog
+    /// edit. Every device writes the same bytes, so two devices renaming at once merge
+    /// cleanly. Renamed, user-created and deleted folders are left alone.
+    func renameLegacyDefaults() {
+        guard readable else { return }
+        var next = scope
+        for (index, folder) in scope.folders.enumerated() where !folder.deleted && folder.titleRule.isEmpty {
+            guard let category = FolderMatcher.Category.identifying(folder, owner: owner),
+                  folder.name == category.legacyName, folder.description == category.description else { continue }
+            next.folders[index].name = category.name
+            next.dirty.insert(folder.id)
+        }
+        if next != scope { _ = save(next) }
     }
 
     func folder(_ id: UUID?) -> MeetingFolder? {
@@ -172,7 +190,10 @@ final class MeetingFolderStore: ObservableObject {
         }
         next.base = remote
         next.folders = result.values.sorted { $0.id.uuidString < $1.id.uuidString }
-        return save(next)
+        guard save(next) else { return false }
+        // An older client may have delivered a folder under its 3.9.0 name.
+        renameLegacyDefaults()
+        return true
     }
 
     var sleep: (TimeInterval) async throws -> Void = { try await Task.sleep(for: .seconds($0)) }
@@ -220,20 +241,33 @@ final class MeetingFolderStore: ObservableObject {
 /// Bounded local matching. No transcript scan, network request or new model permission.
 /// Exact title rules outrank word evidence. A tie stays Unfiled.
 enum FolderMatcher {
-    /// Broad purposes, rather than one folder per recurring title. Only title evidence
-    /// selects a built-in group; incidental summary vocabulary cannot create one.
+    /// Broad purposes, rather than one folder per recurring title.
     enum Category: String, CaseIterable {
-        case team, customers, product, hiring, planning, partnerships, learning
+        // Raw values feed the stable folder ID ("category-v1:<raw value>"); never rename them.
+        case team, customers, product, hiring, investors, partnerships, intros, learning, planning
 
+        /// One word, never an ampersand (3.10.0 F-2).
         var name: String {
             switch self {
             case .team: "Team"
             case .customers: "Customers"
-            case .product: "Product & engineering"
+            case .product: "Product"
             case .hiring: "Hiring"
-            case .planning: "Business planning"
-            case .partnerships: "Partners & suppliers"
+            case .investors: "Investors"
+            case .partnerships: "Partners"
+            case .intros: "Intros"
             case .learning: "Learning"
+            case .planning: "Planning"
+            }
+        }
+        /// The 3.9.0 default name, where it changed. An automatic folder still carrying
+        /// it untouched is renamed on upgrade (`MeetingFolderStore.renameLegacyDefaults`).
+        var legacyName: String? {
+            switch self {
+            case .product: "Product & engineering"
+            case .partnerships: "Partners & suppliers"
+            case .planning: "Business planning"
+            default: nil
             }
         }
         var description: String {
@@ -242,9 +276,11 @@ enum FolderMatcher {
             case .customers: "Customer conversations, sales calls and demos."
             case .product: "Product, design and engineering work."
             case .hiring: "Interviews, recruitment and hiring decisions."
-            case .planning: "Strategy, budgets and business planning."
+            case .investors: "Investors, fundraising and board meetings."
             case .partnerships: "Work with partners, vendors and suppliers."
+            case .intros: "Introductions and first conversations."
             case .learning: "Training, workshops and shared learning."
+            case .planning: "Strategy, budgets and business planning."
             }
         }
         private var phrases: [String] {
@@ -252,16 +288,22 @@ enum FolderMatcher {
             case .team: ["standup", "standups", "stand up", "team sync", "team meeting", "team catch up", "all hands", "one to one", "one on one", "1 1", "1on1",
                          "offsite", "town hall"]
             case .customers: ["customer", "customers", "client", "clients", "prospect", "prospects", "sales", "demo", "discovery",
-                              "renewal", "account review", "pilot"]
+                              "renewal", "account review", "pilot", "qbr"]
             case .product: ["product", "engineering", "design", "sprint", "roadmap", "bug triage",
                             "spec", "architecture", "ux", "user research", "backlog"]
             case .hiring: ["interview", "interviews", "recruiting", "recruitment", "hiring", "candidate", "candidates", "screening"]
-            case .planning: ["strategy", "planning", "budget", "finance", "operations", "leadership", "board",
-                             "okr", "okrs", "forecast", "investor", "investors", "fundraising"]
+            case .investors: ["investor", "investors", "fundraising", "fundraise", "board", "seed round", "series a", "series b",
+                              "runway", "cap table", "due diligence", "term sheet"]
             case .partnerships: ["partner", "partners", "partnership", "partnerships", "vendor", "vendors", "supplier", "suppliers", "agency", "procurement"]
+            case .intros: ["intro", "intros", "introduction", "introductions", "introductory", "meet and greet"]
             case .learning: ["training", "workshop", "webinar", "learning", "lunch and learn", "meetup"]
+            case .planning: ["strategy", "planning", "budget", "budgets", "finance", "operations", "leadership",
+                             "okr", "okrs", "forecast"]
             }
         }
+        /// Weak categories give way to a specific one in the same title: "sprint planning"
+        /// is product work and "intro call with a customer" is a customer meeting.
+        private var isFallback: Bool { self == .planning || self == .intros }
         func id(owner: String, localOnly: Bool) -> UUID {
             FolderMatcher.automaticID(title: "category-v1:" + rawValue, owner: owner + (localOnly ? ":local" : ""))
         }
@@ -273,9 +315,11 @@ enum FolderMatcher {
             let matches = allCases.filter { category in
                 category.phrases.contains { normalized.contains(" " + $0 + " ") }
             }
-            // Planning is a fallback: "sprint planning" belongs with product work.
-            let specific = matches.filter { $0 != .planning }
-            return specific.count == 1 ? specific[0] : (specific.isEmpty && matches.contains(.planning) ? .planning : nil)
+            let specific = matches.filter { !$0.isFallback }
+            if specific.count == 1 { return specific[0] }
+            guard specific.isEmpty else { return nil }
+            // An introduction outranks generic planning words.
+            return matches.contains(.intros) ? .intros : (matches.contains(.planning) ? .planning : nil)
         }
         /// Summary evidence for a broad group: at least three different terms of one
         /// category (singular and plural count once), two clear of any other category.
@@ -302,6 +346,31 @@ enum FolderMatcher {
         static func identifying(_ folder: MeetingFolder, owner: String) -> Self? {
             allCases.first { $0.id(owner: owner, localOnly: folder.localOnly) == folder.id }
         }
+    }
+
+    /// Shared mailbox providers. An address there says nothing about a company.
+    /// A fixed, reviewed list; matching is on the whole domain.
+    static let webmailDomains: Set<String> = [
+        "gmail.com", "googlemail.com", "outlook.com", "hotmail.com", "hotmail.co.uk", "live.com", "msn.com",
+        "icloud.com", "me.com", "mac.com", "yahoo.com", "yahoo.co.uk", "ymail.com", "aol.com",
+        "proton.me", "protonmail.com", "pm.me", "fastmail.com", "hey.com", "gmx.com", "gmx.de", "web.de",
+        "mail.com", "zoho.com", "yandex.com", "qq.com", "163.com", "duck.com"
+    ]
+    static func domain(ofEmail email: String) -> String? {
+        let parts = email.lowercased().trimmingCharacters(in: .whitespacesAndNewlines).split(separator: "@")
+        guard parts.count == 2, parts[1].contains(".") else { return nil }
+        return String(parts[1])
+    }
+    /// What the other participants' email domains say (3.10.0 FO2.3). Everyone else on the
+    /// user's own company domain is Team; any other company domain is Customers, the
+    /// default for an outside company. Abstains without a known own company domain, with
+    /// no other participant, or when webmail addresses are all there is to go on.
+    static func domainCategory(others: [String], ownDomains: Set<String>) -> Category? {
+        let own = ownDomains.subtracting(webmailDomains)
+        guard !own.isEmpty, !others.isEmpty else { return nil }
+        let companies = others.filter { !webmailDomains.contains($0) }
+        if companies.contains(where: { !own.contains($0) }) { return .customers }
+        return companies.count == others.count ? .team : nil
     }
 
     static func words(_ text: String) -> Set<String> {

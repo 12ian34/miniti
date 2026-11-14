@@ -53,15 +53,70 @@ extension AppState {
         })
     }
 
+    /// Email domains of a meeting's participants, for local folder evidence only.
+    struct FolderParticipants {
+        var own: Set<String> = []
+        var others: [String] = []
+    }
+
+    /// Calendar attendees and speaker emails, split into the user's own addresses and
+    /// everyone else's domains. Nothing here leaves the device.
+    func folderParticipants(of meeting: Meeting) -> FolderParticipants {
+        var result = FolderParticipants()
+        var seen = Set<String>()
+        for attendee in meeting.attendees {
+            let email = attendee.email.lowercased()
+            guard let domain = FolderMatcher.domain(ofEmail: email), seen.insert(email).inserted else { continue }
+            if attendee.isSelf { result.own.insert(domain) } else { result.others.append(domain) }
+        }
+        let selfSpeakers = Set(meeting.selfSpeakerIDs.map(String.init))
+        for (speaker, raw) in meeting.speakerEmails {
+            let email = raw.lowercased()
+            guard let domain = FolderMatcher.domain(ofEmail: email) else { continue }
+            if selfSpeakers.contains(speaker) { result.own.insert(domain) }
+            else if seen.insert(email).inserted { result.others.append(domain) }
+        }
+        return result
+    }
+
     /// At most 1,000 finished rows, after settlement or an explicit preview. Never audio callbacks.
-    func folderProposals(meetings: [Meeting], regroupManual: Bool = false, onlyMeetingID: UUID? = nil) -> [FolderProposal] {
+    /// `preview` is the organise screen: there, summary evidence may propose a new broad
+    /// folder when at least two meetings agree. Automatic filing never creates one from summaries.
+    func folderProposals(meetings: [Meeting], regroupManual: Bool = false, onlyMeetingID: UUID? = nil,
+                         preview: Bool = false) -> [FolderProposal] {
         let candidates = Array(meetings.lazy.filter { $0.endTime != nil }.prefix(1000))
         var folders = meetingFolders.active
         let owner = meetingFolders.owner
+        // Broad evidence per meeting, strongest first: a title phrase, then (in Preview)
+        // strong summary vocabulary, then who was there. Attendees are only decoded for
+        // meetings whose title says nothing.
+        var titled: [UUID: FolderMatcher.Category] = [:]
+        var participants: [UUID: FolderParticipants] = [:]
+        var ownDomains = Set<String>()
+        if let verified = accountEmailState.email?.verified, let domain = FolderMatcher.domain(ofEmail: verified) {
+            ownDomains.insert(domain)
+        }
+        for meeting in candidates {
+            if let category = FolderMatcher.Category.matching(title: meeting.calendarEventTitle ?? meeting.title) {
+                titled[meeting.id] = category
+            } else {
+                let found = folderParticipants(of: meeting)
+                ownDomains.formUnion(found.own)
+                if !found.others.isEmpty { participants[meeting.id] = found }
+            }
+        }
+        let attended = participants.compactMapValues { FolderMatcher.domainCategory(others: $0.others, ownDomains: ownDomains) }
+        var summarized: [UUID: FolderMatcher.Category] = [:]
+        func summaryCategory(_ meeting: Meeting) -> FolderMatcher.Category? {
+            if let known = summarized[meeting.id] { return known }
+            let category = FolderMatcher.Category.matching(summary: meeting.summaryText)
+            if let category { summarized[meeting.id] = category }
+            return category
+        }
         if automaticFolderCreation {
             let groups = Dictionary(grouping: candidates.compactMap { meeting -> (FolderMatcher.Category, Meeting)? in
-                guard let category = FolderMatcher.Category.matching(title: meeting.calendarEventTitle ?? meeting.title) else { return nil }
-                return (category, meeting)
+                let category = titled[meeting.id] ?? (preview ? summaryCategory(meeting) : nil) ?? attended[meeting.id]
+                return category.map { ($0, meeting) }
             }, by: { $0.0 })
             for category in FolderMatcher.Category.allCases {
                 guard let group = groups[category], group.count >= 2, folders.count < 200 else { continue }
@@ -97,7 +152,8 @@ extension AppState {
         return candidates.compactMap { meeting in
             guard onlyMeetingID == nil || meeting.id == onlyMeetingID,
                   regroupManual || meeting.folderManual != true,
-                  let folder = matchingFolder(for: meeting, custom: custom, prepared: prepared, broad: broad, precedents: precedents),
+                  let folder = matchingFolder(for: meeting, custom: custom, prepared: prepared, broad: broad, precedents: precedents,
+                                              titled: titled[meeting.id], attended: attended[meeting.id], preview: preview),
                   folder.id != meeting.folderID else { return nil }
             return .init(owner: meetingFolders.owner, meeting: meeting, title: meeting.title, previousFolder: meeting.folderID,
                          previousManual: meeting.folderManual, previousLocalOnly: meeting.folderLocalOnly, folder: folder)
@@ -141,7 +197,9 @@ extension AppState {
 
     private func matchingFolder(for meeting: Meeting, custom: [MeetingFolder], prepared: FolderMatcher.Prepared,
                                 broad: [FolderMatcher.Category: MeetingFolder],
-                                precedents: [String: [SeriesPrecedent]] = [:]) -> MeetingFolder? {
+                                precedents: [String: [SeriesPrecedent]] = [:],
+                                titled: FolderMatcher.Category?, attended: FolderMatcher.Category?,
+                                preview: Bool) -> MeetingFolder? {
         let title = meeting.calendarEventTitle ?? meeting.title
         let precedent = seriesPrecedent(for: meeting, title: title, in: precedents)
         // A hand-chosen folder for the same series is the strongest signal there is.
@@ -160,12 +218,15 @@ extension AppState {
         if let precedent, meetingFolders.folder(meeting.folderID) == nil || meeting.folderID == precedent.folder.id {
             return precedent.folder
         }
-        if let category = FolderMatcher.Category.matching(title: title), let folder = broad[category] { return folder }
-        // Strong summary evidence may file into a broad folder that already exists, never a new one.
+        if let titled, let folder = broad[titled] { return folder }
+        // Strong summary evidence files into a broad folder that already exists. Only
+        // Preview may also use one proposed in this batch, which Apply then creates.
         if let category = FolderMatcher.Category.matching(summary: meeting.summaryText),
-           let folder = broad[category], meetingFolders.folder(folder.id) != nil {
+           let folder = broad[category], preview || meetingFolders.folder(folder.id) != nil {
             return folder
         }
+        // Who was there: colleagues only is Team, an outside company is Customers.
+        if let attended, let folder = broad[attended] { return folder }
         return nil
     }
 
