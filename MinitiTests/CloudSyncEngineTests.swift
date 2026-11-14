@@ -1364,6 +1364,12 @@ final class CloudSyncEngineTests: XCTestCase {
             XCTAssertEqual(engine.phase, .failed("Could not sync. Trying again."), "A real server failure still shows a failure line")
             XCTAssertNil(engine.lastError)
         }
+        XCTAssertTrue(engine.isRetryingAfterFailure, "A removal waiting on this pass reads as retrying")
+        await tick()
+        XCTAssertFalse(engine.isRetryingAfterFailure)
+        transport.failNext = .signInDelayed
+        await tick()
+        XCTAssertEqual(engine.phase, .paused(.offline), "A locked key or a server fault while signing in waits like offline")
         await tick()
         transport.failNext = .signInUnusable
         await tick()

@@ -125,6 +125,9 @@ enum CloudSyncError: Error, Equatable {
     /// The server revoked this installation (credentials were cleared locally).
     case revoked
     case offline
+    /// Signing in could not finish right now (device key locked, server fault while
+    /// refreshing). Sync waits like it does offline; nothing is wrong with the connection.
+    case signInDelayed
     /// The device key can never sign again. The user signs in again in Settings, Account.
     case signInUnusable
     /// Signing the request in failed for a reason with no line of its own. The text is
@@ -168,9 +171,11 @@ extension MinitiAPIService: CloudSyncTransport {
             (data, response) = try await send(request, preservingSignInCause: true)
         } catch let failure as SignInFailure {
             // Not reaching the server, a key that is locked for now and a server fault while
-            // refreshing all mean the same to the user: sync waits and tries again.
+            // refreshing all mean the same to sync: wait and try again. Only the first is
+            // really "no connection", so the other two keep their own case.
             switch failure.cause {
-            case .transport, .keyNotUsableNow, .server: throw CloudSyncError.offline
+            case .transport: throw CloudSyncError.offline
+            case .keyNotUsableNow, .server: throw CloudSyncError.signInDelayed
             case .rateLimited: throw CloudSyncError.rateLimited
             case .keyUnusable: throw CloudSyncError.signInUnusable
             case .other: throw CloudSyncError.signIn(String(describing: failure.error))

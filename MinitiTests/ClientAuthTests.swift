@@ -1057,8 +1057,8 @@ final class ClientAuthTests: XCTestCase {
             ("refresh cannot reach the server", { _ in throw URLError(.notConnectedToInternet) }, .offline),
             ("refresh connection drops", { _ in throw URLError(.networkConnectionLost) }, .offline),
             ("refresh is rate limited", { _ in StubURLProtocol.json(429, #"{"error":"rate_limited","message":"x"}"#) }, .rateLimited),
-            ("refresh answers 503", { _ in StubURLProtocol.json(503, #"{"error":"unavailable","message":"x"}"#) }, .offline),
-            ("refresh answers 500", { _ in StubURLProtocol.json(500, #"{"error":"internal","message":"x"}"#) }, .offline),
+            ("refresh answers 503", { _ in StubURLProtocol.json(503, #"{"error":"unavailable","message":"x"}"#) }, .signInDelayed),
+            ("refresh answers 500", { _ in StubURLProtocol.json(500, #"{"error":"internal","message":"x"}"#) }, .signInDelayed),
         ]
         for (name, refresh, expected) in cases {
             StubURLProtocol.reset()
@@ -1076,7 +1076,11 @@ final class ClientAuthTests: XCTestCase {
             var request = URLRequest(url: URL(string: "https://api.test/api/usage")!)
             request.httpMethod = "GET"
             do { _ = try await api.send(request); XCTFail("\(name): expected a failure") }
-            catch { if case MinitiAPIService.ServiceError.serverError = error {} else { XCTFail("\(name): \(error)") } }
+            catch {
+                guard case MinitiAPIService.ServiceError.serverError(let message) = error else { XCTFail("\(name): \(error)"); continue }
+                XCTAssertFalse(message.isEmpty, name)
+                if expected == .offline && name.contains("reach") { XCTAssertTrue(message.hasPrefix("Network error"), message) }
+            }
         }
         StubURLProtocol.reset()
     }
@@ -1084,13 +1088,35 @@ final class ClientAuthTests: XCTestCase {
     func testCloudCallWaitsWhenTheDeviceKeyIsLockedAndSaysSoWhenItIsUnusable() async throws {
         StubURLProtocol.reset()
         defer { StubURLProtocol.reset() }
-        // Locked for now, as on a Mac that has just woken: sync waits like it does offline.
-        var (stored, _) = repairableCredentials()
-        stored.accessExpiresAt = Int64(Date().timeIntervalSince1970) - 10
-        let locked = managerFor(stored, loader: signingFaultLoader(for: stored.installationKey, domain: NSOSStatusErrorDomain, code: -25308))
-        restoreStub()
-        do { _ = try await MinitiAPIService(session: stubbedSession(), auth: locked).status(); XCTFail("expected a failure") }
-        catch { XCTAssertEqual(error as? CloudSyncError, .offline, "\(error)") }
+        // Locked for now, as on a Mac that has just woken. The bearer is still valid, so
+        // the failure is the write's request proof, not a refresh.
+        let (lockedStored, _) = repairableCredentials()
+        let locked = managerFor(lockedStored, loader: signingFaultLoader(for: lockedStored.installationKey, domain: NSOSStatusErrorDomain, code: -25308))
+        StubURLProtocol.handler = { _ in XCTFail("A request that cannot be signed must not be sent"); return Self.failure(500, "unexpected") }
+        let lockedAPI = MinitiAPIService(session: stubbedSession(), auth: locked)
+        do { _ = try await lockedAPI.deleteMeeting(id: UUID(), baseRevision: 1); XCTFail("expected a failure") }
+        catch { XCTAssertEqual(error as? CloudSyncError, .signInDelayed, "\(error)") }
+        XCTAssertTrue(locked.isEnrolled, "A locked key replaces nothing")
+
+        // Unusable for good (joined by email, no recovery key to restore with).
+        let (deadStored, _) = repairableCredentials(recoveryKey: "")
+        let dead = managerFor(deadStored, loader: signingFaultLoader(for: deadStored.installationKey, domain: TKErrorDomain, code: -10))
+        let deadAPI = MinitiAPIService(session: stubbedSession(), auth: dead)
+        do { _ = try await deadAPI.deleteMeeting(id: UUID(), baseRevision: 1); XCTFail("expected a failure") }
+        catch { XCTAssertEqual(error as? CloudSyncError, .signInUnusable, "enrolled path: \(error)") }
+        XCTAssertEqual(dead.credentialState, .keyUnusable)
+        XCTAssertFalse(dead.isEnrolled)
+        // From now on the same answer comes from the not-enrolled path.
+        do { _ = try await deadAPI.status(); XCTFail("expected a failure") }
+        catch { XCTAssertEqual(error as? CloudSyncError, .signInUnusable, "not-enrolled path: \(error)") }
+        var request = URLRequest(url: URL(string: "https://api.test/api/usage")!)
+        request.httpMethod = "GET"
+        do { _ = try await deadAPI.send(request); XCTFail("expected a failure") }
+        catch {
+            guard case MinitiAPIService.ServiceError.serverError(let message) = error else { return XCTFail("\(error)") }
+            XCTAssertEqual(message, ClientAuthError.keyUnusable.localizedDescription, "Other callers read the same text as before")
+        }
+
         // The typed causes map one to one.
         typealias Failure = MinitiAPIService.SignInFailure
         XCTAssertEqual(Failure(.network("x")).cause, .transport)
@@ -1101,6 +1127,28 @@ final class ClientAuthTests: XCTestCase {
         XCTAssertEqual(Failure(.server(code: "internal", status: 502)).cause, .server)
         XCTAssertEqual(Failure(.server(code: "weird", status: 418)).cause, .other)
         XCTAssertEqual(Failure(.storage).cause, .other)
+    }
+
+    /// The 2026-11-14 field shape: the refresh token was already used (its reply was lost
+    /// when the Mac slept), and the fresh challenge then cannot reach the server.
+    func testCloudCallWaitsWhenAReusedTokensChallengeCannotReachTheServer() async throws {
+        StubURLProtocol.reset()
+        defer { StubURLProtocol.reset() }
+        let (stored, _) = repairableCredentials()
+        let manager = managerFor(stored, loader: { InstallationKey.load(stored: $0) })
+        let api = MinitiAPIService(session: stubbedSession(), auth: manager)
+        nonisolated(unsafe) var paths: [String] = []
+        StubURLProtocol.script = { request in
+            let path = request.url?.path ?? ""
+            paths.append(path)
+            if path == "/api/auth/token" { return StubURLProtocol.json(401, #"{"error":"invalid_refresh_token","message":"x"}"#) }
+            if path == "/api/auth/challenge" { throw URLError(.networkConnectionLost) }
+            return StubURLProtocol.json(401, #"{"error":"token_expired","message":"x"}"#)
+        }
+        do { _ = try await api.status(); XCTFail("expected a failure") }
+        catch { XCTAssertEqual(error as? CloudSyncError, .offline, "\(error)") }
+        XCTAssertEqual(paths.filter { $0.hasPrefix("/api/auth/") }, ["/api/auth/token", "/api/auth/challenge"])
+        XCTAssertTrue(manager.isEnrolled, "Nothing is cleared; the next poll tries again")
     }
 
     func testACloudRequestsRetryNeverRunsUnderANewerCredential() async throws {

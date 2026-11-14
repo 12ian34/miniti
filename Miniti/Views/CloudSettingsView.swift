@@ -25,7 +25,7 @@ struct MeetingCloudPrivacyStatus: View {
             if meeting.syncExcluded {
                 if showsChoice { Label("Kept off the cloud", systemImage: "icloud.slash") }
                 if !pending.isEmpty, pause == nil || pending.contains(where: { $0.cloudRevision > 0 }) {
-                    Text(MeetingCloudPrivacyPresentation.removalStatus(pause: pause, retrying: engine.lastError != nil))
+                    Text(MeetingCloudPrivacyPresentation.removalStatus(pause: pause, retrying: engine.isRetryingAfterFailure))
                         .fixedSize(horizontal: false, vertical: true)
                 }
             } else if meeting.cloudRestoreRequested {

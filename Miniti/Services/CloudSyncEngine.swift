@@ -147,6 +147,8 @@ final class CloudSyncEngine: ObservableObject {
     }
     @Published private(set) var skippedMeetingIDs: Set<UUID> = []
     @Published private(set) var lastError: String?
+    /// The last pass ended in a failure line; the next poll retries.
+    var isRetryingAfterFailure: Bool { if case .failed = phase { return true } else { return false } }
     /// What moved and why, newest first, for Settings → Cloud → View log. Kept in
     /// UserDefaults across launches (the last 300 entries, titles only, never transcript text).
     @Published private(set) var log: [CloudSyncLogEntry] = [] {
@@ -620,7 +622,7 @@ final class CloudSyncEngine: ObservableObject {
             phase = .paused(.notAvailableYet)
         case .requiresManaged:
             phase = .paused(.notManaged)
-        case .offline:
+        case .offline, .signInDelayed:
             phase = .paused(.offline)
         case .notEnrolled:
             phase = .paused(.notEnrolled)
@@ -649,8 +651,8 @@ final class CloudSyncEngine: ObservableObject {
         switch error {
         case .server(_, let status): DiagnosticTimeline.shared.record(.cloudFailed, fields: ["reason": "server", "status": String(status)])
         case .rateLimited: DiagnosticTimeline.shared.record(.cloudFailed, fields: ["reason": "rate_limited"])
-        case .signInUnusable: DiagnosticTimeline.shared.record(.cloudFailed, fields: ["reason": "sign_in_key_unusable"])
-        case .signIn: DiagnosticTimeline.shared.record(.cloudFailed, fields: ["reason": "sign_in"])
+        // Reasons come from the timeline's fixed vocabulary.
+        case .signInUnusable, .signIn, .signInDelayed: DiagnosticTimeline.shared.record(.cloudFailed, fields: ["reason": "auth"])
         case .cursorExpired: DiagnosticTimeline.shared.record(.cloudFailed, fields: ["reason": "cursor_expired"])
         default: break
         }
