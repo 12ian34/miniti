@@ -421,9 +421,11 @@ private struct SettingsDetailView_iOS: View {
                                 Text("Checking…")
                                     .foregroundStyle(.secondary)
                             } else if appState.isPro {
-                                Text("Pro, \(Int(appState.displayMinutesLimit)) min/month")
+                                Text(appState.compProUntil.map { PlanCopy.compPlan(until: $0) }
+                                     ?? "Pro, \(Int(appState.displayMinutesLimit)) min/month")
                                     .foregroundStyle(.purple)
                                     .fontWeight(.medium)
+                                    .accessibilityIdentifier("billing.plan.value")
                             } else {
                                 Text("Free, 500 min/month")
                                     .foregroundStyle(.secondary)
@@ -437,7 +439,13 @@ private struct SettingsDetailView_iOS: View {
                                     .foregroundStyle(.secondary)
                             }
                         } else if appState.isPro {
-                            if appState.isProViaAccount {
+                            if appState.compProUntil != nil {
+                                // Complimentary Pro has no subscription behind it: nothing to manage.
+                                Text(PlanCopy.compCaption)
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                                    .accessibilityIdentifier("billing.plan.comp")
+                            } else if appState.isProViaAccount {
                                 Text("Pro comes from another device on your account. Manage the subscription from that device.")
                                     .font(.caption)
                                     .foregroundStyle(.secondary)
@@ -598,7 +606,8 @@ private struct SettingsDetailView_iOS: View {
                          ? (appState.shouldShowManagedSubscriptionPlaceholder
                             ? "Checking subscription status…"
                             : (appState.isPro
-                               ? "Pro subscription active. \(Int(appState.displayMinutesLimit)) minutes per month."
+                               ? (appState.compProUntil.map { PlanCopy.compSummary(until: $0, minutesLimit: Int(appState.displayMinutesLimit)) }
+                                  ?? "Pro subscription active. \(Int(appState.displayMinutesLimit)) minutes per month.")
                                : "500 free minutes per month via Miniti's backend."))
                          : "Audio and text go straight to your own Deepgram and OpenAI accounts, billed by them.")
                         .font(.caption)

@@ -204,9 +204,16 @@ final class MinitiAPIService: @unchecked Sendable {
         /// compares with the version it last applied (`AppState.cloudAccountFlagAction`).
         let cloudEnabled: Bool?
         let cloudVersion: Int?
+        /// Complimentary Pro (3.10.0): miniti added Pro to the account until this date. Set only
+        /// when the backend says the comp is what makes this device Pro
+        /// (`entitlement_source: "comp"` with `comp_until`). Nil for a subscription, for Pro
+        /// from another device, for free, and from older backends.
+        let compUntil: Date?
 
         enum CodingKeys: String, CodingKey {
             case entitlementViaAccount = "entitlement_via_account"
+            case entitlementSource = "entitlement_source"
+            case compUntil = "comp_until"
             case cloudEnabled = "cloud_enabled"
             case cloudVersion = "cloud_version"
             case cloudEnabledCamel = "cloudEnabled"
@@ -263,11 +270,16 @@ final class MinitiAPIService: @unchecked Sendable {
             cloudEnabled = ((try? container.decodeIfPresent(Bool.self, forKey: .cloudEnabled)) ?? nil)
                 ?? ((try? container.decodeIfPresent(Bool.self, forKey: .cloudEnabledCamel)) ?? nil)
             cloudVersion = MinitiAPIService.decodeOptionalInt(container, .cloudVersion, .cloudVersionCamel)
+            let source = (try? container.decodeIfPresent(String.self, forKey: .entitlementSource)) ?? nil
+            compUntil = source == "comp" ? ((try? container.decodeIfPresent(Date.self, forKey: .compUntil)) ?? nil) : nil
         }
 
         var isPro: Bool { tier == "pro" }
         /// Pro that comes from another device on the same account: nothing to manage here.
         var isProViaAccount: Bool { isPro && entitlementViaAccount }
+        /// The end of complimentary Pro while it is what makes this device Pro. There is no
+        /// subscription behind it, so there is nothing to manage and nothing to pay.
+        var compProUntil: Date? { isPro && !entitlementViaAccount ? compUntil : nil }
 
         /// Remaining docs lookups this period, or nil if the backend hasn't
         /// reported a cap (in which case the client shouldn't gate on it).
@@ -2677,5 +2689,24 @@ struct ManagedSpeakerNamesResponse: Decodable {
         } else {
             speakers = [:]
         }
+    }
+}
+
+/// Plan wording shared by Mac and iOS Settings.
+enum PlanCopy {
+    /// Under the plan row for complimentary Pro: there is no subscription and no charge.
+    static let compCaption = "Added by miniti. Nothing to pay."
+
+    /// "Pro until 31 Dec 2026", in the reader's own date style and time zone.
+    static func compPlan(until: Date, locale: Locale = .current, timeZone: TimeZone = .current) -> String {
+        var style = Date.FormatStyle(date: .abbreviated, time: .omitted)
+        style.locale = locale
+        style.timeZone = timeZone
+        return "Pro until \(until.formatted(style))"
+    }
+
+    /// The line under the mode picker for complimentary Pro.
+    static func compSummary(until: Date, minutesLimit: Int, locale: Locale = .current, timeZone: TimeZone = .current) -> String {
+        "\(compPlan(until: until, locale: locale, timeZone: timeZone)). \(minutesLimit) minutes per month."
     }
 }

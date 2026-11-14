@@ -84,6 +84,50 @@ final class MinitiAPIServiceTests: XCTestCase {
         XCTAssertFalse(try decoder.decode(MinitiAPIService.UsageInfo.self, from: free).isProViaAccount)
     }
 
+    func testUsageInfoComplimentaryPro() throws {
+        let comp = """
+        {"minutes_used": 10, "minutes_limit": 5000, "resets_at": "2026-12-01T00:00:00.000Z", "tier": "pro", "subscription_status": null, "entitlement_source": "comp", "comp_until": "2026-12-31T23:59:59.000Z"}
+        """.data(using: .utf8)!
+        let info = try decoder.decode(MinitiAPIService.UsageInfo.self, from: comp)
+        XCTAssertTrue(info.isPro)
+        XCTAssertFalse(info.isProViaAccount)
+        XCTAssertEqual(info.compProUntil, ISO8601DateFormatter().date(from: "2026-12-31T23:59:59Z"))
+
+        // A subscription, Pro from another device, and older backends carry no comp.
+        let cases = [
+            #"{"minutes_used": 10, "minutes_limit": 5000, "resets_at": "2026-04-01T00:00:00Z", "tier": "pro", "subscription_status": "active"}"#,
+            #"{"minutes_used": 10, "minutes_limit": 5000, "resets_at": "2026-04-01T00:00:00Z", "tier": "pro", "entitlement_via_account": true}"#,
+            // The date alone, or an unknown source, is not a comp.
+            #"{"minutes_used": 10, "minutes_limit": 5000, "resets_at": "2026-04-01T00:00:00Z", "tier": "pro", "comp_until": "2026-12-31T23:59:59.000Z"}"#,
+            #"{"minutes_used": 10, "minutes_limit": 5000, "resets_at": "2026-04-01T00:00:00Z", "tier": "pro", "entitlement_source": "gift", "comp_until": "2026-12-31T23:59:59.000Z"}"#,
+            // An unreadable date leaves ordinary Pro, and never fails the whole response.
+            #"{"minutes_used": 10, "minutes_limit": 5000, "resets_at": "2026-04-01T00:00:00Z", "tier": "pro", "entitlement_source": "comp", "comp_until": "soon"}"#,
+            #"{"minutes_used": 10, "minutes_limit": 5000, "resets_at": "2026-04-01T00:00:00Z", "tier": "pro", "entitlement_source": 7, "comp_until": true}"#,
+            // The fields never promote a free device, and never mix with Pro from another device.
+            #"{"minutes_used": 10, "minutes_limit": 500, "resets_at": "2026-04-01T00:00:00Z", "tier": "free", "entitlement_source": "comp", "comp_until": "2026-12-31T23:59:59.000Z"}"#,
+            #"{"minutes_used": 10, "minutes_limit": 5000, "resets_at": "2026-04-01T00:00:00Z", "tier": "pro", "entitlement_via_account": true, "entitlement_source": "comp", "comp_until": "2026-12-31T23:59:59.000Z"}"#,
+        ]
+        for json in cases {
+            let decoded = try decoder.decode(MinitiAPIService.UsageInfo.self, from: Data(json.utf8))
+            XCTAssertNil(decoded.compProUntil, json)
+        }
+    }
+
+    func testComplimentaryProCopy() throws {
+        let until = try XCTUnwrap(ISO8601DateFormatter().date(from: "2026-12-31T23:59:59Z"))
+        let london = try XCTUnwrap(TimeZone(identifier: "Europe/London"))
+        let gb = Locale(identifier: "en_GB")
+        XCTAssertEqual(PlanCopy.compPlan(until: until, locale: gb, timeZone: london), "Pro until 31 Dec 2026")
+        XCTAssertEqual(PlanCopy.compPlan(until: until, locale: Locale(identifier: "en_US"), timeZone: london), "Pro until Dec 31, 2026")
+        XCTAssertEqual(PlanCopy.compSummary(until: until, minutesLimit: 5000, locale: gb, timeZone: london), "Pro until 31 Dec 2026. 5000 minutes per month.")
+        XCTAssertEqual(PlanCopy.compCaption, "Added by miniti. Nothing to pay.")
+        for text in [PlanCopy.compCaption, PlanCopy.compSummary(until: until, minutesLimit: 5000, locale: gb, timeZone: london)] {
+            XCTAssertFalse(text.contains("&"))
+            XCTAssertFalse(text.contains("\u{2014}"))
+            XCTAssertFalse(text.contains("Miniti"))
+        }
+    }
+
     func testUsageInfoCamelCase() throws {
         let json = """
         {

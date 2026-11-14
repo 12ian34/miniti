@@ -252,7 +252,8 @@ struct AccountSettingsView: View {
                 
                 Text(appState.appMode == .managed
                      ? (appState.isPro
-                        ? "Pro subscription active. \(Int(appState.usageInfo?.minutesLimit ?? 5000)) minutes per month."
+                        ? (appState.compProUntil.map { PlanCopy.compSummary(until: $0, minutesLimit: Int(appState.usageInfo?.minutesLimit ?? 5000)) }
+                           ?? "Pro subscription active. \(Int(appState.usageInfo?.minutesLimit ?? 5000)) minutes per month.")
                         : "API calls routed through Miniti's backend. 500 free minutes per month.")
                      : "Use your own Deepgram and OpenAI API keys. No limits, no tracking.")
                     .font(.caption)
@@ -268,12 +269,21 @@ struct AccountSettingsView: View {
                         HStack {
                             Text("Plan")
                             Spacer()
-                            Text("Pro, \(Int(appState.usageInfo?.minutesLimit ?? 5000)) min/month")
+                            Text(appState.compProUntil.map { PlanCopy.compPlan(until: $0) }
+                                 ?? "Pro, \(Int(appState.usageInfo?.minutesLimit ?? 5000)) min/month")
                                 .foregroundStyle(Color(hex: "A78BFA"))
                                 .fontWeight(.medium)
                         }
+                        .accessibilityElement(children: .combine)
+                        .accessibilityIdentifier("billing.plan")
                         
-                        if appState.isProViaAccount {
+                        if appState.compProUntil != nil {
+                            // Complimentary Pro has no subscription behind it: nothing to manage.
+                            Text(PlanCopy.compCaption)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                                .accessibilityIdentifier("billing.plan.comp")
+                        } else if appState.isProViaAccount {
                             Text("Pro comes from another device on your account. Manage the subscription from that device.")
                                 .font(.caption)
                                 .foregroundStyle(.secondary)

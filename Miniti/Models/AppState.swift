@@ -12097,6 +12097,15 @@ final class AppState: ObservableObject {
     /// Pro on this device because another device on the account holds the subscription.
     var isProViaAccount: Bool { usageInfo?.isProViaAccount ?? false }
 
+    /// Complimentary Pro (3.10.0): the date miniti's own grant of Pro ends, while that grant is
+    /// what makes this device Pro. On iOS a local App Store subscription comes first.
+    var compProUntil: Date? {
+        #if os(iOS)
+        if hasActiveAppStoreSubscription { return nil }
+        #endif
+        return usageInfo?.compProUntil
+    }
+
     func revealRecoveryKey() -> String? {
         clientAuthManager.revealRecoveryKey()
     }
