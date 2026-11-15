@@ -3975,9 +3975,10 @@ final class AppState: ObservableObject {
         }
 
         /// One health tick. Adds to the recording's totals and notes when speech was first reported
-        /// after the last words. The totals are lower bounds: only intervals the app observed with
-        /// capture flowing at both ends, and with the same connection state at both ends, are
-        /// counted, each at most once and in one total. `connection` is the service's
+        /// after the last words. The totals are sampled at the ticks and meant to under-count: only
+        /// intervals with capture flowing at both ticks, and with the same connection state at both,
+        /// are counted, each at most once and in one total. Capture is checked at the ticks only, so
+        /// an interruption that begins and ends between two ticks is not seen and can be counted. `connection` is the service's
         /// `connectivityRevision`, which changes whenever the socket goes up or down and not for a
         /// connection attempt that never opened.
         mutating func sample(at now: CFAbsoluteTime, speech: Int, socketSilence: TimeInterval, isConnected: Bool,
