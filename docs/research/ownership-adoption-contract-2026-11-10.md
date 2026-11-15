@@ -79,7 +79,7 @@ Still open: deterministic two-rail period selection and period switching, exact 
 
 ## As built for AO1, 2026-11-15: what replaces the typed journal
 
-The first device-record layer was built in `miniti-api` on branch `ao1-device-records` (not deployed, switch off by default) and reviewed four times. It keeps the arithmetic above and departs from this contract in the ways below. Where this section and the text above disagree, this section describes the code.
+The first device-record layer was built in `miniti-api` on branch `ao1-device-records` (not deployed, switch off by default) and reviewed by Astra in several rounds. It keeps the arithmetic above and departs from this contract in the ways below. Where this section and the text above disagree, this section describes the code.
 
 **No journal entry per charge.** The journal holds the adoption baseline and each correction, for audit. Three stored facts do the work the typed replay was meant to do:
 
@@ -99,4 +99,6 @@ The first device-record layer was built in `miniti-api` on branch `ao1-device-re
 
 **Stored value.** The canonical `minutesUsed` holds the effective minutes (the larger of two current records). Gross for reporting is that plus `migrationCredit` while `migrationCreditEpoch` equals `usageEpoch`. No existing reader had to change.
 
-**Activation order.** The switch alone does nothing. The store must first be prepared: every device with a record under an irregular spelling (neither all lowercase nor all uppercase) is found and permanently excluded, and only then are devices adopted. The switch must never be turned off again once devices have been adopted: uppercase requests would resolve to the fenced key and fail.
+**Activation order.** The switch alone does nothing. The store must first be prepared, and preparation refuses while any device has a record under an irregular id spelling (neither all lowercase nor all uppercase; the API accepts such ids, the apps do not send them). Adoption reads only the two regular keys, so such a record needs a reviewed repair first. Once the store is prepared, no request uses an irregular spelling as a key, so none can be created. The switch must never be turned off again once devices have been adopted: uppercase requests would resolve to the fenced key and fail.
+
+**What the fence does and does not guarantee.** It guarantees that no write reaches the uppercase key of an adopted device. It does not cover a third, irregular spelling. One window remains: a request that began before the store was marked prepared, under an irregular id, can still write its record afterwards. Nothing prevents that; the ops check `device_twins` reports any irregular record it finds while adoption is on. Deploying the code with the switch off, and turning it on only after requests from before the deploy have finished, closes it in practice.
