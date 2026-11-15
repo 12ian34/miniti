@@ -1208,18 +1208,21 @@ final class FolderSuggestionTests: XCTestCase {
         let (state, context) = try makeApp()
         let unfiled = meeting("Quarterly check-in", in: context)
         XCTAssertNil(state.folderSuggestionBlock)
+        XCTAssertNil(state.automaticFolderSuggestionBlock)
 
+        // The setting covers the request made for a new meeting without anyone asking.
         state.folderAISuggestions = false
-        XCTAssertEqual(state.folderSuggestionBlock, .off)
-        _ = await state.suggestedFolderProposals(for: [unfiled], creatingFolders: true)
-        state.automaticallyFileMeeting(unfiled)
+        XCTAssertEqual(state.automaticFolderSuggestionBlock, .off)
+        _ = await state.suggestedFolderProposals(for: [unfiled], creatingFolders: false, automatic: true)
+        state.automaticallyFileMeeting(unfiled, suggesting: true)
 
         state.folderAISuggestions = true
         state.privateModeEnabled = true
         XCTAssertEqual(state.folderSuggestionBlock, .privateMode)
+        XCTAssertEqual(state.automaticFolderSuggestionBlock, .privateMode)
         XCTAssertTrue(state.folderAISuggestions, "private mode does not change the person's own choice")
         _ = await state.suggestedFolderProposals(for: [unfiled], creatingFolders: true)
-        state.automaticallyFileMeeting(unfiled)
+        state.automaticallyFileMeeting(unfiled, suggesting: true)
 
         state.privateModeEnabled = false
         state.hasAcceptedTerms = false
@@ -1241,6 +1244,27 @@ final class FolderSuggestionTests: XCTestCase {
         try await Task.sleep(nanoseconds: 200_000_000)
         XCTAssertEqual(requests.count, 0, "no request under any of these")
         XCTAssertTrue(FolderSuggestionToggle.caption(privateMode: true).contains("Nothing is sent"))
+    }
+
+    func testTheSettingIsOffUntilChosenAndPreviewAsksOnlyWhenTold() async throws {
+        // A fresh install has the setting off (Ian, 2026-11-15).
+        UserDefaults.standard.removeObject(forKey: "folderAISuggestions")
+        XCTAssertFalse(AppState().folderAISuggestions, "off when never chosen")
+
+        // With it off, a new meeting sends nothing, and the button in Preview still works:
+        // pressing it is the person asking.
+        let (state, context) = try makeApp()
+        state.folderAISuggestions = false
+        let unfiled = meeting("Quarterly check-in", in: context)
+        state.automaticallyFileMeeting(unfiled, suggesting: true)
+        try await Task.sleep(nanoseconds: 200_000_000)
+        XCTAssertEqual(requests.count, 0, "nothing for a new meeting while the setting is off")
+        XCTAssertNil(state.folderSuggestionBlock)
+        _ = await state.suggestedFolderProposals(for: [unfiled], creatingFolders: true)
+        XCTAssertEqual(requests.count, 1, "the Preview request goes when asked for")
+
+        XCTAssertEqual(FolderSuggestionToggle.requestCaption(count: 1), "Sends the title and summary of 1 unfiled meeting. Never transcripts. Nothing moves until you apply.")
+        XCTAssertTrue(FolderSuggestionToggle.requestCaption(count: 12).contains("12 unfiled meetings"))
     }
 
     func testMeetingsKeptOffTheCloudOrWithoutASummaryAreNeverSent() async throws {
@@ -1352,7 +1376,8 @@ final class FolderSuggestionTests: XCTestCase {
             requests = LockedRequestLog()
             let (state, context, started, release) = try makeHeldApp()
             let many = (0..<230).map { meeting("Meeting \($0)", in: context) }
-            let task = Task { await state.suggestedFolderProposals(for: many, creatingFolders: true) }
+            // The setting belongs to the automatic request, so that is the one it stops.
+            let task = Task { await state.suggestedFolderProposals(for: many, creatingFolders: true, automatic: change == "setting") }
             await fulfillment(of: [started], timeout: 5)
             switch change {
             case "setting": state.folderAISuggestions = false

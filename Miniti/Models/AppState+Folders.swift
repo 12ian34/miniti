@@ -344,12 +344,12 @@ extension AppState {
         // suggestion among the folders that already exist.
         guard suggesting, proposals.isEmpty, meeting.automaticCompletionSuspended != true,
               meetingFolders.folder(meeting.folderID) == nil,
-              folderSuggestionBlock == nil, !folderSuggestionAsked.contains(meeting.id),
+              automaticFolderSuggestionBlock == nil, !folderSuggestionAsked.contains(meeting.id),
               !folderSuggestionItems(for: [meeting]).isEmpty else { return }
         folderSuggestionAsked.insert(meeting.id)
         Task { [weak self] in
             guard let self else { return }
-            let suggested = await self.suggestedFolderProposals(for: [meeting], creatingFolders: false)
+            let suggested = await self.suggestedFolderProposals(for: [meeting], creatingFolders: false, automatic: true)
             guard self.automaticFolderFiling, !suggested.isEmpty else { return }
             // The rules may be able to place it by now (a folder was added, a series was
             // filed by hand). They outrank a suggestion.
@@ -370,7 +370,7 @@ extension AppState {
 
     /// Why AI folder suggestions cannot run now, or nil when they can.
     enum FolderSuggestionBlock: Equatable {
-        /// The person turned the setting off.
+        /// The setting for new meetings is off. Only the automatic request has this reason.
         case off
         /// Private mode is on: nothing is sent, and the setting keeps the person's own choice.
         case privateMode
@@ -380,12 +380,21 @@ extension AppState {
         case unavailable
     }
 
+    /// For a request the person asks for now (the button in Preview). The setting for new
+    /// meetings plays no part.
     var folderSuggestionBlock: FolderSuggestionBlock? {
         if privateModeEnabled { return .privateMode }
-        if !folderAISuggestions { return .off }
         if !aiContentPermitted { return .permission }
         if appMode == .managed { return minitiAPIService == nil || !clientAuthStatus.isEnrolled ? .unavailable : nil }
         return insightsService == nil || openaiApiKey.isEmpty ? .unavailable : nil
+    }
+
+    /// For the request made without the person asking, when a new meeting completes: the
+    /// setting must be on as well.
+    var automaticFolderSuggestionBlock: FolderSuggestionBlock? {
+        if privateModeEnabled { return .privateMode }
+        if !folderAISuggestions { return .off }
+        return folderSuggestionBlock
     }
 
     /// What may be sent for these meetings: finished, not in a folder, not hand-filed, never
@@ -434,21 +443,26 @@ extension AppState {
     /// One request per 100 meetings. Each batch is built from the meetings as they are at
     /// that moment, and checked again at the instant it leaves the device, so a meeting
     /// marked Local or deleted while an earlier batch was in flight is never sent, and
-    /// nothing is sent once the setting is off, private mode is on, AI permission is
-    /// withdrawn or the account has changed. Cancelling the task stops before the next batch.
+    /// nothing is sent once private mode is on, AI permission is withdrawn or the account
+    /// has changed. `automatic` marks the request for a newly completed meeting, which
+    /// also stops once its setting is off. Cancelling the task stops before the next batch.
     ///
     /// `creatingFolders` lets a suggested category that has no folder yet become a new one
     /// (Preview, where Apply is still needed); automatic filing passes false and only ever
     /// uses folders that exist.
-    func suggestedFolderProposals(for meetings: [Meeting], creatingFolders: Bool) async -> [FolderProposal] {
-        guard folderSuggestionBlock == nil else { return [] }
+    func suggestedFolderProposals(for meetings: [Meeting], creatingFolders: Bool, automatic: Bool = false) async -> [FolderProposal] {
+        let blocked = { [weak self] in
+            guard let self else { return true }
+            return (automatic ? self.automaticFolderSuggestionBlock : self.folderSuggestionBlock) != nil
+        }
+        guard !blocked() else { return [] }
         let owner = meetingFolders.owner
         let account = clientAuthStatus.accountID
         let generation = clientAuthManager.credentialGeneration
         let managed = appMode == .managed
         let stillSameOwner = { [weak self] in
             guard let self else { return false }
-            return self.folderSuggestionBlock == nil && self.meetingFolders.owner == owner
+            return !blocked() && self.meetingFolders.owner == owner
                 && self.clientAuthStatus.accountID == account && self.clientAuthManager.credentialGeneration == generation
                 && (self.appMode == .managed) == managed
         }

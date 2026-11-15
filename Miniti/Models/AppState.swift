@@ -731,9 +731,11 @@ final class AppState: ObservableObject {
     let meetingFolders = MeetingFolderStore(url: AppState.isRunningUnderXCTest ? nil : URL.applicationSupportDirectory.appendingPathComponent("Miniti/Folders/catalog-v1.json"))
     @AppStorage("automaticFolderFiling") var automaticFolderFiling = true
     @AppStorage("automaticFolderCreation") var automaticFolderCreation = true
-    /// "Use AI to suggest folders" (3.10.0 FO2.4), on by default. Private mode, a missing AI
-    /// permission and a missing provider each block it without changing this choice.
-    @AppStorage("folderAISuggestions") var folderAISuggestions = true
+    /// "Use AI to file new meetings" (3.10.0 FO2.4), off by default (Ian, 2026-11-15). It
+    /// covers only the automatic request for a newly completed meeting. In Preview a
+    /// request is sent only when the person presses the button there, whatever this says.
+    /// Private mode, a missing AI permission and a missing provider each block both.
+    @AppStorage("folderAISuggestions") var folderAISuggestions = false
     /// Meetings already sent for an automatic folder suggestion since launch: one request each.
     var folderSuggestionAsked: Set<UUID> = []
     private var folderObservation: AnyCancellable?

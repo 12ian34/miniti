@@ -272,6 +272,29 @@ struct MeetingFolderManager: View {
             .sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
     }
 
+    /// Unfiled meetings a suggestion could be asked for and has not been yet.
+    private var suggestionCandidates: [Meeting] {
+        appState.folderSuggestionItems(for: unfiled.filter { !suggestionAsked.contains($0.id) && choices[$0.id] == nil }).map(\.meeting)
+    }
+
+    /// Nothing is sent from Preview until this button is pressed, and it says what goes.
+    @ViewBuilder private var suggestionRequest: some View {
+        let count = suggestionCandidates.count
+        if suggesting || count == 0 {
+            EmptyView()
+        } else if appState.folderSuggestionBlock == .privateMode {
+            Text("AI folder suggestions are off while private mode is on. Nothing is sent.")
+                .font(.footnote).foregroundStyle(ColorPalette.Text.secondary)
+                .accessibilityIdentifier("folders.suggest.caption")
+        } else if appState.folderSuggestionBlock == nil {
+            Button("Suggest folders with AI") { askForSuggestions() }
+                .accessibilityIdentifier("folders.suggest")
+            Text(FolderSuggestionToggle.requestCaption(count: count))
+                .font(.footnote).foregroundStyle(ColorPalette.Text.secondary)
+                .accessibilityIdentifier("folders.suggest.caption")
+        }
+    }
+
     private var preview: some View {
         Form {
             Section {
@@ -287,13 +310,10 @@ struct MeetingFolderManager: View {
                     .accessibilityElement(children: .combine)
                     .accessibilityIdentifier("folders.suggesting")
                 }
+                suggestionRequest
                 DisclosureGroup("Preview options") {
                     Toggle("Include manually filed meetings", isOn: $regroupManual)
                         .onChange(of: regroupManual) { _, _ in refreshPreview() }
-                    FolderSuggestionToggle { on in
-                        if !on { suggested = []; stopSuggesting() }
-                        refreshPreview()
-                    }
                 }
             }
             if let applyIssue {
@@ -432,9 +452,10 @@ struct MeetingFolderManager: View {
         suggesting = false; suggestionRound += 1
     }
 
-    /// Ask once about each meeting the rules left unfiled. Opening Preview moves nothing:
-    /// the answers join the proposals and wait for Apply. A failed or refused request adds
-    /// nothing and leaves the rules' proposals as they are.
+    /// Ask once about each meeting the rules left unfiled, only when the person presses
+    /// "Suggest folders with AI". Opening Preview sends nothing. The answers join the
+    /// proposals and wait for Apply. A failed or refused request adds nothing and leaves
+    /// the rules' proposals as they are.
     private func askForSuggestions() {
         guard appState.folderSuggestionBlock == nil else { return }
         let targets = unfiled.filter { !suggestionAsked.contains($0.id) && choices[$0.id] == nil }
@@ -468,7 +489,7 @@ struct MeetingFolderManager: View {
         // Keep what was refused on screen, with the user's own choices intact.
         let refused = Set(result.rejected.map(\.id))
         choices = choices.filter { refused.contains($0.key) }
-        refreshPreview(asking: false)
+        refreshPreview()
         let count = result.rejected.count
         applyIssue = result.undo.isEmpty
             ? "Nothing could be filed. Check the folder limit and try again."
@@ -566,7 +587,7 @@ struct MeetingFolderManager: View {
             .padding(MinitiDesignSystem.Spacing.standard)
             .frame(maxWidth: .infinity).background(ColorPalette.Background.primary)
     }
-    private func refreshPreview(asking: Bool = true) {
+    private func refreshPreview() {
         do {
             let source: [Meeting]
             if let meetings { source = meetings }
@@ -600,7 +621,6 @@ struct MeetingFolderManager: View {
             choices = choices.filter { listed.contains($0.key) }
             newFolders = newFolders.filter { folder in choices.values.contains { $0.folder.id == folder.id } }
             previewIssue = nil; applyIssue = nil
-            if asking { askForSuggestions() }
         } catch {
             clearPreview()
             previewIssue = "Could not load meeting history. Try again."
@@ -620,16 +640,17 @@ struct MeetingFolderManager: View {
     }
 }
 
-/// "Use AI to suggest folders" (3.10.0 FO2.4), shared by the organise screen and Settings.
-/// While private mode is on it shows as off with the reason, nothing is sent, and the
-/// person's own choice comes back when private mode ends.
+/// "Use AI to file new meetings" (3.10.0 FO2.4), shared by the organise screen and
+/// Settings. Off by default. It covers only newly completed meetings; Preview has its own
+/// button. While private mode is on it shows as off with the reason, nothing is sent, and
+/// the person's own choice comes back when private mode ends.
 struct FolderSuggestionToggle: View {
     @EnvironmentObject private var appState: AppState
     var onChange: (Bool) -> Void = { _ in }
 
     var body: some View {
         let blockedByPrivateMode = appState.privateModeEnabled
-        Toggle("Use AI to suggest folders", isOn: Binding(
+        Toggle("Use AI to file new meetings", isOn: Binding(
             get: { appState.folderAISuggestions && !blockedByPrivateMode },
             set: { appState.folderAISuggestions = $0; onChange($0) }
         ))
@@ -643,6 +664,11 @@ struct FolderSuggestionToggle: View {
     static func caption(privateMode: Bool) -> String {
         privateMode
             ? "Off while private mode is on. Nothing is sent."
-            : "For meetings the rules cannot place, miniti sends the title and summary to suggest a folder. Never the transcript, and never a meeting kept off the cloud."
+            : "When the rules cannot place a new meeting, its title and summary are sent to suggest one of your folders. Never the transcript, and never a meeting kept off the cloud."
+    }
+
+    /// Under the Preview button: what pressing it sends.
+    static func requestCaption(count: Int) -> String {
+        "Sends the title and summary of \(count) unfiled \(count == 1 ? "meeting" : "meetings"). Never transcripts. Nothing moves until you apply."
     }
 }
