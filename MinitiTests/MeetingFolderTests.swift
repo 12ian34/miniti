@@ -1355,6 +1355,26 @@ final class FolderSuggestionTests: XCTestCase {
         XCTAssertEqual(asks.candidates(unfiled: [ids[1], ids[2]], eligible: Set(ids), chosen: []), [])
     }
 
+    func testEveryChangeThatBlocksSuggestionsIsAnnouncedToPreview() async throws {
+        // Preview drops shown suggestions when a stored preference changes, because these
+        // do not redraw a screen by themselves. Each one must post the notification it
+        // listens for, and block suggestions by then.
+        let (state, _) = try makeApp()
+        let savedKey = state.openaiApiKey
+        defer { state.openaiApiKey = savedKey; state.appModeRaw = AppMode.managed.rawValue; state.hasAcceptedTerms = true; state.privateModeEnabled = false }
+        let changes: [(String, () -> Void)] = [
+            ("AI permission withdrawn", { state.hasAcceptedTerms = false }),
+            ("private mode on", { state.hasAcceptedTerms = true; state.privateModeEnabled = true }),
+            ("own keys with no OpenAI key", { state.privateModeEnabled = false; state.openaiApiKey = ""; state.appModeRaw = AppMode.byok.rawValue }),
+        ]
+        for (name, change) in changes {
+            let posted = expectation(forNotification: UserDefaults.didChangeNotification, object: nil)
+            change()
+            await fulfillment(of: [posted], timeout: 5)
+            XCTAssertNotNil(state.folderSuggestionBlock, name)
+        }
+    }
+
     func testAShownSuggestionIsNotUsedOncePrivateModeOrPermissionChanges() async throws {
         var acmeID = ""
         let (state, context) = try makeApp { body in

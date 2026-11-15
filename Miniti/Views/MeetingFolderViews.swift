@@ -98,6 +98,8 @@ struct MeetingFolderManager: View {
     /// Unfiled meetings that may be sent at all, worked out when Preview refreshes so the
     /// button's count costs nothing while the screen redraws.
     @State private var suggestionEligible: Set<UUID> = []
+    /// The pending recount after meetings were saved; one at a time.
+    @State private var eligibilityRefresh: Task<Void, Never>?
     /// Shown when the last request failed; the button stays so it can be tried again.
     @State private var suggestionIssue: String?
     @State private var suggesting = false
@@ -384,9 +386,17 @@ struct MeetingFolderManager: View {
         .onDisappear { stopSuggesting() }
         // Private mode on, AI permission withdrawn or the provider gone: stop, and take the
         // suggestions already shown off the screen at once.
-        .onChange(of: appState.folderSuggestionBlock) { _, block in
-            guard block != nil, suggesting || !suggested.isEmpty else { return }
-            suggested = []; stopSuggesting(); refreshPreview()
+        .onChange(of: appState.folderSuggestionBlock) { _, _ in dropSuggestionsIfBlocked() }
+        // AI permission, the mode and the OpenAI key are stored preferences that do not
+        // redraw this screen by themselves, and Settings can change them from another
+        // window. Every preference write is checked.
+        .onReceive(NotificationCenter.default.publisher(for: UserDefaults.didChangeNotification).receive(on: RunLoop.main)) { _ in
+            dropSuggestionsIfBlocked()
+        }
+        // A sync or an edit while Preview is open can file a meeting, keep it off the cloud
+        // or give it a summary. The count under the button follows, at most once a second.
+        .onReceive(NotificationCenter.default.publisher(for: ModelContext.didSave).receive(on: RunLoop.main)) { _ in
+            scheduleEligibilityRefresh()
         }
         .alert("New folder", isPresented: Binding(get: { namingFolderFor != nil }, set: { if !$0 { namingFolderFor = nil } })) {
             TextField("Name", text: $newFolderName)
@@ -458,6 +468,28 @@ struct MeetingFolderManager: View {
     private func clearPreview() {
         proposals = []; unfiled = []; choices = [:]; newFolders = []; applyIssue = nil; unfiledShown = Self.unfiledPageSize
         suggested = []; suggestionEligible = []; suggestionIssue = nil; stopSuggesting(); asks = .init()
+        eligibilityRefresh?.cancel(); eligibilityRefresh = nil
+    }
+
+    private func dropSuggestionsIfBlocked() {
+        guard appState.folderSuggestionBlock != nil, suggesting || !suggested.isEmpty else { return }
+        suggested = []; stopSuggesting(); refreshPreview()
+    }
+
+    /// Which listed meetings may be sent now. Titles and summaries are trimmed here, never
+    /// while the screen redraws.
+    private func refreshEligibility() {
+        suggestionEligible = Set(appState.folderSuggestionItems(for: unfiled).map(\.meeting.id))
+    }
+
+    private func scheduleEligibilityRefresh() {
+        guard eligibilityRefresh == nil, !unfiled.isEmpty else { return }
+        eligibilityRefresh = Task {
+            try? await Task.sleep(nanoseconds: 1_000_000_000)
+            eligibilityRefresh = nil
+            guard !Task.isCancelled else { return }
+            refreshEligibility()
+        }
     }
 
     private func stopSuggesting() {
@@ -473,6 +505,10 @@ struct MeetingFolderManager: View {
     /// again with the same button.
     private func askForSuggestions() {
         guard appState.folderSuggestionBlock == nil, !suggesting else { return }
+        // The list may be out of date (a sync filed a meeting, a summary arrived): bring it
+        // up to date first, so what is asked about is what the line under the button said,
+        // or the button goes because nothing is left.
+        refreshPreview()
         let targets = suggestionCandidates
         guard asks.begin(targets.map(\.id)) else { return }
         suggestionIssue = nil
@@ -488,8 +524,9 @@ struct MeetingFolderManager: View {
             suggestionTask = nil
             asks.finish(answered: outcome.answered)
             if outcome.failed { suggestionIssue = "Could not get suggestions for every meeting. Nothing was changed." }
-            guard !outcome.proposals.isEmpty else { return }
             suggested += outcome.proposals
+            // Also when nothing came back: a meeting that could not be sent after all
+            // leaves the count, so the button never offers what it cannot do.
             refreshPreview()
         }
     }
@@ -619,7 +656,7 @@ struct MeetingFolderManager: View {
             proposals = appState.folderProposals(meetings: source, regroupManual: regroupManual, preview: true)
                 .filter { choices[$0.id] == nil }
             unfiled = appState.meetingsLeftUnfiled(in: source, after: proposals)
-            suggestionEligible = Set(appState.folderSuggestionItems(for: unfiled).map(\.meeting.id))
+            refreshEligibility()
             // AI suggestions apply only where the rules still have nothing and the user has
             // not picked a folder; a meeting that changed since is dropped by Apply itself.
             let open = Set(unfiled.map(\.id))
