@@ -1068,7 +1068,12 @@ final class DeepgramService: NSObject, ObservableObject, URLSessionWebSocketDele
 
     /// Stop sends and accept every source's tail within one bounded window. Never await
     /// a potentially stuck CloseStream send, or let an old drain tear down a new session.
-    func gracefulDisconnect() async {
+    ///
+    /// `leaveOpenIfCancelled` is for a drain that someone else may need to finish: a reconnect
+    /// that is draining when Stop arrives. Stop cancels the reconnect; if that closed the socket
+    /// here, Stop's own drain would find nothing and the tail would be lost. Left open, with
+    /// sending already stopped, Stop's drain takes it over.
+    func gracefulDisconnect(leaveOpenIfCancelled: Bool = false) async {
         _sendConnected = false
         stopKeepAlive()
         let generation = connectionGeneration
@@ -1097,8 +1102,8 @@ final class DeepgramService: NSObject, ObservableObject, URLSessionWebSocketDele
                 if finishedAt == nil, ContinuousClock.now >= finishDeadline { break }
             }
             guard generation == connectionGeneration else { return }
-            if Task.isCancelled { break }
-            do { try await Task.sleep(for: .milliseconds(25)) } catch { break }
+            if Task.isCancelled { if leaveOpenIfCancelled { return }; break }
+            do { try await Task.sleep(for: .milliseconds(25)) } catch { if leaveOpenIfCancelled { return }; break }
         }
         guard generation == connectionGeneration else { return }
         disconnect()

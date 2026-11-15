@@ -2989,6 +2989,16 @@ final class AppState: ObservableObject {
                 } else {
                     self.onDeviceTranscription.noteSessionEnded()
                 }
+                // The old socket's last lines must be received while everything they depend on is
+                // still the old socket's: which source spoke, the echo history, and the timeline
+                // offset. So the drain comes first; only then are source tracking and echo history
+                // reset (which also flushes any line still waiting for reconciliation) and the offset
+                // moved. If Stop arrives mid-drain it cancels this task; the socket is left open for
+                // Stop's own drain to finish, and this task goes no further.
+                if finishPendingFirst, idx == 0, !self.sessionTranscribesOnDevice, deepgramService.connectionState == .connected {
+                    await deepgramService.gracefulDisconnect(leaveOpenIfCancelled: true)
+                    guard !Task.isCancelled, self.isRecording, generation == self.deepgramReconnectGeneration else { return }
+                }
                 #if os(macOS)
                 if self.captureMicrophone && self.captureSystemAudio {
                     self.resetEchoReconciliation(flushPending: true)
@@ -2997,10 +3007,6 @@ final class AppState: ObservableObject {
                     DebugLogger.shared.log(.app, "Source tracking reset for Deepgram reconnect")
                 }
                 #endif
-                if finishPendingFirst, idx == 0, !self.sessionTranscribesOnDevice, deepgramService.connectionState == .connected {
-                    await deepgramService.gracefulDisconnect()
-                    guard !Task.isCancelled, self.isRecording, generation == self.deepgramReconnectGeneration else { return }
-                }
                 deepgramService.disconnect()
                 // A new Deepgram socket resets word timestamps to zero. Anchor that new clock at
                 // the active meeting duration so post-reconnect segments remain chronological.
@@ -3897,7 +3903,13 @@ final class AppState: ObservableObject {
         private var speechBase = 0, emptyBase = 0
         private var audioBase: Double = 0
         private var lastSampleAt: CFAbsoluteTime?
-        private var countingSpeechGap = false
+        /// Since when capture has been continuously seen flowing; nil while it is not.
+        private var captureFlowingSince: CFAbsoluteTime?
+        // Each total is made of time that is counted once: a threshold's worth when a state is first
+        // reached in a gap, then only the time between consecutive ticks that are both in the state.
+        private var speechGapBackfilled = false
+        private var wasCountingSpeechGap = false
+        private var wasCountingDeadSocket = false
 
         mutating func begin(at now: CFAbsoluteTime, speech: Int, empty: Int, audio: Double) {
             self = TranscriptGapEvidence()
@@ -3912,7 +3924,8 @@ final class AppState: ObservableObject {
             gapStartedAt = now
             firstSpeechAfterWordsAt = nil
             forcedReconnects = 0
-            countingSpeechGap = false
+            speechGapBackfilled = false
+            wasCountingSpeechGap = false
             speechBase = speech; emptyBase = empty; audioBase = audio
         }
 
@@ -3926,25 +3939,44 @@ final class AppState: ObservableObject {
             firstSpeechAfterWordsAt.map { max(0, now - $0) } ?? 0
         }
 
-        /// One health tick. Adds to the recording's totals for the time since the previous tick,
-        /// and notes when speech was first reported after the last words.
+        /// How long the socket has sent nothing while there was audio to send, in seconds. Zero when
+        /// the socket is not up or capture is not flowing. Call once per health tick, before `sample`.
+        mutating func socketSilence(at now: CFAbsoluteTime, lastMessageAt: CFAbsoluteTime, isConnected: Bool, captureFlowing: Bool) -> TimeInterval {
+            guard captureFlowing else { captureFlowingSince = nil; return 0 }
+            if captureFlowingSince == nil { captureFlowingSince = now }
+            guard isConnected, lastMessageAt > 0, let flowingSince = captureFlowingSince else { return 0 }
+            return max(0, now - max(lastMessageAt, flowingSince))
+        }
+
+        /// One health tick. Adds to the recording's totals and notes when speech was first reported
+        /// after the last words. The totals are lower bounds made of non-overlapping time: time when
+        /// capture was not flowing, and time the app did not observe (it was suspended), is never
+        /// counted.
         mutating func sample(at now: CFAbsoluteTime, speech: Int, socketSilence: TimeInterval, isConnected: Bool, captureFlowing: Bool) {
             let events = speechEvents(speech)
             if events > 0, firstSpeechAfterWordsAt == nil { firstSpeechAfterWordsAt = now }
-            // A long pause between ticks (the app was suspended) is not counted as missing words.
-            let elapsed = lastSampleAt.map { min(max(0, now - $0), 15) } ?? 0
+            // A long pause between ticks means the app was not watching: that time is not counted.
+            let sinceLast = lastSampleAt.map { max(0, now - $0) } ?? 0
+            let elapsed = sinceLast <= 15 ? sinceLast : 0
             lastSampleAt = now
-            guard captureFlowing else { countingSpeechGap = false; return }
-            if !isConnected || socketSilence >= AppState.deadSocketSilence {
-                deadSocketSeconds += elapsed
-                countingSpeechGap = false
-            } else if events >= AppState.speechEventsForStall, sinceFirstSpeech(at: now) >= AppState.speechWithoutWordsGap {
-                // On reaching the threshold the time since speech was first reported counts in full.
-                speechWithoutWordsSeconds += countingSpeechGap ? elapsed : sinceFirstSpeech(at: now)
-                countingSpeechGap = true
-            } else {
-                countingSpeechGap = false
+            let dead = captureFlowing && (!isConnected || socketSilence >= AppState.deadSocketSilence)
+            let speechGap = captureFlowing && !dead && events >= AppState.speechEventsForStall
+                && sinceFirstSpeech(at: now) >= AppState.speechWithoutWordsGap
+            if dead {
+                // Reaching the state proves the silence that led to it; after that, tick to tick.
+                deadSocketSeconds += wasCountingDeadSocket ? elapsed : (isConnected ? AppState.deadSocketSilence : 0)
             }
+            if speechGap {
+                if !speechGapBackfilled {
+                    // Once per gap: the wait that proved the stall.
+                    speechWithoutWordsSeconds += AppState.speechWithoutWordsGap
+                    speechGapBackfilled = true
+                } else if wasCountingSpeechGap {
+                    speechWithoutWordsSeconds += elapsed
+                }
+            }
+            wasCountingDeadSocket = dead
+            wasCountingSpeechGap = speechGap
         }
 
         /// Fields for `transcript_starvation_detected` and `transcript_reconnect_reattempt`.
@@ -4138,10 +4170,17 @@ final class AppState: ObservableObject {
             let speech = deepgramService.speechStartedEventCount
             let empty = deepgramService.emptyResultCount
             let audio = deepgramService.socketAudioSecondsSent
-            // Silence is only meaningful while a socket is up; it is timed from connect.
-            let socketSilence: TimeInterval = isConnected && deepgramService.lastSocketMessageAt > 0
-                ? max(0, now - deepgramService.lastSocketMessageAt) : 0
-            let captureFlowing = audioCaptureService?.hasRecentCaptureBuffers(microphone: captureMicrophone, systemAudio: captureSystemAudio) == true
+            // Any requested source delivering audio means there is audio to transcribe: with one of
+            // two Mac sources unavailable the other is still sent, and a socket that stops answering
+            // it is just as dead. ("All requested sources healthy" is a different question, for
+            // capture recovery.)
+            let captureFlowing = (captureMicrophone && audioCaptureService?.hasRecentCaptureBuffers(microphone: true, systemAudio: false) == true)
+                || (captureSystemAudio && audioCaptureService?.hasRecentCaptureBuffers(microphone: false, systemAudio: true) == true)
+            // Silence only means something while a socket is up and there has been audio to send.
+            // It is timed from the later of the last message (or connect) and the moment capture
+            // was last seen to start flowing, so a pause in capture is never counted against the socket.
+            let socketSilence = transcriptGapEvidence.socketSilence(at: now, lastMessageAt: deepgramService.lastSocketMessageAt,
+                isConnected: isConnected, captureFlowing: captureFlowing)
             transcriptGapEvidence.sample(at: now, speech: speech, socketSilence: socketSilence, isConnected: isConnected, captureFlowing: captureFlowing)
             let health = Self.evaluateSocketTranscriptHealth(
                 socketSilence: socketSilence,

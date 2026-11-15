@@ -3813,7 +3813,10 @@ final class SocketTranscriptHealthTests: XCTestCase {
         XCTAssertEqual(health(transcriptGap: 400, audioGap: 1, sinceLastRecovery: 241, consecutive: 1), Health(action: .reconnectStarvation, reason: .neither))
     }
 
-    func testNoiseAfterTheCallAndTrueSilenceDoNothing() {
+    func testQuietAfterTheLastWordsDoesNothingAndNoiseAfterThemUsesOnlyTheFallback() {
+        // Loud noise after the last words (a room emptying, music): nothing until the slow fallback.
+        XCTAssertEqual(health(transcriptGap: 100, audioGap: 1), .none)
+        XCTAssertEqual(health(transcriptGap: 121, audioGap: 1).reason, .neither)
         // Quiet after the last words: no loud audio since, so not even the fallback.
         XCTAssertEqual(health(transcriptGap: 900, audioGap: 890), .none)
         XCTAssertEqual(health(transcriptGap: 900, audioGap: .infinity), .none)
@@ -3869,10 +3872,14 @@ final class SocketTranscriptHealthTests: XCTestCase {
         XCTAssertEqual(health(captureFlowing: false, transcriptGap: 90, audioGap: 1, isConnected: false).reason, .neither)
     }
 
-    func testReplayingTheFieldSampleShapesGivesNoReconnectBeforeTheFirstWordsOrAfterTheLast() {
-        // The 13 November call: Record at 0, first words at 5:40, a line about every 12 seconds until
-        // 36:14, recording stopped at 41:00. The room was loud before and after. The old detector
-        // forced six reconnects, all before 5:40 or after 36:14.
+    func testAModelOfTheThirteenNovemberCallGivesNoReconnectBeforeTheFirstWords() {
+        // A model, not a replay of telemetry: the timings of the 13 November call (Record at 0, first
+        // words at 5:40, a line about every 12 seconds until 36:14, stopped at 41:00) with the worst
+        // case assumed throughout, a room that is loud before and after and a socket that answers
+        // with no speech reported. The old detector forced six reconnects, all before 5:40 or after
+        // 36:14. This rule forces none before the first words. After the last words the slow
+        // fallback still fires while the room stays loud; the plan's "none after the last words"
+        // holds only if the room is quiet or the fallback wait is longer than the time to Stop.
         var reconnects: [Double] = []
         var lastRecovery = -Double.infinity
         var consecutive = 0
@@ -3929,40 +3936,95 @@ final class SocketTranscriptHealthTests: XCTestCase {
         XCTAssertNil(evidence.firstSpeechAfterWordsAt)
     }
 
-    func testRecordingTotalsCountDeadSocketAndSpeechWithoutWordsTime() {
+    func testRecordingTotalsAreMadeOfTimeCountedOnce() {
         var evidence = AppState.TranscriptGapEvidence()
         evidence.begin(at: 0, speech: 0, empty: 0, audio: 0)
         evidence.words(at: 10, speech: 0, empty: 0, audio: 10)
+        // One tick as the app makes it: the silence clock, then the sample.
+        func tick(_ now: Double, speech: Int = 0, lastMessageAt: Double, connected: Bool = true, capture: Bool = true) {
+            let silence = evidence.socketSilence(at: now, lastMessageAt: lastMessageAt, isConnected: connected, captureFlowing: capture)
+            evidence.sample(at: now, speech: speech, socketSilence: silence, isConnected: connected, captureFlowing: capture)
+        }
         // Healthy ticks add nothing.
-        for now in stride(from: 14.0, through: 60, by: 4) {
-            evidence.sample(at: now, speech: 0, socketSilence: 1, isConnected: true, captureFlowing: true)
-        }
+        for now in stride(from: 14.0, through: 60, by: 4) { tick(now, lastMessageAt: now - 1) }
         XCTAssertEqual(evidence.deadSocketSeconds, 0)
-        // The socket goes silent at 60. From 70 it counts as dead, tick by tick, until 100.
-        for now in stride(from: 64.0, through: 100, by: 4) {
-            evidence.sample(at: now, speech: 0, socketSilence: now - 60, isConnected: true, captureFlowing: true)
-        }
-        XCTAssertEqual(evidence.deadSocketSeconds, 32, "eight ticks from 72 to 100, four seconds each, once ten seconds had passed")
-        // Not connected with audio still captured is a dead socket too.
-        evidence.sample(at: 104, speech: 0, socketSilence: 0, isConnected: false, captureFlowing: true)
-        XCTAssertEqual(evidence.deadSocketSeconds, 36)
-        // Without capture nothing is counted.
-        evidence.sample(at: 108, speech: 0, socketSilence: 0, isConnected: false, captureFlowing: false)
-        XCTAssertEqual(evidence.deadSocketSeconds, 36)
+        XCTAssertEqual(evidence.speechWithoutWordsSeconds, 0)
 
-        // Speech reported twice from 120, no words. At the 20 second threshold the time since speech
-        // was first reported counts in full, then tick by tick.
-        evidence.words(at: 116, speech: 0, empty: 0, audio: 100)
-        for now in stride(from: 120.0, through: 160, by: 4) {
-            evidence.sample(at: now, speech: 2, socketSilence: 1, isConnected: true, captureFlowing: true)
-        }
-        XCTAssertEqual(evidence.speechWithoutWordsSeconds, 40)
-        XCTAssertEqual(evidence.finalDetails, ["dead_socket_seconds": "36", "speech_without_words_seconds": "40"])
+        // The socket's last message was at 60. At the 72 tick ten seconds have passed: the ten that
+        // proved it count once, then four per tick to 100.
+        for now in stride(from: 64.0, through: 100, by: 4) { tick(now, lastMessageAt: 60) }
+        XCTAssertEqual(evidence.deadSocketSeconds, 10 + 7 * 4)
+        // Not connected with audio still captured goes on counting, tick to tick.
+        tick(104, lastMessageAt: 60, connected: false)
+        XCTAssertEqual(evidence.deadSocketSeconds, 42)
+        // Capture stops: nothing is counted, and the time without capture is never counted later.
+        tick(108, lastMessageAt: 60, connected: false, capture: false)
+        tick(112, lastMessageAt: 60, connected: false, capture: false)
+        tick(116, lastMessageAt: 60, connected: false, capture: true)
+        XCTAssertEqual(evidence.deadSocketSeconds, 42, "re-entering after a pause adds nothing for the pause")
+        tick(120, lastMessageAt: 60, connected: false)
+        XCTAssertEqual(evidence.deadSocketSeconds, 46)
+
+        // Speech reported twice from 204, no words. The 20 seconds that prove the stall count once,
+        // at the first tick past the threshold, then four per tick.
+        evidence.words(at: 200, speech: 0, empty: 0, audio: 100)
+        for now in stride(from: 204.0, through: 244, by: 4) { tick(now, speech: 2, lastMessageAt: now - 1) }
+        XCTAssertEqual(evidence.speechWithoutWordsSeconds, 20 + 5 * 4, "threshold at 224, then 228 to 244")
+        // A disconnected tick, then back: the earlier time is not counted again (it was 48 in 28 seconds before).
+        tick(248, speech: 2, lastMessageAt: 247, connected: false)
+        tick(252, speech: 2, lastMessageAt: 251)
+        XCTAssertEqual(evidence.speechWithoutWordsSeconds, 40, "the tick that re-enters adds nothing")
+        tick(256, speech: 2, lastMessageAt: 255)
+        XCTAssertEqual(evidence.speechWithoutWordsSeconds, 44)
+        // The app is suspended for an hour. Time it did not observe is not missing words.
+        tick(3856, speech: 2, lastMessageAt: 3855)
+        XCTAssertEqual(evidence.speechWithoutWordsSeconds, 44)
+        tick(3860, speech: 2, lastMessageAt: 3859)
+        XCTAssertEqual(evidence.speechWithoutWordsSeconds, 48)
+        XCTAssertLessThanOrEqual(evidence.speechWithoutWordsSeconds, 3860 - 204, "never more than the time that passed")
+        XCTAssertEqual(evidence.finalDetails, ["dead_socket_seconds": "46", "speech_without_words_seconds": "48"])
         for (key, value) in evidence.finalDetails { XCTAssertTrue(RecordingReportingContract.valid(key, value), key) }
 
-        // A long pause between ticks (the app was suspended) is capped, not counted as missing words.
-        evidence.sample(at: 5000, speech: 2, socketSilence: 1, isConnected: true, captureFlowing: true)
-        XCTAssertEqual(evidence.speechWithoutWordsSeconds, 55)
+        // A suspension before the stall was ever proved: the threshold counts, the hour does not.
+        var asleep = AppState.TranscriptGapEvidence()
+        asleep.begin(at: 0, speech: 0, empty: 0, audio: 0)
+        _ = asleep.socketSilence(at: 4, lastMessageAt: 3, isConnected: true, captureFlowing: true)
+        asleep.sample(at: 4, speech: 2, socketSilence: 1, isConnected: true, captureFlowing: true)
+        _ = asleep.socketSilence(at: 3604, lastMessageAt: 3603, isConnected: true, captureFlowing: true)
+        asleep.sample(at: 3604, speech: 2, socketSilence: 1, isConnected: true, captureFlowing: true)
+        XCTAssertEqual(asleep.speechWithoutWordsSeconds, 20)
+    }
+
+    func testSocketSilenceIsNotCountedWhileThereWasNoAudioToSend() {
+        var evidence = AppState.TranscriptGapEvidence()
+        evidence.begin(at: 0, speech: 0, empty: 0, audio: 0)
+        // Capture is interrupted (a phone call on iPhone) from 100 to 400. Deepgram, sent nothing,
+        // answers nothing. That is not silence from the socket.
+        XCTAssertEqual(evidence.socketSilence(at: 92, lastMessageAt: 91, isConnected: true, captureFlowing: true), 0, "the first tick with audio starts the clock")
+        XCTAssertEqual(evidence.socketSilence(at: 96, lastMessageAt: 95, isConnected: true, captureFlowing: true), 1)
+        for now in stride(from: 100.0, through: 400, by: 4) {
+            XCTAssertEqual(evidence.socketSilence(at: now, lastMessageAt: 95, isConnected: true, captureFlowing: false), 0)
+        }
+        // Capture resumes. The socket's last message is 309 seconds old, but there has only been
+        // audio to answer for a moment: no reconnect just as speech resumes.
+        let resumed = evidence.socketSilence(at: 404, lastMessageAt: 95, isConnected: true, captureFlowing: true)
+        XCTAssertEqual(resumed, 0)
+        XCTAssertEqual(health(socketSilence: resumed), .none)
+        XCTAssertEqual(evidence.socketSilence(at: 408, lastMessageAt: 95, isConnected: true, captureFlowing: true), 4)
+        // If it still has not answered ten seconds after audio resumed, it is dead.
+        let later = evidence.socketSilence(at: 416, lastMessageAt: 95, isConnected: true, captureFlowing: true)
+        XCTAssertEqual(later, 12)
+        XCTAssertEqual(health(socketSilence: later).reason, .deadSocket)
+        // An answer resets it; no socket, or a socket that has never been up, has no silence.
+        XCTAssertEqual(evidence.socketSilence(at: 420, lastMessageAt: 419, isConnected: true, captureFlowing: true), 1)
+        XCTAssertEqual(evidence.socketSilence(at: 424, lastMessageAt: 419, isConnected: false, captureFlowing: true), 0)
+        XCTAssertEqual(evidence.socketSilence(at: 428, lastMessageAt: 0, isConnected: true, captureFlowing: true), 0)
+        // Delayed first capture after Record: the same rule, timed from when audio starts.
+        var start = AppState.TranscriptGapEvidence()
+        start.begin(at: 0, speech: 0, empty: 0, audio: 0)
+        XCTAssertEqual(start.socketSilence(at: 30, lastMessageAt: 1, isConnected: true, captureFlowing: false), 0)
+        XCTAssertEqual(start.socketSilence(at: 34, lastMessageAt: 1, isConnected: true, captureFlowing: true), 0)
+        XCTAssertEqual(start.socketSilence(at: 46, lastMessageAt: 1, isConnected: true, captureFlowing: true), 12)
     }
 
     func testEvidenceValuesAreBounded() {

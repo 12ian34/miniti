@@ -1073,6 +1073,43 @@ extension MeetingJourneyTests {
         XCTAssertEqual(service.connectionState, .connecting)
         service.disconnect()
     }
+
+    /// A reconnect drains the old socket before dropping it (3.10.0 TG1.4). If Stop arrives during
+    /// that drain it cancels the reconnect. The cancelled drain must leave the socket for Stop's
+    /// own drain to finish, or the last lines are lost.
+    func testAReconnectDrainCancelledByStopLeavesTheTailForStopsOwnDrain() async throws {
+        let service = DeepgramService()
+        service.finalDrainDuration = .milliseconds(400)
+        var flushes = 0
+        service.finalDrainOperation = { flushes += 1 }
+        let generation = service.diagnosticConnectionGeneration
+
+        // The reconnect's drain, cancelled part way.
+        let reconnectDrain = Task { await service.gracefulDisconnect(leaveOpenIfCancelled: true) }
+        try await TestSupport.waitUntil { flushes == 1 }
+        reconnectDrain.cancel()
+        await reconnectDrain.value
+        XCTAssertEqual(service.diagnosticConnectionGeneration, generation, "not disconnected: the connection is still the same one")
+
+        // Stop's drain takes it over, asks for the tail again and runs its full bounded window.
+        let started = ContinuousClock.now
+        await service.gracefulDisconnect()
+        XCTAssertEqual(flushes, 2)
+        XCTAssertGreaterThanOrEqual(started.duration(to: .now), .milliseconds(350), "Stop still waits for the tail")
+        XCTAssertNotEqual(service.diagnosticConnectionGeneration, generation, "and then closes it")
+
+        // An ordinary drain that is cancelled closes at once, as before.
+        let other = DeepgramService()
+        other.finalDrainDuration = .milliseconds(400)
+        var otherStarted = false
+        other.finalDrainOperation = { otherStarted = true }
+        let before = other.diagnosticConnectionGeneration
+        let plain = Task { await other.gracefulDisconnect() }
+        try await TestSupport.waitUntil { otherStarted }
+        plain.cancel()
+        await plain.value
+        XCTAssertNotEqual(other.diagnosticConnectionGeneration, before)
+    }
 }
 
 
