@@ -586,7 +586,10 @@ struct MeetingFolderManager: View {
             // AI suggestions apply only where the rules still have nothing and the user has
             // not picked a folder; a meeting that changed since is dropped by Apply itself.
             let open = Set(unfiled.map(\.id))
-            suggested = suggested.filter { open.contains($0.id) && choices[$0.id] == nil && appState.folderSuggestionBlock == nil }
+            suggested = suggested.filter {
+                open.contains($0.id) && choices[$0.id] == nil && appState.folderSuggestionBlock == nil
+                    && appState.folderSuggestionStillApplies($0)
+            }
             if !suggested.isEmpty {
                 proposals += suggested
                 let placed = Set(suggested.map(\.id))

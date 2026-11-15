@@ -1528,6 +1528,37 @@ final class FolderSuggestionTests: XCTestCase {
         XCTAssertEqual(proposals.count, 0, "the answer was for the earlier finish")
     }
 
+    func testASuggestionShownInPreviewIsNotAppliedOnceTheMeetingHasChanged() async throws {
+        var acmeID = ""
+        let (state, context) = try makeApp { body in
+            (200, ["suggestions": ((body["meetings"] as? [[String: String]]) ?? []).map { ["id": $0["id"]!, "folder_id": acmeID] }])
+        }
+        let acme = MeetingFolder(id: UUID(), name: "Acme")
+        XCTAssertTrue(state.meetingFolders.edit(acme))
+        acmeID = acme.id.uuidString
+        let same = meeting("Quarterly check-in", in: context)
+        let resummarised = meeting("Numbers walkthrough", in: context)
+        let refinished = meeting("Planning chat", in: context)
+        let nowLocal = meeting("Marked local", in: context)
+        let proposals = await state.suggestedFolderProposals(for: [same, resummarised, refinished, nowLocal], creatingFolders: true)
+        XCTAssertEqual(proposals.count, 4)
+        XCTAssertTrue(proposals.allSatisfy { state.folderSuggestionStillApplies($0) })
+        // The suggestions are on screen. Before Apply, a sync from another device changes a
+        // summary, a meeting is resumed and stopped, and one is marked Local. Titles and
+        // folder fields are untouched, so only the evidence can tell.
+        resummarised.summaryText = "A different summary arrived from another device."
+        refinished.endTime = Date().addingTimeInterval(900)
+        nowLocal.syncExcluded = true
+        XCTAssertEqual(proposals.map { state.folderSuggestionStillApplies($0) }, [true, false, false, false])
+        let undo = state.applyFolderProposals(proposals)
+        XCTAssertEqual(undo.map { $0.meeting.id }, [same.id])
+        XCTAssertEqual(same.folderID, acme.id)
+        XCTAssertNil(resummarised.folderID); XCTAssertNil(refinished.folderID); XCTAssertNil(nowLocal.folderID)
+        // A proposal from the rules has no such evidence and applies as before.
+        let byRule = state.manualFolderProposal(for: resummarised, folder: acme)
+        XCTAssertTrue(state.folderSuggestionStillApplies(byRule))
+    }
+
     func testFolderCatalogSyncStillRunsThroughTheApp() async throws {
         // `CloudSyncHost` has an empty default for this call, so losing the app's own
         // implementation compiles and silently stops folders syncing.

@@ -23,6 +23,15 @@ extension AppState {
         /// Suggested by AI from the title and summary (3.10.0 FO2.4), where the local rules
         /// found nothing. Applies like any other proposal.
         var suggested = false
+        /// What the suggestion was based on: the title and summary that were sent, and when
+        /// the recording finished. Apply and Preview use it only while the meeting is still
+        /// that (`folderSuggestionStillApplies`).
+        var suggestionEvidence: SuggestionEvidence?
+    }
+
+    struct SuggestionEvidence: Equatable {
+        let item: FolderSuggestions.Item
+        let finished: Date?
     }
 
     func folderIncludes(_ meeting: Meeting) -> Bool {
@@ -300,6 +309,7 @@ extension AppState {
         for proposal in proposals.prefix(1000) {
             let meeting = proposal.meeting
             guard proposal.owner == meetingFolders.owner, !isMeetingDeleted(meeting.id), meeting.title == proposal.title,
+                  folderSuggestionStillApplies(proposal),
                   meeting.folderID == proposal.previousFolder, meeting.folderManual == proposal.previousManual,
                   meeting.folderLocalOnly == proposal.previousLocalOnly else { continue }
             if meetingFolders.folder(proposal.folder.id) == nil, !meetingFolders.edit(proposal.folder) { continue }
@@ -401,6 +411,16 @@ extension AppState {
         let finished: Date?
     }
 
+    /// A suggestion is for the title, summary and finish it was asked about. If any of them
+    /// has changed since (an edit, a sync from another device, resume and stop), or the
+    /// meeting may no longer be sent at all, the suggestion no longer applies. Proposals
+    /// that are not suggestions always pass.
+    func folderSuggestionStillApplies(_ proposal: FolderProposal) -> Bool {
+        guard proposal.suggested else { return true }
+        guard let evidence = proposal.suggestionEvidence, let now = currentSuggestionInput(proposal.meeting) else { return false }
+        return now.item == evidence.item && now.finished == evidence.finished
+    }
+
     private func currentSuggestionInput(_ meeting: Meeting) -> SentForSuggestion? {
         folderSuggestionItems(for: [meeting]).first.map {
             .init(meeting: meeting, item: $0.item, title: meeting.title, finished: meeting.endTime)
@@ -499,7 +519,8 @@ extension AppState {
                 }
             }
             return .init(owner: owner, meeting: meeting, title: was.title, previousFolder: meeting.folderID,
-                         previousManual: meeting.folderManual, previousLocalOnly: meeting.folderLocalOnly, folder: folder, suggested: true)
+                         previousManual: meeting.folderManual, previousLocalOnly: meeting.folderLocalOnly, folder: folder, suggested: true,
+                         suggestionEvidence: .init(item: was.item, finished: was.finished))
         }
     }
 
