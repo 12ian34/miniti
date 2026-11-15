@@ -1277,8 +1277,8 @@ final class InsightsService: Sendable {
     }
 
     /// Map access refusals once for every BYOK entry point, without changing models.
-    private func sendOpenAI(_ request: URLRequest) async throws -> (Data, URLResponse) {
-        let (data, response) = try await session.data(for: request)
+    private func sendOpenAI(_ request: URLRequest, mayDispatch: (@MainActor @Sendable () -> Bool)? = nil) async throws -> (Data, URLResponse) {
+        let (data, response) = try await GatedDispatch.data(for: request, session: session, mayDispatch: mayDispatch)
         if let status = (response as? HTTPURLResponse)?.statusCode,
            let body = request.httpBody,
            let payload = try? JSONSerialization.jsonObject(with: body) as? [String: Any],
@@ -1895,7 +1895,8 @@ final class InsightsService: Sendable {
     }
 
     /// Shared OpenAI chat-completions POST returning the assistant's JSON content.
-    private func postOpenAIJSON(_ requestBody: OpenAIRequest, apiKey: String, label: String) async throws -> Data {
+    private func postOpenAIJSON(_ requestBody: OpenAIRequest, apiKey: String, label: String,
+                                mayDispatch: (@MainActor @Sendable () -> Bool)? = nil) async throws -> Data {
         let url = URL(string: "https://api.openai.com/v1/chat/completions")!
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
@@ -1903,7 +1904,7 @@ final class InsightsService: Sendable {
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.httpBody = try JSONEncoder().encode(requestBody)
 
-        let (data, response) = try await sendOpenAI(request)
+        let (data, response) = try await sendOpenAI(request, mayDispatch: mayDispatch)
         guard let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode == 200 else {
             let statusCode = (response as? HTTPURLResponse)?.statusCode ?? -1
             DebugLogger.shared.log(.app, "BYOK \(label) response error: status=\(statusCode)")
@@ -2137,7 +2138,8 @@ final class InsightsService: Sendable {
         items: [FolderSuggestions.Item],
         folders: [FolderSuggestions.FolderRef],
         model: OpenAIModel = .gpt6Luna,
-        apiKey: String
+        apiKey: String,
+        mayDispatch: (@MainActor @Sendable () -> Bool)? = nil
     ) async throws -> [FolderSuggestions.Suggestion] {
         guard !items.isEmpty else { return [] }
         try Task.checkCancellation()
@@ -2151,7 +2153,7 @@ final class InsightsService: Sendable {
             maxCompletionTokens: 2_500,
             responseFormat: ResponseFormat(type: "json_object")
         )
-        let jsonData = try await postOpenAIJSON(requestBody, apiKey: apiKey, label: "folder suggestions")
+        let jsonData = try await postOpenAIJSON(requestBody, apiKey: apiKey, label: "folder suggestions", mayDispatch: mayDispatch)
         return FolderSuggestions.parsePlacements(try? JSONSerialization.jsonObject(with: jsonData), items: items, folders: folders)
     }
 

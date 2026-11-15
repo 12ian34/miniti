@@ -459,13 +459,16 @@ struct MeetingFolderManager: View {
     }
 
     private func applyPreview() {
+        // Applying ends this round of suggestions, whatever happens next: nothing more is
+        // sent for a Preview the person has acted on.
+        stopSuggesting()
         let result = appState.applyFolderPreview(proposals, choices: unfiled.compactMap { choices[$0.id] })
         if !result.undo.isEmpty { appState.folderUndo = result.undo }
         guard !result.rejected.isEmpty else { clearPreview(); path.removeLast(); return }
         // Keep what was refused on screen, with the user's own choices intact.
         let refused = Set(result.rejected.map(\.id))
         choices = choices.filter { refused.contains($0.key) }
-        refreshPreview()
+        refreshPreview(asking: false)
         let count = result.rejected.count
         applyIssue = result.undo.isEmpty
             ? "Nothing could be filed. Check the folder limit and try again."
@@ -563,7 +566,7 @@ struct MeetingFolderManager: View {
             .padding(MinitiDesignSystem.Spacing.standard)
             .frame(maxWidth: .infinity).background(ColorPalette.Background.primary)
     }
-    private func refreshPreview() {
+    private func refreshPreview(asking: Bool = true) {
         do {
             let source: [Meeting]
             if let meetings { source = meetings }
@@ -594,7 +597,7 @@ struct MeetingFolderManager: View {
             choices = choices.filter { listed.contains($0.key) }
             newFolders = newFolders.filter { folder in choices.values.contains { $0.folder.id == folder.id } }
             previewIssue = nil; applyIssue = nil
-            askForSuggestions()
+            if asking { askForSuggestions() }
         } catch {
             clearPreview()
             previewIssue = "Could not load meeting history. Try again."

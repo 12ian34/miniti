@@ -1116,7 +1116,7 @@ final class FolderSuggestionTests: XCTestCase {
         XCTAssertNil(FolderSuggestions.item(id: id, title: "Catch up", summary: "  \n "))
         let item = FolderSuggestions.item(id: id, title: "  Acme \n renewal\tcall ", summary: String(repeating: "word ", count: 300))
         XCTAssertEqual(item?.title, "Acme renewal call")
-        XCTAssertEqual(item?.summary.count, 500)
+        XCTAssertEqual(item?.summary.count, 499, "cut at 500, and the space left at the end is trimmed, as on the server")
         XCTAssertEqual(FolderSuggestions.item(id: id, title: String(repeating: "T", count: 400), summary: "ok")?.title.count, 160)
 
         let folder = FolderSuggestions.FolderRef(id: UUID(), name: "Acme")
@@ -1439,8 +1439,18 @@ final class FolderSuggestionTests: XCTestCase {
 
     func testTheTextCapAndAnswerRulesMatchTheServer() {
         // Shared edge cases with miniti-api lib/folderSuggestions.test.ts.
+        // The same cases and results as "one space list and one cut rule" there.
+        let a = { (count: Int) in String(repeating: "a", count: count) }
+        let title = { (text: String) in FolderSuggestions.text(text, max: 160) }
+        XCTAssertEqual(title(a(159) + "😀"), a(159), "a pair that does not fit is left out whole")
+        XCTAssertEqual(title(a(159) + "e\u{301}").unicodeScalars.map(\.value), (a(159) + "e").unicodeScalars.map(\.value),
+                       "cut between code points, so the accent alone is dropped")
+        XCTAssertEqual(title(a(158) + " 😀"), a(158), "no trailing space is left by the cut")
+        XCTAssertEqual(title(a(159) + " b"), a(159))
+        XCTAssertEqual(title(a(155) + " 👨\u{200D}👩\u{200D}👧 b").unicodeScalars.map(\.value), (a(155) + " 👨\u{200D}").unicodeScalars.map(\.value))
+        XCTAssertEqual(title("\u{FEFF} x\u{85}\u{A0}y \u{3000}"), "x y", "U+FEFF, U+0085, U+00A0 and U+3000 are all space")
+        XCTAssertEqual(title("a\u{200B}b").unicodeScalars.count, 3, "a zero width space is not in the list")
         XCTAssertEqual(FolderSuggestions.text(String(repeating: "😀", count: 300), max: 500), String(repeating: "😀", count: 250))
-        XCTAssertEqual(FolderSuggestions.text(String(repeating: "a", count: 159) + "😀", max: 160), String(repeating: "a", count: 159))
         let items = (0..<3).map { FolderSuggestions.Item(id: UUID(), title: "M\($0)", summary: "s") }
         let folders = [FolderSuggestions.FolderRef(id: UUID(), name: "Acme"), FolderSuggestions.FolderRef(id: UUID(), name: "Team")]
         let accepted: [String: Any] = ["placements": [["meeting": 1, "to": "F1"], ["meeting": " 2 ", "to": "\nF2\n"], ["meeting": "3", "to": " Investors "]]]
@@ -1457,6 +1467,89 @@ final class FolderSuggestionTests: XCTestCase {
         }
         XCTAssertEqual(FolderSuggestions.parsePlacements(["placements": [["meeting": 1, "to": "F01"]]], items: items, folders: folders),
                        [.init(meeting: items[0].id, destination: .folder(folders[0].id))])
+        // The same space list trims a meeting number and a destination.
+        XCTAssertEqual(FolderSuggestions.parsePlacements(["placements": [["meeting": "\u{FEFF}1\u{85}", "to": "\u{A0}F1\u{3000}"]]], items: items, folders: folders),
+                       [.init(meeting: items[0].id, destination: .folder(folders[0].id))])
+        XCTAssertEqual(FolderSuggestions.parsePlacements(["placements": [["meeting": "1\u{200B}", "to": "F1"]]], items: items, folders: folders), [])
+    }
+
+    // MARK: The moment a request leaves the device
+
+    func testThePermissionIsAskedAfterSigningInAndBeforeTheRepeatAfterARefresh() async throws {
+        // The token is refused once, so the request is repeated after a refresh. The gate
+        // must be asked before each of the two sends, and a "no" before the repeat stops it.
+        let folderSends = LockedCounter()
+        let gateAsked = LockedCounter()
+        let (state, _) = try makeApp()
+        let api = try XCTUnwrap(state.minitiAPIService)
+        let plain = try XCTUnwrap(StubURLProtocol.handler)
+        StubURLProtocol.handler = { request in
+            if request.url?.path.hasSuffix("/auth/token") == true {
+                return (200, Data(#"{"token_type": "Bearer", "access_token": "tok2", "expires_in": 3600, "refresh_token": "mrt_y"}"#.utf8))
+            }
+            guard request.url?.path.hasSuffix("/insights") == true else { return plain(request) }
+            // The first send is refused as an expired token.
+            return folderSends.next() == 1 ? (401, Data(#"{"error": "token_expired"}"#.utf8)) : (200, Data(#"{"suggestions": []}"#.utf8))
+        }
+        let item = FolderSuggestions.Item(id: UUID(), title: "Quarterly check-in", summary: "Agreed next steps.")
+        do {
+            _ = try await api.suggestFolders(deviceId: UUID().uuidString, items: [item], folders: [],
+                                             mayDispatch: { gateAsked.next() == 1 })
+            XCTFail("the repeat must not be sent once permission is gone")
+        } catch {
+            XCTAssertTrue(error is CancellationError, "\(error)")
+        }
+        XCTAssertEqual(gateAsked.value, 2, "asked before the first send and again before the repeat")
+        XCTAssertEqual(folderSends.value, 1, "the repeat never left the device")
+
+        // With permission throughout, the repeat goes out and answers.
+        _ = try await api.suggestFolders(deviceId: UUID().uuidString, items: [item], folders: [], mayDispatch: { true })
+        XCTAssertGreaterThanOrEqual(folderSends.value, 2)
+    }
+
+    func testAResumedAndStoppedMeetingDoesNotGetTheEarlierAnswer() async throws {
+        var acmeID = ""
+        let (state, context, started, release) = try makeHeldApp { body in
+            (200, ["suggestions": ((body["meetings"] as? [[String: String]]) ?? []).map { ["id": $0["id"]!, "folder_id": acmeID] }])
+        }
+        defer { release.signal() }
+        let acme = MeetingFolder(id: UUID(), name: "Acme")
+        XCTAssertTrue(state.meetingFolders.edit(acme))
+        acmeID = acme.id.uuidString
+        let stopped = meeting("Quarterly check-in", in: context)
+        let task = Task { await state.suggestedFolderProposals(for: [stopped], creatingFolders: true) }
+        await fulfillment(of: [started], timeout: 5)
+        // Resumed, more is recorded, and stopped again before the answer arrives. The title
+        // and the old summary are still there while the new summary is being made.
+        stopped.endTime = nil
+        stopped.endTime = Date().addingTimeInterval(600)
+        release.signal()
+        let proposals = await task.value
+        XCTAssertEqual(proposals.count, 0, "the answer was for the earlier finish")
+    }
+
+    func testFolderCatalogSyncStillRunsThroughTheApp() async throws {
+        // `CloudSyncHost` has an empty default for this call, so losing the app's own
+        // implementation compiles and silently stops folders syncing.
+        let (state, _) = try makeApp()
+        let folderReads = LockedCounter()
+        let plain = try XCTUnwrap(StubURLProtocol.handler)
+        StubURLProtocol.handler = { request in
+            if request.url?.path.hasSuffix("/sync/folders") == true {
+                _ = folderReads.next()
+                return (200, Data(#"{"revision": 0, "folders": []}"#.utf8))
+            }
+            return plain(request)
+        }
+        let wasOn = state.cloudSyncEnabled
+        defer { state.cloudSyncEnabled = wasOn }
+        state.cloudSyncEnabled = true
+        state.usageInfo = try JSONDecoder().decode(MinitiAPIService.UsageInfo.self,
+            from: Data(#"{"minutes_used": 1, "minutes_limit": 5000, "tier": "pro"}"#.utf8))
+        XCTAssertNil(state.cloudPauseReason)
+        let host: CloudSyncHost = state
+        await host.cloudSyncFolders()
+        XCTAssertGreaterThanOrEqual(folderReads.value, 1, "the folder catalog was read from the server")
     }
 }
 

@@ -162,8 +162,7 @@ final class MinitiAPIService: @unchecked Sendable {
             guard generation == expectedOwner.generation,
                   auth.status.accountID == expectedOwner.account else { throw ServiceError.notEnrolled }
         }
-        if let mayDispatch, await !mayDispatch() { throw CancellationError() }
-        let (data, response) = try await session.data(for: request)
+        let (data, response) = try await GatedDispatch.data(for: request, session: session, mayDispatch: mayDispatch)
         guard let http = response as? HTTPURLResponse, http.statusCode == 401, auth.isEnrolled else {
             return (data, response)
         }
@@ -182,8 +181,7 @@ final class MinitiAPIService: @unchecked Sendable {
             } catch let error as ClientAuthError {
                 throw SignInFailure(error)
             }
-            if let mayDispatch, await !mayDispatch() { throw CancellationError() }
-            return try await session.data(for: retry)
+            return try await GatedDispatch.data(for: retry, session: session, mayDispatch: mayDispatch)
         case "installation_revoked", "device_auth_required":
             guard auth.clearLocal(reason: "revoke", ifGeneration: generation) else { throw ServiceError.notEnrolled }
             throw ServiceError.authRevoked
@@ -2724,6 +2722,72 @@ struct ManagedSpeakerNamesResponse: Decodable {
             speakers = map
         } else {
             speakers = [:]
+        }
+    }
+}
+
+/// Sends a request only if a permission still holds at the moment it leaves the device.
+///
+/// The check and the start of the network task happen in one step on the main actor, with
+/// no suspension between them, so the permission cannot change in the gap. With no gate
+/// this is `session.data(for:)`.
+enum GatedDispatch {
+    static func data(for request: URLRequest, session: URLSession,
+                     mayDispatch: (@MainActor @Sendable () -> Bool)?) async throws -> (Data, URLResponse) {
+        guard let mayDispatch else { return try await session.data(for: request) }
+        return try await gated(request, session: session, mayDispatch: mayDispatch)
+    }
+
+    @MainActor
+    private static func gated(_ request: URLRequest, session: URLSession,
+                              mayDispatch: @MainActor @Sendable () -> Bool) async throws -> (Data, URLResponse) {
+        try Task.checkCancellation()
+        // From here to `resume()` nothing suspends: the answer below is still true when
+        // the request starts.
+        guard mayDispatch() else { throw CancellationError() }
+        let pending = Pending()
+        let task = session.dataTask(with: request) { data, response, error in
+            if let error {
+                pending.finish(.failure((error as? URLError)?.code == .cancelled ? CancellationError() : error))
+            } else if let data, let response {
+                pending.finish(.success((data, response)))
+            } else {
+                pending.finish(.failure(URLError(.badServerResponse)))
+            }
+        }
+        task.resume()
+        return try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { pending.wait($0) }
+        } onCancel: {
+            task.cancel()
+        }
+    }
+
+    /// The task's outcome, whichever of "finished" and "someone is waiting" comes first.
+    private final class Pending: @unchecked Sendable {
+        private let lock = NSLock()
+        private var result: Result<(Data, URLResponse), Error>?
+        private var waiter: CheckedContinuation<(Data, URLResponse), Error>?
+
+        func finish(_ outcome: Result<(Data, URLResponse), Error>) {
+            lock.lock()
+            guard result == nil else { lock.unlock(); return }
+            result = outcome
+            let waiting = waiter
+            waiter = nil
+            lock.unlock()
+            waiting?.resume(with: outcome)
+        }
+
+        func wait(_ continuation: CheckedContinuation<(Data, URLResponse), Error>) {
+            lock.lock()
+            if let result {
+                lock.unlock()
+                continuation.resume(with: result)
+            } else {
+                waiter = continuation
+                lock.unlock()
+            }
         }
     }
 }

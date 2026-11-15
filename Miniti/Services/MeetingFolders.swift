@@ -495,18 +495,39 @@ enum FolderSuggestions {
         let destination: Destination
     }
 
-    /// One line, whitespace collapsed, capped. The same rule the server applies: the cap
-    /// counts UTF-16 units, as the server does, and never cuts a character in half.
+    /// The characters that count as space, the same list on the server (`FOLDER_SUGGEST_SPACE`
+    /// in miniti-api). Spelled out so Swift and JavaScript cannot disagree about one.
+    static let space: Set<Unicode.Scalar> = {
+        var set: Set<Unicode.Scalar> = ["\t", "\n", "\u{0B}", "\u{0C}", "\r", " ", "\u{85}", "\u{A0}", "\u{1680}",
+                                        "\u{2028}", "\u{2029}", "\u{202F}", "\u{205F}", "\u{3000}", "\u{FEFF}"]
+        for value in 0x2000...0x200A { set.insert(Unicode.Scalar(value)!) }
+        return set
+    }()
+
+    static func trimmed(_ value: String) -> String {
+        var scalars = Substring.UnicodeScalarView(value.unicodeScalars)
+        while let first = scalars.first, space.contains(first) { scalars.removeFirst() }
+        while let last = scalars.last, space.contains(last) { scalars.removeLast() }
+        return String(scalars)
+    }
+
+    /// One line, runs of space collapsed to one, trimmed, capped. The same rule the server
+    /// applies: the cap counts UTF-16 units and is cut between code points, never inside one.
     static func text(_ value: String?, max: Int) -> String {
-        let collapsed = (value ?? "").split(whereSeparator: \.isWhitespace).joined(separator: " ")
-        guard collapsed.utf16.count > max else { return collapsed }
-        var out = "", units = 0
-        for character in collapsed {
-            let size = character.utf16.count
-            if units + size > max { break }
-            out.append(character); units += size
+        var out = String.UnicodeScalarView()
+        var units = 0, pendingSpace = false
+        for scalar in (value ?? "").unicodeScalars {
+            if space.contains(scalar) { pendingSpace = !out.isEmpty; continue }
+            let size = (pendingSpace ? 1 : 0) + scalar.utf16.count
+            if units + size > max {
+                // The server cuts after the collapse, so a space that fits is kept before
+                // the cut and then trimmed away again: the result is the same without it.
+                break
+            }
+            if pendingSpace { out.append(" "); pendingSpace = false }
+            out.append(scalar); units += size
         }
-        return out
+        return String(out)
     }
 
     /// A meeting as it is sent, or nil when it has no summary: a title alone is not enough.
@@ -610,12 +631,12 @@ enum FolderSuggestions {
             let number: Int?
             if let value = row["meeting"] as? NSNumber, !(value === kCFBooleanTrue || value === kCFBooleanFalse), value.doubleValue == Double(value.intValue) {
                 number = value.intValue
-            } else if let value = (row["meeting"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines),
+            } else if let value = (row["meeting"] as? String).map(trimmed),
                       (1...3).contains(value.count), value.allSatisfy({ $0.isASCII && $0.isNumber }) {
                 number = Int(value)
             } else { number = nil }
             guard let number, number >= 1, number <= items.count, !placed.contains(number),
-                  let to = (row["to"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) else { continue }
+                  let to = (row["to"] as? String).map(trimmed) else { continue }
             let meeting = items[number - 1].id
             if to.hasPrefix("F"), let index = Int(to.dropFirst()), to.dropFirst().allSatisfy({ $0.isASCII && $0.isNumber }), to.count <= 4 {
                 guard index >= 1, index <= folders.count else { continue }

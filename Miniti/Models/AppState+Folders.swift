@@ -396,10 +396,15 @@ extension AppState {
         let meeting: Meeting
         let item: FolderSuggestions.Item
         let title: String
+        /// When this recording finished. Resuming and stopping again gives a new time, so an
+        /// answer for the earlier finish is not used for the later one.
+        let finished: Date?
     }
 
     private func currentSuggestionInput(_ meeting: Meeting) -> SentForSuggestion? {
-        folderSuggestionItems(for: [meeting]).first.map { .init(meeting: meeting, item: $0.item, title: meeting.title) }
+        folderSuggestionItems(for: [meeting]).first.map {
+            .init(meeting: meeting, item: $0.item, title: meeting.title, finished: meeting.endTime)
+        }
     }
 
     /// Proposals from AI suggestions for meetings the local rules left unfiled. Nothing is
@@ -439,7 +444,10 @@ extension AppState {
             // Asked again at the moment of sending: signing in can take a while.
             let mayDispatch: @MainActor @Sendable () -> Bool = { [weak self] in
                 guard let self, stillSameOwner(), !Task.isCancelled else { return false }
-                return batch.allSatisfy { self.currentSuggestionInput($0.meeting)?.item == $0.item }
+                return batch.allSatisfy {
+                    let now = self.currentSuggestionInput($0.meeting)
+                    return now?.item == $0.item && now?.finished == $0.finished
+                }
             }
             do {
                 let answers: [FolderSuggestions.Suggestion]
@@ -447,8 +455,9 @@ extension AppState {
                     answers = try await minitiAPIService.suggestFolders(
                         deviceId: DeviceIdentifier.getOrCreateDeviceId(), items: batch.map(\.item), folders: refs,
                         expectedOwner: account.map { ($0, generation) }, mayDispatch: mayDispatch)
-                } else if !managed, let insightsService, !openaiApiKey.isEmpty, mayDispatch() {
-                    answers = try await insightsService.suggestFolders(items: batch.map(\.item), folders: refs, apiKey: openaiApiKey)
+                } else if !managed, let insightsService, !openaiApiKey.isEmpty {
+                    answers = try await insightsService.suggestFolders(items: batch.map(\.item), folders: refs, apiKey: openaiApiKey,
+                                                                       mayDispatch: mayDispatch)
                 } else { break }
                 suggestions += answers
                 for entry in batch { sent[entry.meeting.id] = entry }
@@ -465,7 +474,7 @@ extension AppState {
             // The answer is for the title and summary that were sent. A meeting that was
             // edited, resumed, filed, marked Local or deleted since gets no proposal.
             guard let was = sent[suggestion.meeting], let now = currentSuggestionInput(was.meeting),
-                  now.item == was.item, now.title == was.title else { return nil }
+                  now.item == was.item, now.title == was.title, now.finished == was.finished else { return nil }
             let meeting = was.meeting
             let folder: MeetingFolder
             switch suggestion.destination {
@@ -492,5 +501,15 @@ extension AppState {
             return .init(owner: owner, meeting: meeting, title: was.title, previousFolder: meeting.folderID,
                          previousManual: meeting.folderManual, previousLocalOnly: meeting.folderLocalOnly, folder: folder, suggested: true)
         }
+    }
+
+    func cloudSyncFolders() async {
+        guard let api = minitiAPIService, let account = cloudAccountID, cloudPauseReason == nil else { return }
+        meetingFolders.selectOwner(account)
+        let credential = clientAuthManager.credentialGeneration
+        await meetingFolders.sync(allowed: { [weak self] in
+            self?.cloudPauseReason == nil && self?.cloudAccountID == account && self?.clientAuthManager.credentialGeneration == credential
+        }, read: { try await api.readFolders(accountID: account, credentialGeneration: credential) },
+        write: { try await api.writeFolders($0, accountID: account, credentialGeneration: credential) })
     }
 }
