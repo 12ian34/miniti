@@ -2094,10 +2094,10 @@ final class SyncMergeFormTests: XCTestCase {
 
     // MARK: Server-side fill (SM1.5)
 
-    /// The backend may start serving explicit nulls for the two external keys so that 3.8.0 and
-    /// 3.9.0 devices stop re-uploading (measured on the real 3.9.0 engine, see the 3.10.0 plan).
-    /// A 3.10.0 device must behave the same with or without it, including when the fill is turned
-    /// on between two syncs and when an imported meeting keeps real values.
+    /// The backend could serve explicit nulls for the two external keys (evaluated for 3.8.0 and
+    /// 3.9.0 devices and rejected, see scripts/sync-fill-eval). Whatever the server sends, a 3.10.0
+    /// device must behave the same: with the nulls, without them, and when the form changes
+    /// between two syncs, including while it has an edit it could not upload yet.
     func testServedExplicitNullsChangeNothingForACurrentDevice() async throws {
         // Turned on after the baselines were made without it.
         let (a, b, id) = try await pairWithOneMerge()
@@ -2134,12 +2134,40 @@ final class SyncMergeFormTests: XCTestCase {
             XCTAssertEqual(device.host.meeting(id)?.notes, "C's newer notes")
             XCTAssertEqual(device.host.meeting(id)?.folderID, last2)
         }
-        // Turned off again (a rollback): still nothing.
+        // Turned off again (a rollback): nothing by itself, and then real documents in the unfilled
+        // form are merged, by download and by a refused upload.
         transport.servesExplicitExternalNulls = false
         before = puts
         for device in [a, b, c] { await sync(device) }
         XCTAssertEqual(puts, before)
+        for (index, formAfter) in [true, false].enumerated() {
+            // B has an edit it cannot send; the served form changes; A's later folder move lands first.
+            transport.servesExplicitExternalNulls = !formAfter
+            for device in [a, b, c] { await sync(device) }
+            b.host.meeting(id)?.notes = "B's pending notes \(index)"
+            try b.host.context.save()
+            transport.failNext = .offline
+            await sync(b, passes: 1)
+            transport.servesExplicitExternalNulls = formAfter
+            let moved = UUID()
+            move(id, on: a, to: moved)
+            await sync(a)
+            await sync(b); await sync(a); await sync(c)
+            for device in [a, b, c] {
+                XCTAssertEqual(device.host.meeting(id)?.notes, "B's pending notes \(index)", "form changed to \(formAfter ? "filled" : "absent") while the edit was pending")
+                XCTAssertEqual(device.host.meeting(id)?.folderID, moved)
+            }
+        }
+        let settled = puts
+        for device in [a, b, c] { await sync(device) }
+        XCTAssertEqual(puts, settled)
         for device in [a, b, c] { XCTAssertEqual(device.engine.unchangedUploadCount, 0) }
+        // A document with one real external value and the other absent or null is one content.
+        var one = transport.rows[id]?.document ?? [:]
+        one["external_source"] = "granola"
+        var oneFilled = one
+        oneFilled["external_id"] = NSNull()
+        XCTAssertEqual(MeetingSyncDocument.contentFingerprint(document: oneFilled), MeetingSyncDocument.contentFingerprint(document: one))
         // The filled form has the same content identity as both existing forms.
         guard let stored = transport.rows[id]?.document else { return XCTFail("missing row") }
         var filled = stored

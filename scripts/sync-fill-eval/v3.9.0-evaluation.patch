@@ -1,5 +1,5 @@
 diff --git a/MinitiTests/CloudSyncEngineTests.swift b/MinitiTests/CloudSyncEngineTests.swift
-index 9a5aed14..760631a5 100644
+index 9a5aed14..03f7930b 100644
 --- a/MinitiTests/CloudSyncEngineTests.swift
 +++ b/MinitiTests/CloudSyncEngineTests.swift
 @@ -82,8 +82,17 @@ final class FakeCloudTransport: CloudSyncTransport, @unchecked Sendable {
@@ -40,7 +40,7 @@ index 9a5aed14..760631a5 100644
          if tier != "pro" { throw CloudSyncError.proRequired }
          if let title = document["title"] as? String, tooLargeTitles.contains(title) { return .tooLarge }
          let updatedAt = MeetingSyncDocument.date(document["updated_at"]) ?? Date()
-@@ -1864,3 +1874,170 @@ final class CloudPrivacyAvailabilityTests: XCTestCase {
+@@ -1864,3 +1874,187 @@ final class CloudPrivacyAvailabilityTests: XCTestCase {
          XCTAssertEqual(MeetingCloudPrivacyPresentation.uploadStatus(pause: nil), "Waiting to put on the cloud")
      }
  }
@@ -209,5 +209,22 @@ index 9a5aed14..760631a5 100644
 +        await sync(b2); await sync(a2); await sync(b2)
 +        _ = await settle([a2, b2])
 +        out("switch e8 same meeting, second time: edit kept on A=\(a2.host.meeting(id2)?.notes == "A edit again") on B=\(b2.host.meeting(id2)?.notes == "A edit again") folder ok=\(a2.host.meeting(id2)?.folderID == folder3 && b2.host.meeting(id2)?.folderID == folder3)")
++        // Transition counterexamples (found in review). B holds a baseline made from a merge, edits
++        // notes, and cannot upload. The served form then changes. A uploads a later folder-only move.
++        // B retries and gets the conflict document in the other form.
++        for (label, start, end) in [("t0 no change of form, fill off throughout", false, false), ("t1 fill turned on while B's edit is pending", false, true),
++                                    ("t2 fill on throughout", true, true), ("t3 fill turned off while B's edit is pending", true, false)] {
++            fresh(filled: start)
++            let (a3, b3, id3) = try await pairWithOneMerge()
++            b3.host.meeting(id3)?.notes = "B's pending notes"; try b3.host.context.save()
++            transport.failNext = .offline
++            await sync(b3, passes: 1)
++            transport.servesFilledNulls = end
++            let folder = UUID(); move(id3, on: a3, to: folder)
++            await sync(a3)
++            await sync(b3); await sync(a3); await sync(b3)
++            _ = await settle([a3, b3])
++            out("transition \(label): B's edit kept on B=\(b3.host.meeting(id3)?.notes == "B's pending notes") on A=\(a3.host.meeting(id3)?.notes == "B's pending notes") folder ok=\(a3.host.meeting(id3)?.folderID == folder && b3.host.meeting(id3)?.folderID == folder)")
++        }
 +    }
 +}

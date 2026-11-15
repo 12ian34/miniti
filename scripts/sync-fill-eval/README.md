@@ -36,8 +36,19 @@ Turning the fill on for devices whose baselines were made without it, 10 meeting
 | The same for a meeting B has not merged since the switch | edit lost once, as today |
 | That meeting, a second time | edit kept |
 
-So the fill makes nothing worse. It stops the repeated uploads at once, and each meeting keeps today's edit-loss risk only until a device's first merge of it after the switch.
+Changing the served form while a device has an edit it could not upload yet. B holds a baseline from a merge, edits notes, and is offline; A then uploads a later folder-only move; B retries and gets the conflict document:
 
-The 3.10.0 engine is checked against the same served form in `SyncMergeFormTests.testServedExplicitNullsChangeNothingForACurrentDevice`.
+| Served form | B's edit |
+|---|---|
+| Absent throughout (today) | kept |
+| Filled throughout | kept |
+| Turned on while B's edit is pending | lost on both devices |
+| Turned off while B's edit is pending | lost on both devices |
 
-Limits: a fake server, not production; one account shape; 3.8.0 was not run separately: `CloudSyncEngine.swift` and `MeetingSyncDocument.swift` are identical in v3.8.0 and v3.9.0 (`git diff v3.8.0 v3.9.0` on the two files is empty), so the result covers both.
+## Conclusion: not safe to turn on (rejected, 2026-11-15)
+
+Once every device's baselines are in the filled form, the fill stops the repeated uploads and both edit-loss sequences. Getting there is the problem. A 3.8.0 or 3.9.0 device keeps baselines in whatever form it last saw, so at the moment the served form changes, an edit that is waiting to upload on such a device can be discarded when another device's later folder change arrives. That edit survives today. Turning the flag off again does the same in the other direction, so there is no safe rollback either: the flag changes what the server sends, not the baselines devices already hold. This was found in review; the first version of this file wrongly said nothing gets worse.
+
+The plan's test for SM1.5 was that no sequence gets worse. One does, so the fill is not turned on. 3.10.0 fixes the cause on the device, and the 3.10.0 engine is unaffected by either served form (`SyncMergeFormTests.testServedExplicitNullsChangeNothingForACurrentDevice`).
+
+Limits: a fake server, not production. It models only the dropping of null external keys. Production also removes blank external strings, trims and cuts external values, cuts titles to 500 UTF-16 units, defaults an empty language and the transcript revision, and normalises dates and ids; a 3.8.0 or 3.9.0 device whose local value differs from the stored one (a title over the limit, for example) has a mismatched baseline that the fill does not repair, so the "with the fill" columns above hold only for meetings without such values. One account shape. Meetings with a missing baseline or waiting for a folder refresh were not run. 3.8.0 was not run separately: `CloudSyncEngine.swift` and `MeetingSyncDocument.swift` are identical in v3.8.0 and v3.9.0 (`git diff v3.8.0 v3.9.0` on the two files is empty), so the result covers both.
