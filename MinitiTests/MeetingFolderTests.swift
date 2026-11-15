@@ -1351,6 +1351,9 @@ final class FolderSuggestionTests: XCTestCase {
         XCTAssertTrue(asks.begin([ids[3]]))
         asks.cancel()
         XCTAssertEqual(asks.candidates(unfiled: [ids[3]], eligible: Set(ids), chosen: []), [ids[3]])
+        // A press asks only about what was offered, even if more qualify by then.
+        XCTAssertEqual(FolderSuggestionAsks.targets(offered: [ids[0], ids[1]], now: [ids[1], ids[4], ids[3]]), [ids[1]])
+        XCTAssertEqual(FolderSuggestionAsks.targets(offered: [ids[0]], now: [ids[4]]), [], "nothing offered still qualifies: nothing is sent")
         // Answered meetings are never offered twice in one Preview.
         XCTAssertEqual(asks.candidates(unfiled: [ids[1], ids[2]], eligible: Set(ids), chosen: []), [])
     }

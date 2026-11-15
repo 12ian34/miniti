@@ -99,9 +99,6 @@ struct MeetingFolderManager: View {
     /// Unfiled meetings that may be sent at all, worked out when Preview refreshes so the
     /// button's count costs nothing while the screen redraws.
     @State private var suggestionEligible: Set<UUID> = []
-    /// The pending Preview refresh after meetings were saved; one at a time.
-    @State private var savedChangeRefresh: Task<Void, Never>?
-    @State private var lastSavedChangeRefresh = Date.distantPast
     /// Why a suggestion request may not be sent now, kept current for this screen.
     @StateObject private var availability = FolderSuggestionAvailability()
     /// Shown when the last request failed; the button stays so it can be tried again.
@@ -387,7 +384,7 @@ struct MeetingFolderManager: View {
             }
         }
         // Back, Close and Apply all leave this screen: stop asking for suggestions.
-        .onDisappear { stopSuggesting(); savedChangeRefresh?.cancel(); savedChangeRefresh = nil }
+        .onDisappear { stopSuggesting() }
         // AI permission, the mode and the OpenAI key are stored preferences that do not
         // redraw this screen by themselves, and Settings can change them from another
         // window. `availability` follows them, so the button and the private mode line are
@@ -395,12 +392,6 @@ struct MeetingFolderManager: View {
         // the suggestions already shown off the screen.
         .onAppear { availability.follow(appState) }
         .onChange(of: availability.block) { _, _ in dropSuggestionsIfBlocked() }
-        // A sync or an edit while Preview is open can file a meeting, retitle it so a rule
-        // now places it, keep it off the cloud or give it a summary. Preview is worked out
-        // again, at most once a second, so the list and the count under the button follow.
-        .onReceive(NotificationCenter.default.publisher(for: ModelContext.didSave).receive(on: RunLoop.main)) { _ in
-            scheduleRefreshAfterSave()
-        }
         .alert("New folder", isPresented: Binding(get: { namingFolderFor != nil }, set: { if !$0 { namingFolderFor = nil } })) {
             TextField("Name", text: $newFolderName)
             Button("Cancel", role: .cancel) { namingFolderFor = nil }
@@ -471,7 +462,6 @@ struct MeetingFolderManager: View {
     private func clearPreview() {
         proposals = []; unfiled = []; choices = [:]; newFolders = []; applyIssue = nil; unfiledShown = Self.unfiledPageSize
         suggested = []; suggestionEligible = []; suggestionIssue = nil; stopSuggesting(); asks = .init()
-        savedChangeRefresh?.cancel(); savedChangeRefresh = nil
     }
 
     private func dropSuggestionsIfBlocked() {
@@ -483,24 +473,6 @@ struct MeetingFolderManager: View {
     /// while the screen redraws.
     private func refreshEligibility() {
         suggestionEligible = Set(appState.folderSuggestionItems(for: unfiled).map(\.meeting.id))
-    }
-
-    /// Choices, the retry line, a refused Apply's explanation and what was already asked
-    /// survive this refresh. It runs a second after a save, and no more often than every
-    /// five seconds, so a burst of synced meetings costs one refresh, also when Preview is
-    /// empty (a meeting unfiled on another device then appears). Not while recording:
-    /// transcript saves are constant then, and pressing the button brings Preview up to
-    /// date anyway.
-    private func scheduleRefreshAfterSave() {
-        guard savedChangeRefresh == nil, !appState.isRecording else { return }
-        let wait = max(1, 5 - Date().timeIntervalSince(lastSavedChangeRefresh))
-        savedChangeRefresh = Task {
-            try? await Task.sleep(nanoseconds: UInt64(wait * 1_000_000_000))
-            savedChangeRefresh = nil
-            guard !Task.isCancelled, !appState.isRecording else { return }
-            lastSavedChangeRefresh = Date()
-            refreshPreview(afterSave: true)
-        }
     }
 
     private func stopSuggesting() {
@@ -516,11 +488,14 @@ struct MeetingFolderManager: View {
     /// again with the same button.
     private func askForSuggestions() {
         guard appState.folderSuggestionBlock == nil, !suggesting else { return }
-        // The list may be out of date (a sync filed a meeting, a summary arrived): bring it
-        // up to date first, so what is asked about is what the line under the button said,
-        // or the button goes because nothing is left.
+        // The line under the button promised these meetings and no others. The list may be
+        // out of date (a sync filed one, a summary arrived for another): bring it up to
+        // date, then ask only about offered meetings that still qualify. A meeting that
+        // became possible in the meantime waits for the next press, with its own count.
+        let offered = Set(suggestionCandidates.map(\.id))
         refreshPreview()
-        let targets = suggestionCandidates
+        let wanted = Set(FolderSuggestionAsks.targets(offered: offered, now: suggestionCandidates.map(\.id)))
+        let targets = suggestionCandidates.filter { wanted.contains($0.id) }
         guard asks.begin(targets.map(\.id)) else { return }
         suggestionIssue = nil
         suggestionRound += 1
@@ -650,9 +625,10 @@ struct MeetingFolderManager: View {
             .padding(MinitiDesignSystem.Spacing.standard)
             .frame(maxWidth: .infinity).background(ColorPalette.Background.primary)
     }
-    /// `afterSave` marks the refresh that follows a saved change with nobody asking: it
-    /// keeps the explanation of a refused Apply, which only the person's next action clears.
-    private func refreshPreview(afterSave: Bool = false) {
+    /// Preview is a snapshot, worked out when it opens and after each thing the person does
+    /// here. It does not follow syncs and edits by itself: Apply and the suggestion button
+    /// each check the meetings as they are at that moment.
+    private func refreshPreview() {
         do {
             let source: [Meeting]
             if let meetings { source = meetings }
@@ -686,8 +662,7 @@ struct MeetingFolderManager: View {
             let listed = Set(unfiled.map(\.id))
             choices = choices.filter { listed.contains($0.key) }
             newFolders = newFolders.filter { folder in choices.values.contains { $0.folder.id == folder.id } }
-            previewIssue = nil
-            if !afterSave { applyIssue = nil }
+            previewIssue = nil; applyIssue = nil
         } catch {
             clearPreview()
             previewIssue = "Could not load meeting history. Try again."
@@ -754,6 +729,10 @@ struct FolderSuggestionAsks: Equatable {
     func candidates(unfiled: [UUID], eligible: Set<UUID>, chosen: Set<UUID>) -> [UUID] {
         unfiled.filter { eligible.contains($0) && !asked.contains($0) && !chosen.contains($0) }
     }
+
+    /// What a press may ask about: the meetings the screen offered that still qualify now,
+    /// in today's order. Never one that was not offered.
+    static func targets(offered: Set<UUID>, now: [UUID]) -> [UUID] { now.filter(offered.contains) }
 
     /// Start a request for these meetings. False, and nothing recorded, when there is
     /// nothing to ask or a request is already on its way.
