@@ -2083,6 +2083,90 @@ final class SyncMergeFormTests: XCTestCase {
         }
     }
 
+    // MARK: Mixed versions (SM1.4)
+
+    /// What a 3.8.0 or 3.9.0 device does when a folder-only change reaches it (its code is
+    /// unchanged and cannot be run here): it uploads the same document again with a later
+    /// timestamp. Sent straight through the transport, as that device would.
+    private func olderDeviceReuploads(_ id: UUID, editing edit: ((inout [String: Any]) -> Void)? = nil) async throws {
+        guard let row = transport.rows[id] else { return XCTFail("missing cloud row") }
+        clock = clock.addingTimeInterval(10)
+        var document = row.document
+        document["updated_at"] = ISO8601DateFormatter().string(from: clock)
+        // The older device sends its local form: both external keys present and null.
+        if document["external_source"] == nil { document["external_source"] = NSNull() }
+        if document["external_id"] == nil { document["external_id"] = NSNull() }
+        edit?(&document)
+        let result = try await transport.putMeeting(id: id, baseRevision: row.revision,
+            document: JSONSerialization.data(withJSONObject: document), restoreDeleted: false)
+        guard case .ok = result else { return XCTFail("the older device's upload was refused") }
+    }
+
+    /// One device of each version: a folder change costs at most two uploads and then stops. The
+    /// 3.10.0 device never answers the older device's re-upload with one of its own.
+    func testAnOlderDevicesReuploadIsNeverAnsweredWithAnotherUpload() async throws {
+        let new = try device()
+        let id = record(on: new)
+        await sync(new)
+        let before = puts
+        let folder = UUID()
+        move(id, on: new, to: folder)
+        await sync(new)
+        XCTAssertEqual(puts, before + 1, "the folder change itself")
+        try await olderDeviceReuploads(id)
+        XCTAssertEqual(puts, before + 2, "the older device's echo")
+        for _ in 0..<5 { await sync(new) }
+        XCTAssertEqual(puts, before + 2, "and it stops: the 3.10.0 device only downloads")
+        XCTAssertEqual(new.host.meeting(id)?.folderID, folder)
+        XCTAssertEqual(new.engine.unchangedUploadCount, 0)
+        // The same when the change starts on the older device and it then echoes again.
+        try await olderDeviceReuploads(id) { $0["folder_id"] = UUID().uuidString; $0["folder_manual"] = true }
+        await sync(new)
+        try await olderDeviceReuploads(id)
+        for _ in 0..<5 { await sync(new) }
+        XCTAssertEqual(puts, before + 4, "two more, both from the older device")
+        XCTAssertEqual(new.engine.unchangedUploadCount, 0)
+    }
+
+    /// The 3.10.0 device edits content. Before its upload lands, the older device re-uploads the
+    /// old content with a later timestamp. The 3.10.0 device must keep its own newer edit.
+    func testAnOlderDevicesReuploadNeverDiscardsThisDevicesNewerEdit() async throws {
+        let new = try device()
+        let id = record(on: new)
+        await sync(new)
+        new.host.meeting(id)?.notes = "written on the 3.10.0 device"
+        try new.host.context.save()
+        transport.failNext = .offline
+        await sync(new, passes: 1) // The edit is stamped but cannot be sent yet.
+        try await olderDeviceReuploads(id)
+        for _ in 0..<3 { await sync(new) }
+        XCTAssertEqual(new.host.meeting(id)?.notes, "written on the 3.10.0 device")
+        XCTAssertEqual(transport.rows[id]?.document["notes"] as? String, "written on the 3.10.0 device", "and it reaches the cloud")
+        let settled = puts
+        for _ in 0..<3 { await sync(new) }
+        XCTAssertEqual(puts, settled)
+    }
+
+    /// Two 3.10.0 devices never send an upload that changes nothing; the count sees one when it happens.
+    func testTheNoChangeUploadCountIsZeroBetweenTwoCurrentDevicesAndSeesARealOne() async throws {
+        let (a, b, id) = try await pairWithOneMerge()
+        move(id, on: a, to: UUID())
+        await sync(a); await sync(b)
+        b.host.meeting(id)?.notes = "B's notes"
+        try b.host.context.save()
+        await sync(b); await sync(a); await sync(b)
+        XCTAssertEqual(a.engine.unchangedUploadCount, 0)
+        XCTAssertEqual(b.engine.unchangedUploadCount, 0)
+        // Force the situation the count exists for: a meeting marked for upload with nothing changed.
+        a.host.meeting(id)?.syncFingerprint = "stale"
+        try a.host.context.save()
+        let before = puts
+        await sync(a)
+        XCTAssertEqual(puts, before + 1)
+        XCTAssertEqual(a.engine.unchangedUploadCount, 1)
+        XCTAssertEqual(DiagnosticTimeline.sanitize(["outcome": "success", "unchanged_uploads": "1"])["unchanged_uploads"], "1")
+    }
+
     /// Rewrites the stored baseline the way 3.9.0 left it: its own hash over the device's
     /// local document (after an upload) or over the server's copy (after a merge).
     private func leaveLegacyBaseline(_ id: UUID, on device: Device, fromServerCopy: Bool) {

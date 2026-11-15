@@ -305,7 +305,7 @@ final class DiagnosticTimeline: @unchecked Sendable {
             "server_code": ["installation_revoked", "token_expired", "device_already_enrolled", "invalid_key", "rate_limited", "provider_config", "provider_unavailable", "not_enrolled", "unknown", "invalid_proof", "device_cap_reached", "subscription_conflict", "invalid_recovery_key", "recovery_key_unknown", "device_not_eligible"],
         ]
         let booleans: Set<String> = ["capture_mic", "capture_system", "mic_pcm", "system_pcm", "pcm_sent", "speech_seen", "transcript_seen", "excluded"]
-        let numbers: Set<String> = ["error_code", "status", "duration_seconds", "pending_uploads", "pending_removals", "dropped"]
+        let numbers: Set<String> = ["error_code", "status", "duration_seconds", "pending_uploads", "pending_removals", "unchanged_uploads", "dropped"]
         var result: [String: String] = [:]
         for (key, value) in fields {
             if RecordingReportingContract.valid(key, value) { result[key] = value }

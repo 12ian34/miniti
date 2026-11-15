@@ -784,6 +784,13 @@ final class CloudSyncEngine: ObservableObject {
         guard !dirty.isEmpty else { return }
         DiagnosticTimeline.shared.record(.cloudUpload, fields: ["outcome": "pending", "pending_uploads": String(dirty.count)])
         var done = 0
+        unchangedUploadsThisPass = 0
+        defer {
+            if unchangedUploadsThisPass > 0 {
+                DebugLogger.shared.log(.app, "Cloud sync: \(unchangedUploadsThisPass) upload(s) changed nothing (content and folder equal the last agreed copy)", level: .warning)
+                DiagnosticTimeline.shared.record(.cloudUpload, fields: ["outcome": "success", "unchanged_uploads": String(unchangedUploadsThisPass)])
+            }
+        }
         phase = .pushing(done: 0, total: dirty.count)
         // Ids are read before any await: a meeting deleted mid-batch must not be touched.
         for (id, meeting) in dirty.map({ ($0.id, $0) }) {
@@ -797,7 +804,23 @@ final class CloudSyncEngine: ObservableObject {
     }
 
     private var inFlightUploadIDs: Set<UUID> = []
+    /// Accepted uploads, since launch, of a meeting whose content and folder both still equalled
+    /// the copy this device last agreed with the cloud (3.10.0 SM1.4). Such an upload changes
+    /// nothing but the timestamp and makes other devices download it; between two 3.10.0 devices
+    /// the count stays 0. Observation only: it never changes what is uploaded.
+    private(set) var unchangedUploadCount = 0
+    private var unchangedUploadsThisPass = 0
     func isUploading(_ id: UUID) -> Bool { inFlightUploadIDs.contains(id) }
+
+    /// Whether the document about to be uploaded has the content and the folder of the stored
+    /// baselines, the copy this device last uploaded or merged. False when either baseline is
+    /// missing or is the unverified marker: nothing is known to compare with.
+    private static func equalsAgreedCopy(_ meeting: Meeting, document: [String: Any]) -> Bool {
+        guard let content = meeting.syncedContentFingerprint, content != "legacy-content-unverified",
+              let folder = meeting.syncedFolderFingerprint else { return false }
+        return MeetingSyncDocument.folderFingerprint(document: document) == folder
+            && MeetingSyncDocument.content(of: document, matches: content)
+    }
 
     private func push(_ meeting: Meeting, id: UUID, host: CloudSyncHost, transport: CloudSyncTransport, retrying: Bool, context pass: PassContext) async throws {
         guard !meeting.syncExcluded, id != host.cloudUploadProtectedMeetingID, meeting.endTime != nil else { return }
@@ -810,11 +833,15 @@ final class CloudSyncEngine: ObservableObject {
         let localUpdatedAt = meeting.updatedAt ?? MeetingSyncDocument.fallbackUpdatedAt(meeting)
         let localTranscriptRevision = meeting.transcriptRevision
         let restoring = meeting.cloudRestoreRequested
+        let changesNothing = base > 0 && !restoring && Self.equalsAgreedCopy(meeting, document: uploadedDocument)
         inFlightUploadIDs.insert(id)
         defer { inFlightUploadIDs.remove(id) }
         let result = try await transport.putMeeting(id: id, baseRevision: base, document: document, restoreDeleted: restoring)
         try check(pass)
-        if case .ok = result { statusDirty = true }
+        if case .ok = result {
+            statusDirty = true
+            if changesNothing { unchangedUploadCount += 1; unchangedUploadsThisPass += 1 }
+        }
         if host.isMeetingDeleted(id) || meeting.modelContext == nil {
             // Deleted while the upload was in flight: the cloud now has a copy nobody wants.
             if case .ok(let revision) = result, let context = host.cloudModelContext {
