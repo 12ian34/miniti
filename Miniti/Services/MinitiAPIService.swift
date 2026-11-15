@@ -1730,6 +1730,26 @@ final class MinitiAPIService: @unchecked Sendable {
         return decoded
     }
 
+    /// Managed-mode folder suggestions (3.10.0 FO2.4). Posts to /api/insights with
+    /// mode="folders": titles and existing summaries only. Throws on any failure, and the
+    /// caller then keeps its local proposals.
+    func suggestFolders(
+        deviceId: String,
+        items: [FolderSuggestions.Item],
+        folders: [FolderSuggestions.FolderRef]
+    ) async throws -> [FolderSuggestions.Suggestion] {
+        guard !items.isEmpty else { return [] }
+        let startedAt = CFAbsoluteTimeGetCurrent()
+        let request = makeRequest(path: "/insights", method: "POST", deviceId: deviceId,
+                                  body: FolderSuggestions.requestBody(items: items, folders: folders))
+        DebugLogger.shared.log(.app, "API folder suggestions request: meetings=\(items.count), folders=\(folders.count)")
+        let (data, response) = try await send(request)
+        try validateResponse(response, data: data)
+        let suggestions = FolderSuggestions.parseManaged(try? JSONSerialization.jsonObject(with: data), items: items, folders: folders)
+        DebugLogger.shared.log(.app, "API folder suggestions response: duration=\(String(format: "%.2fs", CFAbsoluteTimeGetCurrent() - startedAt)), placed=\(suggestions.count)")
+        return suggestions
+    }
+
     /// Managed-mode template drafting. Posts to /api/insights with mode="template_draft" and
     /// decodes `{ "template": { name, summary, sections } }`.
     func draftInsightTemplate(

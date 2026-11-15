@@ -1840,6 +1840,11 @@ struct PrivacySettingsView: View {
             }
             .id("privacy.thirdPartyAI")
 
+            Section("Folders") {
+                FolderSuggestionToggle()
+            }
+            .id("privacy.folderSuggestions")
+
             Section("Privacy") {
                 PrivateModeToggle()
             }

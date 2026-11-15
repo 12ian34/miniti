@@ -731,6 +731,11 @@ final class AppState: ObservableObject {
     let meetingFolders = MeetingFolderStore(url: AppState.isRunningUnderXCTest ? nil : URL.applicationSupportDirectory.appendingPathComponent("Miniti/Folders/catalog-v1.json"))
     @AppStorage("automaticFolderFiling") var automaticFolderFiling = true
     @AppStorage("automaticFolderCreation") var automaticFolderCreation = true
+    /// "Use AI to suggest folders" (3.10.0 FO2.4), on by default. Private mode, a missing AI
+    /// permission and a missing provider each block it without changing this choice.
+    @AppStorage("folderAISuggestions") var folderAISuggestions = true
+    /// Meetings already sent for an automatic folder suggestion since launch: one request each.
+    var folderSuggestionAsked: Set<UUID> = []
     private var folderObservation: AnyCancellable?
     @Published var folderUndo: [FolderMove] = []
     @Published var folderFilterID: UUID?

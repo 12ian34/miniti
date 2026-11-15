@@ -91,6 +91,12 @@ struct MeetingFolderManager: View {
     @State private var newFolders: [MeetingFolder] = []
     @State private var namingFolderFor: Meeting?
     @State private var newFolderName = ""
+    /// AI suggestions for meetings the rules left unfiled (3.10.0 FO2.4). They join the
+    /// proposals and still need Apply. Each meeting is asked about once per Preview.
+    @State private var suggested: [AppState.FolderProposal] = []
+    @State private var suggestionAsked: Set<UUID> = []
+    @State private var suggesting = false
+    @State private var suggestionRound = 0
     private static let unfiledPageSize = 200
 
     private struct PreviewGroup: Identifiable {
@@ -201,6 +207,7 @@ struct MeetingFolderManager: View {
                     Toggle("Create broad folders automatically", isOn: $appState.automaticFolderCreation)
                     Text("Suggests groups such as Team, Customers and Hiring. Your folders also guide matching. Uncertain matches stay Unfiled.")
                         .font(.footnote).foregroundStyle(ColorPalette.Text.secondary)
+                    FolderSuggestionToggle()
                 }
             }
             syncIssue
@@ -266,9 +273,22 @@ struct MeetingFolderManager: View {
                 Text(previewSummary).font(.headline).accessibilityIdentifier("folders.preview.summary")
                 Text("Up to 1,000 recent finished meetings. Nothing moves until you apply.")
                     .font(.footnote).foregroundStyle(ColorPalette.Text.secondary)
+                if suggesting {
+                    HStack(spacing: MinitiDesignSystem.Spacing.standard) {
+                        ProgressView().controlSize(.small)
+                        Text("Asking AI about meetings the rules could not place.")
+                            .font(.footnote).foregroundStyle(ColorPalette.Text.secondary)
+                    }
+                    .accessibilityElement(children: .combine)
+                    .accessibilityIdentifier("folders.suggesting")
+                }
                 DisclosureGroup("Preview options") {
                     Toggle("Include manually filed meetings", isOn: $regroupManual)
                         .onChange(of: regroupManual) { _, _ in refreshPreview() }
+                    FolderSuggestionToggle { on in
+                        if !on { suggested = []; suggestionRound += 1; suggesting = false }
+                        refreshPreview()
+                    }
                 }
             }
             if let applyIssue {
@@ -286,7 +306,7 @@ struct MeetingFolderManager: View {
             ForEach(previewGroups) { group in
                 Section {
                     DisclosureGroup {
-                        ForEach(group.meetings) { proposal in Text(proposal.title).font(.callout) }
+                        ForEach(group.meetings) { proposal in proposalRow(proposal) }
                     } label: {
                         VStack(alignment: .leading, spacing: MinitiDesignSystem.Spacing.compact) {
                             Text(group.folder.name).font(.headline)
@@ -334,6 +354,16 @@ struct MeetingFolderManager: View {
         } message: {
             Text("The folder is created when you apply.")
         }
+    }
+
+    private func proposalRow(_ proposal: AppState.FolderProposal) -> some View {
+        VStack(alignment: .leading, spacing: MinitiDesignSystem.Spacing.compact) {
+            Text(proposal.title).font(.callout)
+            if proposal.suggested {
+                Text("Suggested by AI").font(.footnote).foregroundStyle(ColorPalette.Text.secondary)
+            }
+        }
+        .accessibilityElement(children: .combine)
     }
 
     private func unfiledRow(_ meeting: Meeting) -> some View {
@@ -386,6 +416,29 @@ struct MeetingFolderManager: View {
 
     private func clearPreview() {
         proposals = []; unfiled = []; choices = [:]; newFolders = []; applyIssue = nil; unfiledShown = Self.unfiledPageSize
+        suggested = []; suggestionAsked = []; suggesting = false; suggestionRound += 1
+    }
+
+    /// Ask once about each meeting the rules left unfiled. Opening Preview moves nothing:
+    /// the answers join the proposals and wait for Apply. A failed or refused request adds
+    /// nothing and leaves the rules' proposals as they are.
+    private func askForSuggestions() {
+        guard appState.folderSuggestionBlock == nil else { return }
+        let targets = unfiled.filter { !suggestionAsked.contains($0.id) && choices[$0.id] == nil }
+        guard !appState.folderSuggestionItems(for: targets).isEmpty else { return }
+        suggestionAsked.formUnion(targets.map(\.id))
+        suggestionRound += 1
+        let round = suggestionRound
+        suggesting = true
+        Task {
+            let found = await appState.suggestedFolderProposals(for: targets, creatingFolders: true)
+            // A cleared or refreshed Preview has moved on; its answers are not for this screen.
+            guard round == suggestionRound else { return }
+            suggesting = false
+            guard !found.isEmpty else { return }
+            suggested += found
+            refreshPreview()
+        }
     }
 
     private func applyPreview() {
@@ -510,11 +563,21 @@ struct MeetingFolderManager: View {
             proposals = appState.folderProposals(meetings: source, regroupManual: regroupManual, preview: true)
                 .filter { choices[$0.id] == nil }
             unfiled = appState.meetingsLeftUnfiled(in: source, after: proposals)
+            // AI suggestions apply only where the rules still have nothing and the user has
+            // not picked a folder; a meeting that changed since is dropped by Apply itself.
+            let open = Set(unfiled.map(\.id))
+            suggested = suggested.filter { open.contains($0.id) && choices[$0.id] == nil && appState.folderSuggestionBlock == nil }
+            if !suggested.isEmpty {
+                proposals += suggested
+                let placed = Set(suggested.map(\.id))
+                unfiled.removeAll { placed.contains($0.id) }
+            }
             // Keep choices for meetings that are still listed, and only the new folders they use.
             let listed = Set(unfiled.map(\.id))
             choices = choices.filter { listed.contains($0.key) }
             newFolders = newFolders.filter { folder in choices.values.contains { $0.folder.id == folder.id } }
             previewIssue = nil; applyIssue = nil
+            askForSuggestions()
         } catch {
             clearPreview()
             previewIssue = "Could not load meeting history. Try again."
@@ -531,5 +594,32 @@ struct MeetingFolderManager: View {
             // End on the list so the saved name is visible, without leaving an empty form open.
             path = [.manage]
         }
+    }
+}
+
+/// "Use AI to suggest folders" (3.10.0 FO2.4), shared by the organise screen and Settings.
+/// While private mode is on it shows as off with the reason, nothing is sent, and the
+/// person's own choice comes back when private mode ends.
+struct FolderSuggestionToggle: View {
+    @EnvironmentObject private var appState: AppState
+    var onChange: (Bool) -> Void = { _ in }
+
+    var body: some View {
+        let blockedByPrivateMode = appState.privateModeEnabled
+        Toggle("Use AI to suggest folders", isOn: Binding(
+            get: { appState.folderAISuggestions && !blockedByPrivateMode },
+            set: { appState.folderAISuggestions = $0; onChange($0) }
+        ))
+        .disabled(blockedByPrivateMode)
+        .accessibilityIdentifier("folders.aiSuggestions")
+        Text(FolderSuggestionToggle.caption(privateMode: blockedByPrivateMode))
+            .font(.footnote).foregroundStyle(ColorPalette.Text.secondary)
+            .accessibilityIdentifier("folders.aiSuggestions.caption")
+    }
+
+    static func caption(privateMode: Bool) -> String {
+        privateMode
+            ? "Off while private mode is on. Nothing is sent."
+            : "For meetings the rules cannot place, miniti sends the title and summary to suggest a folder. Never the transcript, and never a meeting kept off the cloud."
     }
 }

@@ -2131,6 +2131,29 @@ final class InsightsService: Sendable {
         )
     }
 
+    /// BYOK folder suggestions (3.10.0 FO2.4): the managed backend's two prompts, sent with
+    /// the person's own key, and the same answer filter. One request, no retry here.
+    func suggestFolders(
+        items: [FolderSuggestions.Item],
+        folders: [FolderSuggestions.FolderRef],
+        model: OpenAIModel = .gpt6Luna,
+        apiKey: String
+    ) async throws -> [FolderSuggestions.Suggestion] {
+        guard !items.isEmpty else { return [] }
+        let requestBody = OpenAIRequest(
+            model: model.rawValue,
+            reasoningEffort: model.reasoningEffort,
+            messages: [
+                Message(role: "system", content: FolderSuggestions.systemPrompt),
+                Message(role: "user", content: FolderSuggestions.prompt(items: items, folders: folders))
+            ],
+            maxCompletionTokens: 2_500,
+            responseFormat: ResponseFormat(type: "json_object")
+        )
+        let jsonData = try await postOpenAIJSON(requestBody, apiKey: apiKey, label: "folder suggestions")
+        return FolderSuggestions.parsePlacements(try? JSONSerialization.jsonObject(with: jsonData), items: items, folders: folders)
+    }
+
     /// Draft a custom insight template (name, summary, sections) from a one-line description.
     /// The prompt is the managed backend's (`miniti-api/lib/insights.ts`, `generateTemplateDraft`)
     /// copied verbatim; change both together.

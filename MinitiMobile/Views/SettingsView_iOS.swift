@@ -986,6 +986,10 @@ private struct SettingsDetailView_iOS: View {
                     ThirdPartyAIConsentRow()
                 }
                 .id("privacy.thirdPartyAI")
+                Section("Folders") {
+                    FolderSuggestionToggle()
+                }
+                .id("privacy.folderSuggestions")
                 Section("Privacy") {
                     Text("Private mode is available in the Mac app. On this device, you can choose Local in a meeting to keep it off miniti cloud.")
                     Text("Voices (Settings, Transcription) keeps voice fingerprints on this device only: 192 numbers per person, never synced, exported or sent anywhere. Forget any of them there; turning Remember voices off deletes them all.")
