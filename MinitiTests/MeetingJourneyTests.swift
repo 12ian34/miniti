@@ -1158,17 +1158,40 @@ extension MeetingJourneyTests {
     func testACancellationThatLandsAfterTheWaitRanOutStillLeavesTheSocketOpen() async throws {
         let service = DeepgramService()
         service.finalDrainDuration = .milliseconds(60)
-        var started = false
-        service.finalDrainOperation = { started = true }
         let generation = service.diagnosticConnectionGeneration
-        let drain = Task { await service.gracefulDisconnect(leaveOpenIfCancelled: true) }
-        try await TestSupport.waitUntil { started && service.isDraining }
-        // Hold the main actor past the bound, then cancel before the drain can run again.
-        Thread.sleep(forTimeInterval: 0.3)
-        XCTAssertTrue(service.isDraining, "the drain has not resumed")
-        drain.cancel()
-        await drain.value
+        var drain: Task<Void, Never>?
+        var cancelled = false
+        // The finish request itself holds the main actor past the bound and then cancels the
+        // drain, so the drain cannot run between its wait ending and the cancellation. No polling.
+        service.finalDrainOperation = {
+            Thread.sleep(forTimeInterval: 0.3)
+            drain?.cancel()
+            cancelled = true
+        }
+        let task = Task { await service.gracefulDisconnect(leaveOpenIfCancelled: true) }
+        drain = task
+        await task.value
+        XCTAssertTrue(cancelled)
         XCTAssertEqual(service.diagnosticConnectionGeneration, generation, "cancellation wins over the expired wait")
+        XCTAssertFalse(service.isDraining)
+    }
+
+    func testConnectivityRevisionChangesOnlyWhenTheSocketGoesUpOrDown() {
+        let service = DeepgramService()
+        let start = service.connectivityRevision
+        // A connection attempt that never opens, as in a failed reconnect: no change.
+        service.connectionState = .connecting
+        service.connectionState = .error
+        service.connectionState = .connecting
+        service.connectionState = .disconnected
+        XCTAssertEqual(service.connectivityRevision, start)
+        // The socket opens and then closes by itself: two changes, with the same connection generation.
+        let generation = service.diagnosticConnectionGeneration
+        service.connectionState = .connected
+        XCTAssertEqual(service.connectivityRevision, start + 1)
+        service.connectionState = .disconnected
+        XCTAssertEqual(service.connectivityRevision, start + 2)
+        XCTAssertEqual(service.diagnosticConnectionGeneration, generation)
     }
 
     /// The service leaves a cancelled drain's socket open and its caller decides what happens next.

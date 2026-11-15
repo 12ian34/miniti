@@ -3977,8 +3977,9 @@ final class AppState: ObservableObject {
         /// One health tick. Adds to the recording's totals and notes when speech was first reported
         /// after the last words. The totals are lower bounds: only intervals the app observed with
         /// capture flowing at both ends, and with the same connection state at both ends, are
-        /// counted, each at most once and in one total. `connection` is the service's connection
-        /// generation, which changes on every connect and disconnect.
+        /// counted, each at most once and in one total. `connection` is the service's
+        /// `connectivityRevision`, which changes whenever the socket goes up or down and not for a
+        /// connection attempt that never opened.
         mutating func sample(at now: CFAbsoluteTime, speech: Int, socketSilence: TimeInterval, isConnected: Bool,
                              captureFlowing: Bool, connection: UInt64 = 0) {
             let events = speechEvents(speech)
@@ -3986,8 +3987,8 @@ final class AppState: ObservableObject {
             if events > 0, !hadSpeech { firstSpeechAfterWordsAt = now }
             let sinceLast = lastSampleAt.map { now - $0 }
             let hadCapture = lastSampleHadCapture
-            // The socket was in one state for the whole interval only if both ends agree and no
-            // connect or disconnect happened between them. Otherwise when it changed is unknown.
+            // The socket was in one state for the whole interval only if both ends agree and it did
+            // not go up or down between them. Otherwise when it changed is unknown.
             let steady = isConnected == lastSampleWasConnected && connection == lastSampleConnection
             lastSampleAt = now
             lastSampleHadCapture = captureFlowing
@@ -4239,7 +4240,7 @@ final class AppState: ObservableObject {
             let socketSilence = transcriptGapEvidence.socketSilence(at: now, lastMessageAt: deepgramService.lastSocketMessageAt,
                 isConnected: isConnected, captureFlowing: captureFlowing)
             transcriptGapEvidence.sample(at: now, speech: speech, socketSilence: socketSilence, isConnected: isConnected,
-                captureFlowing: captureFlowing, connection: deepgramService.diagnosticConnectionGeneration)
+                captureFlowing: captureFlowing, connection: deepgramService.connectivityRevision)
             let health = Self.evaluateSocketTranscriptHealth(
                 socketSilence: socketSilence,
                 captureFlowing: captureFlowing,

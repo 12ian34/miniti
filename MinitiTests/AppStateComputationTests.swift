@@ -4050,13 +4050,30 @@ final class SocketTranscriptHealthTests: XCTestCase {
             tick(&evidence, base + 8, lastMessageAt: base + 7, connection: connection)
         }
         XCTAssertEqual(evidence.deadSocketSeconds, 0)
-        // Two disconnected ticks with a connection attempt between them: also unknown, not counted.
+        // Down at both ticks, but the socket opened, delivered words and closed between them (the
+        // revision moved by two): not counted either.
         tick(&evidence, 500, lastMessageAt: 499, connected: false, connection: 90)
-        tick(&evidence, 504, lastMessageAt: 499, connected: false, connection: 92)
+        tick(&evidence, 504, lastMessageAt: 503, connected: false, connection: 92)
         XCTAssertEqual(evidence.deadSocketSeconds, 0)
-        // Disconnected and untouched from one tick to the next: counted.
-        tick(&evidence, 508, lastMessageAt: 499, connected: false, connection: 92)
+        // Down and unchanged from one tick to the next: counted.
+        tick(&evidence, 508, lastMessageAt: 503, connected: false, connection: 92)
         XCTAssertEqual(evidence.deadSocketSeconds, 4)
+    }
+
+    func testAnOutageIsCountedThroughReconnectAttemptsThatNeverOpen() {
+        // The socket is down for 48 seconds while reconnects are tried and fail. Failed attempts do
+        // not change the connectivity revision, so the whole outage counts, three times over.
+        var evidence = AppState.TranscriptGapEvidence()
+        evidence.begin(at: 0, speech: 0, empty: 0, audio: 0)
+        var revision: UInt64 = 0
+        var now = 4.0
+        for _ in 0..<3 {
+            for _ in 0..<3 { tick(&evidence, now, lastMessageAt: now - 1, connection: revision); now += 4 }
+            revision += 1 // Down, some time in the next interval.
+            for _ in 0...12 { tick(&evidence, now, lastMessageAt: now - 1, connected: false, connection: revision); now += 4 }
+            revision += 1 // Up again.
+        }
+        XCTAssertEqual(evidence.deadSocketSeconds, 144, "12 intervals of 4 seconds per outage; the one it dropped in is not counted")
     }
 
     func testAStallOnASocketThatAnswersOnlyEveryNineSecondsIsStillCountedInFull() {

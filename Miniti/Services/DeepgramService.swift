@@ -683,7 +683,13 @@ final class DeepgramService: NSObject, ObservableObject, URLSessionWebSocketDele
     /// level, so a fan or keyboard does not count as someone talking.
     @Published private(set) var lastSpeechStartedAt: CFAbsoluteTime = 0
     @Published var speakerSegments: [SpeakerSegment] = []  // Multiple segments per response
-    @Published var connectionState: ConnectionState = .disconnected
+    @Published var connectionState: ConnectionState = .disconnected {
+        didSet { if (oldValue == .connected) != (connectionState == .connected) { connectivityRevision &+= 1 } }
+    }
+    /// Counts every change between connected and not connected. Unlike the connection generation,
+    /// it changes when a socket opens or closes by itself and does not change for a connection
+    /// attempt that never opened, so two equal readings mean the socket was up, or down, throughout.
+    private(set) var connectivityRevision: UInt64 = 0
     @Published var error: Error?
     
     // Track speakers across the session
