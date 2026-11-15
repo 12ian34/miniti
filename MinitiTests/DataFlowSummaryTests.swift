@@ -109,6 +109,20 @@ final class DataFlowSummaryTests: XCTestCase {
         XCTAssertEqual(s.headline, DataFlowSummary.idleHeadline)
     }
 
+    func testOpenAIRowSaysWhatFolderSuggestionsSendAndWhen() {
+        var inputs = macDefaults
+        let onRequest = row(DataFlowSummary.build(inputs), "openai").details ?? ""
+        XCTAssertTrue(onRequest.contains("Suggest folders with AI sends the title and summary of unfiled meetings, only when you press it. Never transcripts."), onRequest)
+        inputs.folderAISuggestions = true
+        let automatic = row(DataFlowSummary.build(inputs), "openai").details ?? ""
+        XCTAssertTrue(automatic.contains("Folder suggestions send the title and summary of each finished meeting the rules cannot place"), automatic)
+        XCTAssertTrue(automatic.contains("Never transcripts."), automatic)
+        for text in [onRequest, automatic] {
+            XCTAssertFalse(text.contains("&"))
+            XCTAssertFalse(text.contains("\u{2014}"))
+        }
+    }
+
     func testBYOKNamesTheKeyAndKeepsOnlyTheVersionCheck() {
         var i = macDefaults
         i.appMode = .byok

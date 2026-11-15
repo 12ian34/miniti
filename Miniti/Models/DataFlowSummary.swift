@@ -30,6 +30,8 @@ struct DataFlowSummary: Equatable {
         /// Pro and BYOK look topics up as the meeting goes; managed free looks up on request.
         var playbookLookupIsAutomatic = true
         var autoInferSpeakerNames = true
+        /// "Use AI to file new meetings": folder suggestions for each finished meeting the rules cannot place.
+        var folderAISuggestions = false
         var jevClassifier = false
         /// `CloudSyncPause.label`, or nil while meetings are syncing.
         var cloudPause: String? = "Off"
@@ -233,6 +235,9 @@ struct DataFlowSummary: Equatable {
                 ? "Text goes to OpenAI through miniti's servers, which hold it only for the request."
                 : "Text goes straight to OpenAI with your own key.")
                 + " Catch-up and investigations run when you ask. Saved and watch meetings are processed when they finish, recording or not."
+                + (i.folderAISuggestions
+                    ? " Folder suggestions send the title and summary of each finished meeting the rules cannot place, and of unfiled meetings when you press Suggest folders with AI. Never transcripts."
+                    : " Suggest folders with AI sends the title and summary of unfiled meetings, only when you press it. Never transcripts.")
             rows.append(Row(id: "openai", group: .transcriptionAndAI, title: openAITitle, status: .usedForRecordings, summary: summary, details: details, configure: Jump(label: "AI", target: "ai.speakerNames"), alwaysVisible: true))
         }
 
@@ -377,6 +382,7 @@ extension AppState {
         inputs.docsServerHost = validatedDocsMCPURL.flatMap { URL(string: $0)?.host }
         inputs.playbookLookupIsAutomatic = appMode == .byok || isPro
         inputs.autoInferSpeakerNames = autoInferSpeakerNames
+        inputs.folderAISuggestions = folderAISuggestions
         inputs.jevClassifier = jevClassifierEnabled
         inputs.cloudPause = cloudPauseReason?.label
         inputs.googleCalendarConnected = googleCalendarEnabled && isGoogleCalendarConnected
