@@ -1380,12 +1380,26 @@ final class FolderSuggestionTests: XCTestCase {
         state.privateModeEnabled = false
         try await TestSupport.waitUntil(timeout: 5) { availability.block == nil }
 
+        // Own keys: the OpenAI key as the Mac Settings field hands it over, removed and put back.
+        if state.insightsService == nil { state.insightsService = InsightsService(session: session) }
+        let savedKey = state.openaiApiKey
+        state.openaiApiKey = "sk-test-key"
+        state.appModeRaw = AppMode.byok.rawValue
+        try await TestSupport.waitUntil(timeout: 5) { availability.block == nil }
+        state.openaiApiKey = ""
+        try await TestSupport.waitUntil(timeout: 5) { availability.block == .unavailable }
+        state.openaiApiKey = "sk-test-key"
+        try await TestSupport.waitUntil(timeout: 5) { availability.block == nil }
+        state.appModeRaw = AppMode.managed.rawValue
+        state.openaiApiKey = savedKey
+        try await TestSupport.waitUntil(timeout: 5) { availability.block == nil }
+
         // Signing out publishes through AppState, and is followed too.
         state.clientAuthManager = TestSupport.unenrolledAuthManager(session: session)
         state.refreshClientAuthStatus()
         try await TestSupport.waitUntil(timeout: 5) { availability.block == .unavailable }
 
-        XCTAssertEqual(published, [.permission, nil, .privateMode, nil, .unavailable], "one publish per change, none in between")
+        XCTAssertEqual(published, [.permission, nil, .privateMode, nil, .unavailable, nil, .unavailable], "one publish per change, none in between")
     }
 
     func testAShownSuggestionIsNotUsedOncePrivateModeOrPermissionChanges() async throws {

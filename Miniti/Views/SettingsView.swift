@@ -878,6 +878,7 @@ struct AISettingsView: View {
 }
 
 struct APISettingsView: View {
+    @EnvironmentObject private var appState: AppState
     @AppStorage("deepgramApiKey") private var deepgramApiKey: String = ""
     @AppStorage("openaiApiKey") private var openaiApiKey: String = ""
     
@@ -1090,6 +1091,12 @@ struct APISettingsView: View {
                             }
                         }
                         .disabled(openaiApiKey.isEmpty || isTestingOpenAI)
+                    }
+                    // This field has its own stored binding. `AppState` holds the key it
+                    // last wrote and would not see a change made past it, so a key removed
+                    // here could still be used. Hand every edit to `AppState` as well.
+                    .onChange(of: openaiApiKey) { _, key in
+                        if appState.openaiApiKey != key { appState.openaiApiKey = key }
                     }
                     
                     if openaiStatus == .success {

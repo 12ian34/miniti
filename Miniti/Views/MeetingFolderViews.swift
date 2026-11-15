@@ -101,6 +101,7 @@ struct MeetingFolderManager: View {
     @State private var suggestionEligible: Set<UUID> = []
     /// The pending Preview refresh after meetings were saved; one at a time.
     @State private var savedChangeRefresh: Task<Void, Never>?
+    @State private var lastSavedChangeRefresh = Date.distantPast
     /// Why a suggestion request may not be sent now, kept current for this screen.
     @StateObject private var availability = FolderSuggestionAvailability()
     /// Shown when the last request failed; the button stays so it can be tried again.
@@ -484,16 +485,21 @@ struct MeetingFolderManager: View {
         suggestionEligible = Set(appState.folderSuggestionItems(for: unfiled).map(\.meeting.id))
     }
 
-    /// Choices, the retry line and what was already asked survive a refresh. Not while
-    /// recording: transcript saves are constant then, and pressing the button brings
-    /// Preview up to date anyway.
+    /// Choices, the retry line, a refused Apply's explanation and what was already asked
+    /// survive this refresh. It runs a second after a save, and no more often than every
+    /// five seconds, so a burst of synced meetings costs one refresh, also when Preview is
+    /// empty (a meeting unfiled on another device then appears). Not while recording:
+    /// transcript saves are constant then, and pressing the button brings Preview up to
+    /// date anyway.
     private func scheduleRefreshAfterSave() {
-        guard savedChangeRefresh == nil, !appState.isRecording, !(unfiled.isEmpty && proposals.isEmpty) else { return }
+        guard savedChangeRefresh == nil, !appState.isRecording else { return }
+        let wait = max(1, 5 - Date().timeIntervalSince(lastSavedChangeRefresh))
         savedChangeRefresh = Task {
-            try? await Task.sleep(nanoseconds: 1_000_000_000)
+            try? await Task.sleep(nanoseconds: UInt64(wait * 1_000_000_000))
             savedChangeRefresh = nil
             guard !Task.isCancelled, !appState.isRecording else { return }
-            refreshPreview()
+            lastSavedChangeRefresh = Date()
+            refreshPreview(afterSave: true)
         }
     }
 
@@ -644,7 +650,9 @@ struct MeetingFolderManager: View {
             .padding(MinitiDesignSystem.Spacing.standard)
             .frame(maxWidth: .infinity).background(ColorPalette.Background.primary)
     }
-    private func refreshPreview() {
+    /// `afterSave` marks the refresh that follows a saved change with nobody asking: it
+    /// keeps the explanation of a refused Apply, which only the person's next action clears.
+    private func refreshPreview(afterSave: Bool = false) {
         do {
             let source: [Meeting]
             if let meetings { source = meetings }
@@ -678,7 +686,8 @@ struct MeetingFolderManager: View {
             let listed = Set(unfiled.map(\.id))
             choices = choices.filter { listed.contains($0.key) }
             newFolders = newFolders.filter { folder in choices.values.contains { $0.folder.id == folder.id } }
-            previewIssue = nil; applyIssue = nil
+            previewIssue = nil
+            if !afterSave { applyIssue = nil }
         } catch {
             clearPreview()
             previewIssue = "Could not load meeting history. Try again."
