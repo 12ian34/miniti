@@ -3917,6 +3917,8 @@ final class AppState: ObservableObject {
         /// Since when capture has been continuously seen flowing; nil while it is not.
         private var captureFlowingSince: CFAbsoluteTime?
         private var lastSampleHadCapture = false
+        private var lastSampleWasConnected = false
+        private var lastSampleConnection: UInt64 = 0
         private var lastSilenceTickAt: CFAbsoluteTime?
         // Each total is made of observed intervals between two consecutive ticks, both with capture
         // flowing and no more than `longestObservedTick` apart. An interval waits in one of these
@@ -3924,6 +3926,9 @@ final class AppState: ObservableObject {
         // to that total only, so no second is counted twice or in both totals.
         private var pendingSilentSeconds: Double = 0
         private var pendingSpeechSeconds: Double = 0
+        /// The part of `pendingSilentSeconds` that came after speech was reported. If the socket
+        /// answers before it is proved dead, that part was speech without words, not a dead socket.
+        private var pendingSilentSpeechSeconds: Double = 0
         /// Ticks come every 4 seconds. A longer pause than this means the app was not watching.
         static let longestObservedTick: TimeInterval = 15
 
@@ -3942,6 +3947,7 @@ final class AppState: ObservableObject {
             forcedReconnects = 0
             pendingSpeechSeconds = 0
             pendingSilentSeconds = 0
+            pendingSilentSpeechSeconds = 0
             speechBase = speech; emptyBase = empty; audioBase = audio
         }
 
@@ -3970,30 +3976,52 @@ final class AppState: ObservableObject {
 
         /// One health tick. Adds to the recording's totals and notes when speech was first reported
         /// after the last words. The totals are lower bounds: only intervals the app observed with
-        /// capture flowing at both ends are counted, each at most once and in one total.
-        mutating func sample(at now: CFAbsoluteTime, speech: Int, socketSilence: TimeInterval, isConnected: Bool, captureFlowing: Bool) {
+        /// capture flowing at both ends, and with the same connection state at both ends, are
+        /// counted, each at most once and in one total. `connection` is the service's connection
+        /// generation, which changes on every connect and disconnect.
+        mutating func sample(at now: CFAbsoluteTime, speech: Int, socketSilence: TimeInterval, isConnected: Bool,
+                             captureFlowing: Bool, connection: UInt64 = 0) {
             let events = speechEvents(speech)
             let hadSpeech = firstSpeechAfterWordsAt != nil
             if events > 0, !hadSpeech { firstSpeechAfterWordsAt = now }
             let sinceLast = lastSampleAt.map { now - $0 }
             let hadCapture = lastSampleHadCapture
+            // The socket was in one state for the whole interval only if both ends agree and no
+            // connect or disconnect happened between them. Otherwise when it changed is unknown.
+            let steady = isConnected == lastSampleWasConnected && connection == lastSampleConnection
             lastSampleAt = now
             lastSampleHadCapture = captureFlowing
-            if let interval = sinceLast, interval >= 0, interval <= Self.longestObservedTick, captureFlowing, hadCapture {
-                // No message in the whole interval (or no socket): it may turn out to be a dead socket.
+            lastSampleWasConnected = isConnected
+            lastSampleConnection = connection
+            // The socket answered, or the interval cannot be judged: what was waiting as possible
+            // dead socket time was not that. The part after speech was reported is still time
+            // without words.
+            func releaseSilent() {
+                pendingSpeechSeconds += pendingSilentSpeechSeconds
+                pendingSilentSeconds = 0
+                pendingSilentSpeechSeconds = 0
+            }
+            if let interval = sinceLast, interval >= 0, interval <= Self.longestObservedTick, captureFlowing, hadCapture, steady {
                 if !isConnected || socketSilence >= interval {
+                    // No socket, or no message in the whole interval: it may turn out to be dead.
                     pendingSilentSeconds += interval
+                    if hadSpeech { pendingSilentSpeechSeconds += interval }
                 } else {
-                    pendingSilentSeconds = 0 // The socket answered: not dead, and that silence is not counted.
+                    releaseSilent()
                     if hadSpeech { pendingSpeechSeconds += interval }
                 }
             } else {
-                pendingSilentSeconds = 0
+                releaseSilent()
             }
             let dead = captureFlowing && (!isConnected || socketSilence >= AppState.deadSocketSilence)
             let speechGap = captureFlowing && !dead && events >= AppState.speechEventsForStall
                 && sinceFirstSpeech(at: now) >= AppState.speechWithoutWordsGap
-            if dead { deadSocketSeconds += pendingSilentSeconds; pendingSilentSeconds = 0 }
+            if dead {
+                // Proved dead: that time is dead socket time and no longer a candidate for the other total.
+                deadSocketSeconds += pendingSilentSeconds
+                pendingSilentSeconds = 0
+                pendingSilentSpeechSeconds = 0
+            }
             if speechGap { speechWithoutWordsSeconds += pendingSpeechSeconds; pendingSpeechSeconds = 0 }
         }
 
@@ -4210,7 +4238,8 @@ final class AppState: ObservableObject {
             // was last seen to start flowing, so a pause in capture is never counted against the socket.
             let socketSilence = transcriptGapEvidence.socketSilence(at: now, lastMessageAt: deepgramService.lastSocketMessageAt,
                 isConnected: isConnected, captureFlowing: captureFlowing)
-            transcriptGapEvidence.sample(at: now, speech: speech, socketSilence: socketSilence, isConnected: isConnected, captureFlowing: captureFlowing)
+            transcriptGapEvidence.sample(at: now, speech: speech, socketSilence: socketSilence, isConnected: isConnected,
+                captureFlowing: captureFlowing, connection: deepgramService.diagnosticConnectionGeneration)
             let health = Self.evaluateSocketTranscriptHealth(
                 socketSilence: socketSilence,
                 captureFlowing: captureFlowing,

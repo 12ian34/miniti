@@ -1112,6 +1112,9 @@ final class DeepgramService: NSObject, ObservableObject, URLSessionWebSocketDele
             do { try await Task.sleep(for: .milliseconds(25)) } catch { if leaveOpenIfCancelled { return }; break }
         }
         guard generation == connectionGeneration else { return }
+        // The bound can pass while the main actor is busy, and the caller can be cancelled (Stop
+        // taking the socket over) before this resumes. Cancellation wins over the expired bound.
+        if leaveOpenIfCancelled, Task.isCancelled { return }
         disconnect()
     }
 

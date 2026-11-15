@@ -1152,8 +1152,27 @@ extension MeetingJourneyTests {
         try await TestSupport.waitUntil(timeout: 5) { !state.isFinalizingMeeting }
     }
 
-    /// A reconnect cancelled by nobody who takes the socket over closes it itself.
-    func testACancelledDrainWithNoSuccessorIsClosedByItsCaller() async throws {
+    /// Stop can take the socket over at the very moment the reconnect's wait runs out: the wait
+    /// expires while the main actor is busy, and the cancellation lands before the drain resumes.
+    /// The expired wait must not close the socket Stop now owns.
+    func testACancellationThatLandsAfterTheWaitRanOutStillLeavesTheSocketOpen() async throws {
+        let service = DeepgramService()
+        service.finalDrainDuration = .milliseconds(60)
+        var started = false
+        service.finalDrainOperation = { started = true }
+        let generation = service.diagnosticConnectionGeneration
+        let drain = Task { await service.gracefulDisconnect(leaveOpenIfCancelled: true) }
+        try await TestSupport.waitUntil { started && service.isDraining }
+        // Hold the main actor past the bound, then cancel before the drain can run again.
+        Thread.sleep(forTimeInterval: 0.3)
+        XCTAssertTrue(service.isDraining, "the drain has not resumed")
+        drain.cancel()
+        await drain.value
+        XCTAssertEqual(service.diagnosticConnectionGeneration, generation, "cancellation wins over the expired wait")
+    }
+
+    /// The service leaves a cancelled drain's socket open and its caller decides what happens next.
+    func testACancelledDrainLeavesTheSocketForItsCallerToDecide() async throws {
         let service = DeepgramService()
         service.finalDrainDuration = .seconds(30)
         var started = false
