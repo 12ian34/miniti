@@ -863,7 +863,10 @@ final class DeepgramService: NSObject, ObservableObject, URLSessionWebSocketDele
     /// When the live socket last delivered a message of any kind, or was established if it has
     /// delivered none yet. A healthy socket that is being sent audio answers at least every
     /// 1.2 seconds (measured 2026-11-14, `scripts/stall-probe`), with empty results for non-speech.
-    private(set) var lastSocketMessageAt: CFAbsoluteTime = 0
+    var lastSocketMessageAt: CFAbsoluteTime = 0
+    /// A final drain is running: sending and keepalive have stopped and the socket is about to close.
+    var isDraining: Bool { activeDrains > 0 }
+    private var activeDrains = 0
     /// `SpeechStarted` events from Deepgram's own voice detection.
     private(set) var speechStartedEventCount = 0
     /// Results that carried no words.
@@ -1072,7 +1075,8 @@ final class DeepgramService: NSObject, ObservableObject, URLSessionWebSocketDele
     /// `leaveOpenIfCancelled` is for a drain that someone else may need to finish: a reconnect
     /// that is draining when Stop arrives. Stop cancels the reconnect; if that closed the socket
     /// here, Stop's own drain would find nothing and the tail would be lost. Left open, with
-    /// sending already stopped, Stop's drain takes it over.
+    /// sending already stopped, Stop's drain takes it over. The caller owns what happens next:
+    /// when nobody takes the socket over it must call `disconnect()` itself.
     func gracefulDisconnect(leaveOpenIfCancelled: Bool = false) async {
         _sendConnected = false
         stopKeepAlive()
@@ -1083,6 +1087,8 @@ final class DeepgramService: NSObject, ObservableObject, URLSessionWebSocketDele
         let localFinish = localFinishOperation
         let isLocal = session != nil || localFinish != nil
         guard isLocal || socket != nil || operation != nil else { return }
+        activeDrains += 1
+        defer { activeDrains -= 1 }
         let finishDeadline = ContinuousClock.now.advanced(by: localFinishTimeout)
         let hardDeadline = isLocal ? finishDeadline.advanced(by: finalDrainDuration) : ContinuousClock.now.advanced(by: finalDrainDuration)
         var finishedAt: ContinuousClock.Instant?

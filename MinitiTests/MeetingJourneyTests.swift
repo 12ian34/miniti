@@ -1074,46 +1074,156 @@ extension MeetingJourneyTests {
         service.disconnect()
     }
 
-    /// A reconnect drains the old socket before dropping it (3.10.0 TG1.4). If Stop arrives during
-    /// that drain it cancels the reconnect. The cancelled drain must leave the socket for Stop's
-    /// own drain to finish, or the last lines are lost.
-    func testAReconnectDrainCancelledByStopLeavesTheTailForStopsOwnDrain() async throws {
+    /// A recording whose socket is alive, with a reconnect that has asked it to finish and is
+    /// waiting for the lines (3.10.0 TG1.4). `release` lets that first request return.
+    private func stateWithAReconnectWaitingForTheSocketToFinish(
+        onFinish: @escaping @MainActor (_ request: Int, _ service: DeepgramService) async -> Void
+    ) async throws -> (AppState, DeepgramService, Meeting) {
+        let state = makeState()
+        state.appModeRaw = AppMode.byok.rawValue // The reconnect needs no managed session grant.
+        let meeting = Meeting(title: "reconnect then stop")
+        state.currentMeeting = meeting
+        state.isRecording = true
+        state.insightsService = nil
+        state.beginRecordingDiagnostics()
+        let service = try XCTUnwrap(state.deepgramService)
+        service.socketStarter = { _ in } // No provider traffic.
+        service.connectionState = .connected
+        service.finalDrainDuration = .seconds(30) // The reconnect's wait cannot end by itself in this test.
+        var requests = 0
+        service.finalDrainOperation = { requests += 1; await onFinish(requests, service) }
+        state.scheduleDeepgramReconnect(reason: "transcript starvation", finishPendingFirst: true)
+        try await TestSupport.waitUntil(timeout: 10) { service.isDraining }
+        return (state, service, meeting)
+    }
+
+    /// If Stop arrives while a reconnect is waiting for the socket to finish, the reconnect is
+    /// cancelled and must leave that socket for Stop: Stop asks again, on the same connection, and
+    /// the lines that arrive after the cancellation are saved.
+    func testStopDuringAReconnectsFinishStepSavesTheLinesThatArriveAfterwards() async throws {
+        var asked: [(request: Int, connection: UInt64)] = []
+        let (state, service, meeting) = try await stateWithAReconnectWaitingForTheSocketToFinish { request, service in
+            asked.append((request, service.diagnosticConnectionGeneration))
+            guard request == 2 else { return } // Deepgram answers only Stop's request, after the cancellation.
+            try? await Task.sleep(for: .milliseconds(25))
+            service.speakerSegments = [.init(id: UUID(), speaker: 0, text: "the last sentence",
+                startTime: 0, endTime: 1, isFinal: true, confidence: 1, channelIndex: nil, source: .system)]
+        }
+        let connection = service.diagnosticConnectionGeneration
+        service.finalDrainDuration = .milliseconds(150) // Stop's own bounded wait.
+        state.stopRecording()
+        try await TestSupport.waitUntil(timeout: 5) { !state.isFinalizingMeeting }
+        XCTAssertEqual(asked.map(\.request), [1, 2])
+        XCTAssertEqual(asked.map(\.connection), [connection, connection], "Stop drained the same connection, still open")
+        XCTAssertNotEqual(service.diagnosticConnectionGeneration, connection, "and closed it afterwards")
+        XCTAssertFalse(service.isDraining)
+        let saved = try XCTUnwrap(persistedMeetings().first)
+        XCTAssertEqual(saved.id, meeting.id)
+        XCTAssertEqual(saved.segments.map(\.text), ["the last sentence"])
+    }
+
+    /// Discard also stops the recording, but its Stop never drains. The socket must still be closed.
+    func testDiscardDuringAReconnectsFinishStepClosesTheSocket() async throws {
+        let (state, service, _) = try await stateWithAReconnectWaitingForTheSocketToFinish { _, _ in }
+        let connection = service.diagnosticConnectionGeneration
+        state.discardCurrentMeeting()
+        try await TestSupport.waitUntil(timeout: 5) { service.diagnosticConnectionGeneration != connection }
+        try await TestSupport.waitUntil(timeout: 5) { !service.isDraining }
+        XCTAssertNil(state.currentMeeting)
+        XCTAssertTrue(try persistedMeetings().isEmpty)
+    }
+
+    /// Manual repair cancels the reconnect. A socket that was told to finish has stopped sending,
+    /// so repair must replace it, not keep it because it still reads "connected".
+    func testManualRepairDuringAReconnectsFinishStepReplacesTheSocket() async throws {
+        let (state, service, _) = try await stateWithAReconnectWaitingForTheSocketToFinish { _, _ in }
+        let connection = service.diagnosticConnectionGeneration
+        var scheduled: [String] = []
+        state.diagnosticEventObserver = { name, fields in
+            if name == "deepgram_reconnect_scheduled" { scheduled.append(fields["recovery_reason"] ?? "") }
+        }
+        state.replaceSocketAfterManualRepair()
+        XCTAssertNotEqual(service.diagnosticConnectionGeneration, connection, "closed at once")
+        XCTAssertNotEqual(service.connectionState, .connected)
+        XCTAssertEqual(scheduled, ["manual"], "and the repair schedules its own replacement")
+        try await TestSupport.waitUntil(timeout: 5) { !service.isDraining }
+        service.finalDrainDuration = .milliseconds(50)
+        state.stopRecording()
+        try await TestSupport.waitUntil(timeout: 5) { !state.isFinalizingMeeting }
+    }
+
+    /// A reconnect cancelled by nobody who takes the socket over closes it itself.
+    func testACancelledDrainWithNoSuccessorIsClosedByItsCaller() async throws {
         let service = DeepgramService()
-        service.finalDrainDuration = .milliseconds(400)
-        var flushes = 0
-        service.finalDrainOperation = { flushes += 1 }
+        service.finalDrainDuration = .seconds(30)
+        var started = false
+        service.finalDrainOperation = { started = true }
         let generation = service.diagnosticConnectionGeneration
-
-        // The reconnect's drain, cancelled part way.
-        let reconnectDrain = Task { await service.gracefulDisconnect(leaveOpenIfCancelled: true) }
-        try await TestSupport.waitUntil { flushes == 1 }
-        reconnectDrain.cancel()
-        await reconnectDrain.value
-        XCTAssertEqual(service.diagnosticConnectionGeneration, generation, "not disconnected: the connection is still the same one")
-
-        // Stop's drain takes it over, asks for the tail again and runs its full bounded window.
-        let started = ContinuousClock.now
-        await service.gracefulDisconnect()
-        XCTAssertEqual(flushes, 2)
-        XCTAssertGreaterThanOrEqual(started.duration(to: .now), .milliseconds(350), "Stop still waits for the tail")
-        XCTAssertNotEqual(service.diagnosticConnectionGeneration, generation, "and then closes it")
-
+        let drain = Task { await service.gracefulDisconnect(leaveOpenIfCancelled: true) }
+        try await TestSupport.waitUntil { started && service.isDraining }
+        drain.cancel()
+        await drain.value
+        XCTAssertEqual(service.diagnosticConnectionGeneration, generation, "left for its caller to decide")
+        XCTAssertFalse(service.isDraining)
         // An ordinary drain that is cancelled closes at once, as before.
-        let other = DeepgramService()
-        other.finalDrainDuration = .milliseconds(400)
-        var otherStarted = false
-        other.finalDrainOperation = { otherStarted = true }
-        let before = other.diagnosticConnectionGeneration
-        let plain = Task { await other.gracefulDisconnect() }
-        try await TestSupport.waitUntil { otherStarted }
+        let plain = Task { await service.gracefulDisconnect() }
+        try await TestSupport.waitUntil { service.isDraining }
         plain.cancel()
         await plain.value
-        XCTAssertNotEqual(other.diagnosticConnectionGeneration, before)
+        XCTAssertNotEqual(service.diagnosticConnectionGeneration, generation)
     }
-}
 
+    #if os(macOS)
+    /// Through the health check itself: while no audio is captured Deepgram is sent nothing and
+    /// answers nothing. When capture returns, that time is not a dead socket.
+    func testACaptureOutageIsNotCountedAsSocketSilenceByTheHealthCheck() async throws {
+        let state = makeState()
+        state.shareDiagnostics = true
+        state.currentMeeting = Meeting(title: "capture outage")
+        state.isRecording = true
+        state.captureMicrophone = true
+        state.captureSystemAudio = false
+        state.beginRecordingDiagnostics()
+        let capture = AudioCaptureService(microphoneStart: {}, systemAudioStart: {})
+        state.audioCaptureService = capture
+        let service = try XCTUnwrap(state.deepgramService)
+        service.socketStarter = { _ in }
+        service.connectionState = .connected
+        var gaps: [[String: String]] = []
+        state.diagnosticEventObserver = { name, fields in if name == "transcript_starvation_detected" { gaps.append(fields) } }
+        func mic(at time: Double) {
+            let samples: [Int16] = [1, 2]
+            samples.withUnsafeBufferPointer {
+                capture.deliverMicrophonePCM($0.baseAddress!, count: $0.count, multichannel: false, at: time, callback: { _ in })
+            }
+        }
+        let start = CFAbsoluteTimeGetCurrent()
+        // Healthy: audio and answers.
+        for offset in stride(from: 0.0, through: 8, by: 4) {
+            mic(at: start + offset - 0.1); service.lastSocketMessageAt = start + offset - 1
+            state.checkTranscriptHealth(at: start + offset)
+        }
+        // No audio captured for five minutes, so no answers either.
+        for offset in stride(from: 12.0, through: 308, by: 4) { state.checkTranscriptHealth(at: start + offset) }
+        XCTAssertTrue(gaps.isEmpty)
+        // Capture returns. The socket's last message is five minutes old; that is not its fault.
+        mic(at: start + 311.9)
+        state.checkTranscriptHealth(at: start + 312)
+        mic(at: start + 315.9)
+        state.checkTranscriptHealth(at: start + 316)
+        XCTAssertTrue(gaps.isEmpty, "no reconnect just as audio resumes")
+        // Still nothing ten seconds after audio resumed: now it is dead.
+        mic(at: start + 319.9); state.checkTranscriptHealth(at: start + 320)
+        mic(at: start + 323.9); state.checkTranscriptHealth(at: start + 324)
+        XCTAssertEqual(gaps.count, 1)
+        XCTAssertEqual(gaps.first?["gap_reason"], "dead_socket")
+        XCTAssertEqual(gaps.first?["socket_silent_seconds"], "12")
+        XCTAssertEqual(state.transcriptGapEvidence.deadSocketSeconds, 12, "312 to 324 only")
+        state.stopRecording()
+        try await TestSupport.waitUntil(timeout: 5) { !state.isFinalizingMeeting }
+    }
+    #endif
 
-extension MeetingJourneyTests {
     func testConnectionWaitAllowsHandshakeToSettleAndRejectsReplacement() async throws {
         let service = DeepgramService()
         service.connectionTimeoutSeconds = 0.5
