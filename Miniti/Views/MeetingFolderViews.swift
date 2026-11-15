@@ -1,5 +1,6 @@
 import SwiftUI
 import SwiftData
+import Combine
 
 struct MeetingFolderControls: View {
     @EnvironmentObject private var appState: AppState
@@ -98,8 +99,10 @@ struct MeetingFolderManager: View {
     /// Unfiled meetings that may be sent at all, worked out when Preview refreshes so the
     /// button's count costs nothing while the screen redraws.
     @State private var suggestionEligible: Set<UUID> = []
-    /// The pending recount after meetings were saved; one at a time.
-    @State private var eligibilityRefresh: Task<Void, Never>?
+    /// The pending Preview refresh after meetings were saved; one at a time.
+    @State private var savedChangeRefresh: Task<Void, Never>?
+    /// Why a suggestion request may not be sent now, kept current for this screen.
+    @StateObject private var availability = FolderSuggestionAvailability()
     /// Shown when the last request failed; the button stays so it can be tried again.
     @State private var suggestionIssue: String?
     @State private var suggesting = false
@@ -285,11 +288,11 @@ struct MeetingFolderManager: View {
 
     /// Nothing is sent from Preview until this button is pressed, and it says what goes.
     @ViewBuilder private var suggestionRequest: some View {
-        if appState.folderSuggestionBlock == .privateMode {
+        if availability.block == .privateMode {
             Text("AI folder suggestions are off while private mode is on. Nothing is sent.")
                 .font(.footnote).foregroundStyle(ColorPalette.Text.secondary)
                 .accessibilityIdentifier("folders.suggest.caption")
-        } else if !suggesting, appState.folderSuggestionBlock == nil {
+        } else if !suggesting, availability.block == nil {
             let count = suggestionCandidates.count
             if let suggestionIssue, count > 0 {
                 Text(suggestionIssue).font(.footnote).foregroundStyle(ColorPalette.Status.warning)
@@ -383,20 +386,19 @@ struct MeetingFolderManager: View {
             }
         }
         // Back, Close and Apply all leave this screen: stop asking for suggestions.
-        .onDisappear { stopSuggesting() }
-        // Private mode on, AI permission withdrawn or the provider gone: stop, and take the
-        // suggestions already shown off the screen at once.
-        .onChange(of: appState.folderSuggestionBlock) { _, _ in dropSuggestionsIfBlocked() }
+        .onDisappear { stopSuggesting(); savedChangeRefresh?.cancel(); savedChangeRefresh = nil }
         // AI permission, the mode and the OpenAI key are stored preferences that do not
         // redraw this screen by themselves, and Settings can change them from another
-        // window. Every preference write is checked.
-        .onReceive(NotificationCenter.default.publisher(for: UserDefaults.didChangeNotification).receive(on: RunLoop.main)) { _ in
-            dropSuggestionsIfBlocked()
-        }
-        // A sync or an edit while Preview is open can file a meeting, keep it off the cloud
-        // or give it a summary. The count under the button follows, at most once a second.
+        // window. `availability` follows them, so the button and the private mode line are
+        // right in both directions. When a request may no longer be sent: stop, and take
+        // the suggestions already shown off the screen.
+        .onAppear { availability.follow(appState) }
+        .onChange(of: availability.block) { _, _ in dropSuggestionsIfBlocked() }
+        // A sync or an edit while Preview is open can file a meeting, retitle it so a rule
+        // now places it, keep it off the cloud or give it a summary. Preview is worked out
+        // again, at most once a second, so the list and the count under the button follow.
         .onReceive(NotificationCenter.default.publisher(for: ModelContext.didSave).receive(on: RunLoop.main)) { _ in
-            scheduleEligibilityRefresh()
+            scheduleRefreshAfterSave()
         }
         .alert("New folder", isPresented: Binding(get: { namingFolderFor != nil }, set: { if !$0 { namingFolderFor = nil } })) {
             TextField("Name", text: $newFolderName)
@@ -468,7 +470,7 @@ struct MeetingFolderManager: View {
     private func clearPreview() {
         proposals = []; unfiled = []; choices = [:]; newFolders = []; applyIssue = nil; unfiledShown = Self.unfiledPageSize
         suggested = []; suggestionEligible = []; suggestionIssue = nil; stopSuggesting(); asks = .init()
-        eligibilityRefresh?.cancel(); eligibilityRefresh = nil
+        savedChangeRefresh?.cancel(); savedChangeRefresh = nil
     }
 
     private func dropSuggestionsIfBlocked() {
@@ -482,13 +484,16 @@ struct MeetingFolderManager: View {
         suggestionEligible = Set(appState.folderSuggestionItems(for: unfiled).map(\.meeting.id))
     }
 
-    private func scheduleEligibilityRefresh() {
-        guard eligibilityRefresh == nil, !unfiled.isEmpty else { return }
-        eligibilityRefresh = Task {
+    /// Choices, the retry line and what was already asked survive a refresh. Not while
+    /// recording: transcript saves are constant then, and pressing the button brings
+    /// Preview up to date anyway.
+    private func scheduleRefreshAfterSave() {
+        guard savedChangeRefresh == nil, !appState.isRecording, !(unfiled.isEmpty && proposals.isEmpty) else { return }
+        savedChangeRefresh = Task {
             try? await Task.sleep(nanoseconds: 1_000_000_000)
-            eligibilityRefresh = nil
-            guard !Task.isCancelled else { return }
-            refreshEligibility()
+            savedChangeRefresh = nil
+            guard !Task.isCancelled, !appState.isRecording else { return }
+            refreshPreview()
         }
     }
 
@@ -690,6 +695,42 @@ struct MeetingFolderManager: View {
             // End on the list so the saved name is visible, without leaving an empty form open.
             path = [.manage]
         }
+    }
+}
+
+/// Why a folder suggestion request may not be sent now, published so a screen redraws when
+/// it changes in either direction (3.10.0 FO2.4). AI permission, private mode, the mode and
+/// the OpenAI key are stored preferences: writing them does not redraw a view by itself,
+/// and on Mac Settings is another window. This follows every preference write and every
+/// published change of `AppState` (sign-in state among them). It shows what `AppState`
+/// itself would decide, so the screen and the gate that sends never disagree: a preference
+/// written past `AppState` is followed when `AppState` sees it.
+@MainActor
+final class FolderSuggestionAvailability: ObservableObject {
+    @Published private(set) var block: AppState.FolderSuggestionBlock?
+    private weak var appState: AppState?
+    private var following: Set<AnyCancellable> = []
+
+    func follow(_ appState: AppState) {
+        guard self.appState !== appState else { update(); return }
+        self.appState = appState
+        following = []
+        update()
+        NotificationCenter.default.publisher(for: UserDefaults.didChangeNotification)
+            .receive(on: RunLoop.main)
+            .sink { [weak self] _ in self?.update() }
+            .store(in: &following)
+        // `objectWillChange` fires before the change: read on the next turn of the run loop.
+        appState.objectWillChange
+            .receive(on: RunLoop.main)
+            .sink { [weak self] _ in self?.update() }
+            .store(in: &following)
+    }
+
+    private func update() {
+        guard let appState else { return }
+        let now = appState.folderSuggestionBlock
+        if now != block { block = now }
     }
 }
 

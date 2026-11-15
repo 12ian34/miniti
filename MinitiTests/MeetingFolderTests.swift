@@ -1355,24 +1355,37 @@ final class FolderSuggestionTests: XCTestCase {
         XCTAssertEqual(asks.candidates(unfiled: [ids[1], ids[2]], eligible: Set(ids), chosen: []), [])
     }
 
-    func testEveryChangeThatBlocksSuggestionsIsAnnouncedToPreview() async throws {
-        // Preview drops shown suggestions when a stored preference changes, because these
-        // do not redraw a screen by themselves. Each one must post the notification it
-        // listens for, and block suggestions by then.
+    func testAvailabilityFollowsStoredPreferencesInBothDirections() async throws {
+        // What Preview watches. These preferences do not publish through AppState, so the
+        // object must notice each write by itself and publish, both when suggestions stop
+        // being possible and when they are possible again.
         let (state, _) = try makeApp()
-        let savedKey = state.openaiApiKey
-        defer { state.openaiApiKey = savedKey; state.appModeRaw = AppMode.managed.rawValue; state.hasAcceptedTerms = true; state.privateModeEnabled = false }
-        let changes: [(String, () -> Void)] = [
-            ("AI permission withdrawn", { state.hasAcceptedTerms = false }),
-            ("private mode on", { state.hasAcceptedTerms = true; state.privateModeEnabled = true }),
-            ("own keys with no OpenAI key", { state.privateModeEnabled = false; state.openaiApiKey = ""; state.appModeRaw = AppMode.byok.rawValue }),
-        ]
-        for (name, change) in changes {
-            let posted = expectation(forNotification: UserDefaults.didChangeNotification, object: nil)
-            change()
-            await fulfillment(of: [posted], timeout: 5)
-            XCTAssertNotNil(state.folderSuggestionBlock, name)
-        }
+        defer { state.hasAcceptedTerms = true; state.privateModeEnabled = false }
+        let availability = FolderSuggestionAvailability()
+        var published: [AppState.FolderSuggestionBlock?] = []
+        let watching = availability.$block.dropFirst().sink { published.append($0) }
+        defer { watching.cancel() }
+        availability.follow(state)
+        XCTAssertNil(availability.block)
+
+        // Changed the way Settings changes them, through AppState. These are stored
+        // preferences: the write reaches the store and is announced from there.
+        state.hasAcceptedTerms = false
+        try await TestSupport.waitUntil(timeout: 5) { availability.block == .permission }
+        state.hasAcceptedTerms = true
+        try await TestSupport.waitUntil(timeout: 5) { availability.block == nil }
+
+        state.privateModeEnabled = true
+        try await TestSupport.waitUntil(timeout: 5) { availability.block == .privateMode }
+        state.privateModeEnabled = false
+        try await TestSupport.waitUntil(timeout: 5) { availability.block == nil }
+
+        // Signing out publishes through AppState, and is followed too.
+        state.clientAuthManager = TestSupport.unenrolledAuthManager(session: session)
+        state.refreshClientAuthStatus()
+        try await TestSupport.waitUntil(timeout: 5) { availability.block == .unavailable }
+
+        XCTAssertEqual(published, [.permission, nil, .privateMode, nil, .unavailable], "one publish per change, none in between")
     }
 
     func testAShownSuggestionIsNotUsedOncePrivateModeOrPermissionChanges() async throws {
