@@ -149,6 +149,8 @@ enum RecordingReportingContract {
         "speaker_engine": ["deepgram", "on_device", "unavailable", "unknown"],
         "lifecycle_outcome": ["stopped", "cancelled", "failed"],
         "transcription_outcome": ["words_seen", "speech_without_words", "no_speech_evidence", "unknown"],
+        // Why a transcript gap was acted on (3.10.0 TG1.2), mirrored from miniti-api lib/reportingContract.ts.
+        "gap_reason": ["dead_socket", "speech_without_words", "neither"],
         "failure_category": ["transport", "timeout", "auth", "admission", "decode", "provider", "persistence", "model_access", "cancelled", "superseded", "unknown"],
         "task_mode": ["standard", "meddpicc", "questions", "template", "docs", "investigation", "speaker_names", "catchup", "docs_topics", "template_draft"],
         "ai_stage": ["live", "final", "saved", "helper"],
@@ -160,7 +162,9 @@ enum RecordingReportingContract {
         "thermal_state": ["nominal", "fair", "serious", "critical", "unknown"],
         "speaker_failure": ["load", "inference", "lag", "unsupported", "not_ready", "cancelled", "unknown"],
     ]
-    static let limits: [String: Int] = ["gap_seconds": 86400, "max_attempts": 10, "lag_ms": 3600000, "preparation_ms": 3600000]
+    static let limits: [String: Int] = ["gap_seconds": 86400, "max_attempts": 10, "lag_ms": 3600000, "preparation_ms": 3600000,
+        "socket_silent_seconds": 86400, "gap_speech_events": 99_999_999, "gap_empty_results": 99_999_999, "gap_audio_seconds": 86400,
+        "since_record_seconds": 86400, "dead_socket_seconds": 86400, "speech_without_words_seconds": 86400]
     static func valid(_ key: String, _ value: String) -> Bool {
         if RecoveryReportingContract.valid(key, value) { return true }
         if let choices = vocabulary[key] { return choices.contains(value) }

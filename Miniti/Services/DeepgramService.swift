@@ -855,6 +855,22 @@ final class DeepgramService: NSObject, ObservableObject, URLSessionWebSocketDele
     nonisolated(unsafe) private var lastWsHeartbeat: CFAbsoluteTime = 0
     nonisolated(unsafe) private var audioPacketsSent: Int = 0
     nonisolated(unsafe) private var audioBytesSent: Int = 0
+
+    // Gap evidence (3.10.0 TG1). These run for the life of the service and are never reset by a
+    // reconnect, so one gap can be measured across the forced reconnects inside it; the reader
+    // takes differences. They describe the socket to Deepgram only: on-device transcription has no
+    // socket and no provider speech events.
+    /// When the live socket last delivered a message of any kind, or was established if it has
+    /// delivered none yet. A healthy socket that is being sent audio answers at least every
+    /// 1.2 seconds (measured 2026-11-14, `scripts/stall-probe`), with empty results for non-speech.
+    private(set) var lastSocketMessageAt: CFAbsoluteTime = 0
+    /// `SpeechStarted` events from Deepgram's own voice detection.
+    private(set) var speechStartedEventCount = 0
+    /// Results that carried no words.
+    private(set) var emptyResultCount = 0
+    /// Seconds of audio handed to the live socket.
+    nonisolated(unsafe) private(set) var socketAudioSecondsSent: Double = 0
+    nonisolated(unsafe) private var socketBytesPerSecond: Double = 32_000
     nonisolated(unsafe) private var audioSendErrors: Int = 0
     nonisolated(unsafe) private var consecutiveSendErrors: Int = 0
     private var transcriptMessageCount: Int = 0
@@ -921,6 +937,8 @@ final class DeepgramService: NSObject, ObservableObject, URLSessionWebSocketDele
             corrections: PersonalDictionaryPreferences.currentCorrections()
         )
         let channelCount = multichannel ? 2 : 1
+        // 16 kHz, 16-bit samples, one or two channels.
+        socketBytesPerSecond = Double(16_000 * 2 * channelCount)
         DebugLogger.shared.log(
             .deepgram,
             "Connecting with language=\(language), keyterms=\(keyterms.count), replaces=\(replaceItems.count), channels=\(channelCount), multichannel=\(multichannel)"
@@ -1240,6 +1258,7 @@ final class DeepgramService: NSObject, ObservableObject, URLSessionWebSocketDele
         }
         audioPacketsSent += 1
         audioBytesSent += data.count
+        socketAudioSecondsSent += Double(data.count) / socketBytesPerSecond
         task.send(.data(data)) { [weak self] error in
             if let error {
                 Task { @MainActor in
@@ -1301,6 +1320,7 @@ final class DeepgramService: NSObject, ObservableObject, URLSessionWebSocketDele
                 case .success(let message):
                     self.consecutiveSendErrors = 0
                     self.wsMessageCount += 1
+                    self.lastSocketMessageAt = CFAbsoluteTimeGetCurrent()
                     self.logHeartbeatIfNeeded()
 
                     if let json = Self.jsonString(from: message) {
@@ -1628,6 +1648,7 @@ final class DeepgramService: NSObject, ObservableObject, URLSessionWebSocketDele
             return
         case .speechStarted:
             lastSpeechStartedAt = CFAbsoluteTimeGetCurrent()
+            speechStartedEventCount += 1
         case .warning(let message):
             DebugLogger.shared.log(.deepgram, "Parse warning: \(message)")
         case .transcript(let parsed):
@@ -1638,6 +1659,7 @@ final class DeepgramService: NSObject, ObservableObject, URLSessionWebSocketDele
             transcriptMessageCount += 1
             if parsed.originalWordCount == 0 && !parsed.hasTranscriptText {
                 emptyTranscriptCount += 1
+                emptyResultCount += 1
             } else {
                 transcriptWordCount += parsed.originalWordCount
                 lastTranscriptAt = CFAbsoluteTimeGetCurrent()
@@ -1923,6 +1945,8 @@ extension DeepgramService {
             self._sendConnected = true
             self._sendTask = webSocketTask
             self.connectionState = .connected
+            // Silence is timed from here, so a socket that connects and never answers is caught too.
+            self.lastSocketMessageAt = CFAbsoluteTimeGetCurrent()
             self.error = nil
             self.startKeepAlive()
             DiagnosticTimeline.shared.record(.transcriptionConnected)

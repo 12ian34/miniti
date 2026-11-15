@@ -2149,6 +2149,8 @@ final class AppState: ObservableObject {
     private var lastTranscriptStarvationRecoveryAt: CFAbsoluteTime = 0
     /// Reconnects since the last time words actually came back. Drives the recovery backoff.
     private var consecutiveTranscriptRecoveries = 0
+    /// What was seen during the current stretch without words, and this recording's totals (TG1.2).
+    private(set) var transcriptGapEvidence = TranscriptGapEvidence()
     private var lastTranscriptHealthDebugLogAt: CFAbsoluteTime = 0
     /// Last time audio was loud enough to plausibly be speech. Tracked continuously from the
     /// level stream rather than sampled inside the 30s auto-stop tick, which would be just as
@@ -2800,6 +2802,7 @@ final class AppState: ObservableObject {
         guard !update.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
         recordingDiagnosticAttempt?.transcript = true
         lastTranscriptReceivedAt = CFAbsoluteTimeGetCurrent()
+        noteTranscriptWordsForGapEvidence()
         noteSmartMeetingActivity(source: .transcript)
         
         if update.isFinal {
@@ -2902,7 +2905,11 @@ final class AppState: ObservableObject {
         }
     }
     
-    func scheduleDeepgramReconnect(reason: String) {
+    /// `finishPendingFirst`: the socket is alive, so before dropping it Deepgram is asked to finish
+    /// and its finished lines are awaited for up to the drain time (under a second). Without this
+    /// the sentence in progress, shown but not yet saved, is lost: a median of 12 words in the
+    /// 2026-11-14 experiment (`scripts/stall-probe`).
+    func scheduleDeepgramReconnect(reason: String, finishPendingFirst: Bool = false) {
         guard isRecording else { return }
         guard deepgramReconnectTask == nil else { return }
         guard let deepgramService else { return }
@@ -2990,6 +2997,10 @@ final class AppState: ObservableObject {
                     DebugLogger.shared.log(.app, "Source tracking reset for Deepgram reconnect")
                 }
                 #endif
+                if finishPendingFirst, idx == 0, !self.sessionTranscribesOnDevice, deepgramService.connectionState == .connected {
+                    await deepgramService.gracefulDisconnect()
+                    guard !Task.isCancelled, self.isRecording, generation == self.deepgramReconnectGeneration else { return }
+                }
                 deepgramService.disconnect()
                 // A new Deepgram socket resets word timestamps to zero. Anchor that new clock at
                 // the active meeting duration so post-reconnect segments remain chronological.
@@ -3786,6 +3797,179 @@ final class AppState: ObservableObject {
         case reconnectAfterExhaustion
     }
 
+    /// Why a transcript gap is being acted on (3.10.0 TG1). The raw values are the `gap_reason` the
+    /// backend reads: only the first two prove that words were really missing.
+    enum TranscriptGapReason: String, Equatable {
+        /// Deepgram sent nothing at all while audio was being captured.
+        case deadSocket = "dead_socket"
+        /// Deepgram reported speech after the last words, and no words followed.
+        case speechWithoutWords = "speech_without_words"
+        /// Loud audio, a live socket, no speech reported and no words: the slow fallback.
+        case neither
+    }
+
+    struct SocketTranscriptHealth: Equatable {
+        var action: TranscriptHealthAction
+        var reason: TranscriptGapReason?
+        static let none = SocketTranscriptHealth(action: .none, reason: nil)
+    }
+
+    /// A socket that is being sent audio answers at least every 1.2 seconds, with empty results
+    /// for non-speech (measured 2026-11-14, `scripts/stall-probe`). Ten seconds of nothing is dead.
+    nonisolated static let deadSocketSilence: TimeInterval = 10
+    /// How long after Deepgram reports speech with no words following it counts as a stall.
+    nonisolated static let speechWithoutWordsGap: TimeInterval = 20
+    /// One `SpeechStarted` alone is a known blip; two are speech.
+    nonisolated static let speechEventsForStall = 2
+    /// The slow fallback: loud audio and a live socket with nothing else to go on.
+    nonisolated static let transcriptFallbackGap: TimeInterval = 120
+
+    /// Transcript health on the Deepgram socket (3.10.0 TG1.4). Three reasons to reconnect, in order:
+    ///
+    /// 1. *Dead socket*: no message of any kind for 10 seconds while audio capture is flowing. Timed
+    ///    from connect, so a socket that never answers is caught. This is direct and sooner than the
+    ///    old rule, and it never fires on silence or noise, because a live socket keeps answering.
+    /// 2. *Speech without words*: Deepgram itself reported speech after the last words, at least
+    ///    twice, and no words came for 20 seconds.
+    /// 3. *Slow fallback*: loud audio, a live socket, no speech reported and no words, once words
+    ///    have been seen in this recording: no sooner than 120 seconds. Loudness is also a fan, typing
+    ///    or hold music, so it no longer reconnects at 20 seconds, and nothing is timed from Record:
+    ///    before the first words there is no gap to measure.
+    ///
+    /// The backoff between reconnects that bring no words, and the retry after the reconnect ladder
+    /// gave up, are as before. On-device transcription has no socket and keeps
+    /// `evaluateTranscriptHealth`.
+    nonisolated static func evaluateSocketTranscriptHealth(
+        socketSilence: TimeInterval,
+        captureFlowing: Bool,
+        speechEventsSinceWords: Int,
+        sinceFirstSpeechAfterWords: TimeInterval,
+        wordsSeen: Bool,
+        transcriptGap: TimeInterval,
+        audioGap: TimeInterval,
+        sinceLastRecoveryAttempt: TimeInterval,
+        consecutiveRecoveries: Int = 0,
+        isConnected: Bool,
+        isConnecting: Bool,
+        hasPendingReconnect: Bool
+    ) -> SocketTranscriptHealth {
+        guard !hasPendingReconnect, !isConnecting else { return .none }
+        guard isConnected else {
+            // The reconnect ladder gave up and nothing is retrying: unchanged.
+            let action = evaluateTranscriptHealth(
+                transcriptGap: transcriptGap, audioGap: audioGap, sinceLastRecoveryAttempt: sinceLastRecoveryAttempt,
+                consecutiveRecoveries: consecutiveRecoveries, isConnected: false, isConnecting: false, hasPendingReconnect: false)
+            return action == .none ? .none : .init(action: action, reason: captureFlowing ? .deadSocket : .neither)
+        }
+        func due(base: TimeInterval) -> Bool {
+            sinceLastRecoveryAttempt > transcriptRecoveryCooldown(base: base, consecutiveRecoveries: consecutiveRecoveries)
+        }
+        if captureFlowing, socketSilence >= deadSocketSilence {
+            return due(base: transcriptStarvationCooldown) ? .init(action: .reconnectStarvation, reason: .deadSocket) : .none
+        }
+        if speechEventsSinceWords >= speechEventsForStall {
+            guard sinceFirstSpeechAfterWords >= speechWithoutWordsGap else { return .none }
+            return due(base: transcriptStarvationCooldown) ? .init(action: .reconnectStarvation, reason: .speechWithoutWords) : .none
+        }
+        guard wordsSeen,
+              audioGap < transcriptHealthAudioActivityWindow,
+              transcriptGap > transcriptFallbackGap,
+              audioGap + transcriptFinalizeLatencyMargin < transcriptGap,
+              due(base: transcriptFallbackGap) else { return .none }
+        return .init(action: .reconnectStarvation, reason: .neither)
+    }
+
+    /// What the app saw during one stretch without words, and the recording's running totals
+    /// (3.10.0 TG1.2). Counted across the forced reconnects inside one gap: the service's counters
+    /// never reset, and this keeps their values at the last words. Numbers only, no text and no levels.
+    struct TranscriptGapEvidence: Equatable {
+        private(set) var gapStartedAt: CFAbsoluteTime = 0
+        private(set) var recordingStartedAt: CFAbsoluteTime = 0
+        private(set) var wordsSeen = false
+        private(set) var firstSpeechAfterWordsAt: CFAbsoluteTime?
+        private(set) var forcedReconnects = 0
+        /// Seconds in this recording with a dead socket while audio was captured.
+        private(set) var deadSocketSeconds: Double = 0
+        /// Seconds in this recording where Deepgram had reported speech and no words came.
+        private(set) var speechWithoutWordsSeconds: Double = 0
+        /// The full length of the last gap that needed a forced reconnect, once words returned.
+        private(set) var lastClosedGapSeconds: Double?
+        private var speechBase = 0, emptyBase = 0
+        private var audioBase: Double = 0
+        private var lastSampleAt: CFAbsoluteTime?
+        private var countingSpeechGap = false
+
+        mutating func begin(at now: CFAbsoluteTime, speech: Int, empty: Int, audio: Double) {
+            self = TranscriptGapEvidence()
+            gapStartedAt = now; recordingStartedAt = now
+            speechBase = speech; emptyBase = empty; audioBase = audio
+        }
+
+        /// Words arrived: the gap, if any, is over.
+        mutating func words(at now: CFAbsoluteTime, speech: Int, empty: Int, audio: Double) {
+            if forcedReconnects > 0 { lastClosedGapSeconds = max(0, now - gapStartedAt) }
+            wordsSeen = true
+            gapStartedAt = now
+            firstSpeechAfterWordsAt = nil
+            forcedReconnects = 0
+            countingSpeechGap = false
+            speechBase = speech; emptyBase = empty; audioBase = audio
+        }
+
+        mutating func forcedReconnect() { forcedReconnects += 1 }
+        mutating func takeClosedGap() -> Double? { defer { lastClosedGapSeconds = nil }; return lastClosedGapSeconds }
+
+        func speechEvents(_ current: Int) -> Int { max(0, current - speechBase) }
+        func emptyResults(_ current: Int) -> Int { max(0, current - emptyBase) }
+        func audioSeconds(_ current: Double) -> Double { max(0, current - audioBase) }
+        func sinceFirstSpeech(at now: CFAbsoluteTime) -> TimeInterval {
+            firstSpeechAfterWordsAt.map { max(0, now - $0) } ?? 0
+        }
+
+        /// One health tick. Adds to the recording's totals for the time since the previous tick,
+        /// and notes when speech was first reported after the last words.
+        mutating func sample(at now: CFAbsoluteTime, speech: Int, socketSilence: TimeInterval, isConnected: Bool, captureFlowing: Bool) {
+            let events = speechEvents(speech)
+            if events > 0, firstSpeechAfterWordsAt == nil { firstSpeechAfterWordsAt = now }
+            // A long pause between ticks (the app was suspended) is not counted as missing words.
+            let elapsed = lastSampleAt.map { min(max(0, now - $0), 15) } ?? 0
+            lastSampleAt = now
+            guard captureFlowing else { countingSpeechGap = false; return }
+            if !isConnected || socketSilence >= AppState.deadSocketSilence {
+                deadSocketSeconds += elapsed
+                countingSpeechGap = false
+            } else if events >= AppState.speechEventsForStall, sinceFirstSpeech(at: now) >= AppState.speechWithoutWordsGap {
+                // On reaching the threshold the time since speech was first reported counts in full.
+                speechWithoutWordsSeconds += countingSpeechGap ? elapsed : sinceFirstSpeech(at: now)
+                countingSpeechGap = true
+            } else {
+                countingSpeechGap = false
+            }
+        }
+
+        /// Fields for `transcript_starvation_detected` and `transcript_reconnect_reattempt`.
+        func details(at now: CFAbsoluteTime, reason: TranscriptGapReason, socketSilence: TimeInterval,
+                     speech: Int, empty: Int, audio: Double) -> [String: String] {
+            func bounded(_ value: Double, _ limit: Int) -> String { String(min(limit, max(0, Int(value.isFinite ? value : Double(limit))))) }
+            return [
+                "schema_version": "1",
+                "gap_reason": reason.rawValue,
+                "transcription_engine": "deepgram",
+                "socket_silent_seconds": bounded(socketSilence, 86_400),
+                "gap_speech_events": String(min(99_999_999, speechEvents(speech))),
+                "gap_empty_results": String(min(99_999_999, emptyResults(empty))),
+                "gap_audio_seconds": bounded(audioSeconds(audio), 86_400),
+                "since_record_seconds": bounded(now - recordingStartedAt, 86_400),
+            ]
+        }
+
+        /// Totals for `recording_final`.
+        var finalDetails: [String: String] {
+            ["dead_socket_seconds": String(min(86_400, Int(deadSocketSeconds))),
+             "speech_without_words_seconds": String(min(86_400, Int(speechWithoutWordsSeconds)))]
+        }
+    }
+
     /// Outer bound on how stale audio activity can be before a transcript gap is just a quiet room.
     nonisolated static let transcriptHealthAudioActivityWindow: TimeInterval = 60
     /// Slack for the delay between someone speaking and Deepgram finalizing those words, so normal
@@ -3841,6 +4025,12 @@ final class AppState: ObservableObject {
         // by a connection-state *transition*, so without this the transcript stays dead for the
         // rest of the meeting.
         return isConnected ? .reconnectStarvation : .reconnectAfterExhaustion
+    }
+
+    /// Words arrived: the current gap, if there was one, is over.
+    private func noteTranscriptWordsForGapEvidence() {
+        transcriptGapEvidence.words(at: CFAbsoluteTimeGetCurrent(), speech: deepgramService?.speechStartedEventCount ?? 0,
+            empty: deepgramService?.emptyResultCount ?? 0, audio: deepgramService?.socketAudioSecondsSent ?? 0)
     }
 
     /// Seconds since audio was last loud enough to plausibly be speech (`.infinity` if never).
@@ -3929,40 +4119,79 @@ final class AppState: ObservableObject {
         }
         #endif
 
-        let action = Self.evaluateTranscriptHealth(
-            transcriptGap: transcriptGap,
-            audioGap: audioGap,
-            sinceLastRecoveryAttempt: lastTranscriptStarvationRecoveryAt > 0
-                ? now - lastTranscriptStarvationRecoveryAt
-                : .infinity,
-            consecutiveRecoveries: consecutiveTranscriptRecoveries,
-            isConnected: deepgramService.connectionState == .connected,
-            isConnecting: deepgramService.connectionState == .connecting,
-            hasPendingReconnect: deepgramReconnectTask != nil
-        )
+        let sinceLastRecoveryAttempt: TimeInterval = lastTranscriptStarvationRecoveryAt > 0
+            ? now - lastTranscriptStarvationRecoveryAt
+            : .infinity
+        let isConnected = deepgramService.connectionState == .connected
+        let isConnecting = deepgramService.connectionState == .connecting
+        let action: TranscriptHealthAction
+        var gapReason: TranscriptGapReason?
+        var evidence: [String: String] = [:]
+        if sessionTranscribesOnDevice {
+            // No socket and no provider speech events: today's rule, with the engine named.
+            action = Self.evaluateTranscriptHealth(
+                transcriptGap: transcriptGap, audioGap: audioGap, sinceLastRecoveryAttempt: sinceLastRecoveryAttempt,
+                consecutiveRecoveries: consecutiveTranscriptRecoveries, isConnected: isConnected,
+                isConnecting: isConnecting, hasPendingReconnect: deepgramReconnectTask != nil)
+            evidence = ["schema_version": "1", "transcription_engine": "on_device"]
+        } else {
+            let speech = deepgramService.speechStartedEventCount
+            let empty = deepgramService.emptyResultCount
+            let audio = deepgramService.socketAudioSecondsSent
+            // Silence is only meaningful while a socket is up; it is timed from connect.
+            let socketSilence: TimeInterval = isConnected && deepgramService.lastSocketMessageAt > 0
+                ? max(0, now - deepgramService.lastSocketMessageAt) : 0
+            let captureFlowing = audioCaptureService?.hasRecentCaptureBuffers(microphone: captureMicrophone, systemAudio: captureSystemAudio) == true
+            transcriptGapEvidence.sample(at: now, speech: speech, socketSilence: socketSilence, isConnected: isConnected, captureFlowing: captureFlowing)
+            let health = Self.evaluateSocketTranscriptHealth(
+                socketSilence: socketSilence,
+                captureFlowing: captureFlowing,
+                speechEventsSinceWords: transcriptGapEvidence.speechEvents(speech),
+                sinceFirstSpeechAfterWords: transcriptGapEvidence.sinceFirstSpeech(at: now),
+                wordsSeen: transcriptGapEvidence.wordsSeen,
+                transcriptGap: transcriptGap,
+                audioGap: audioGap,
+                sinceLastRecoveryAttempt: sinceLastRecoveryAttempt,
+                consecutiveRecoveries: consecutiveTranscriptRecoveries,
+                isConnected: isConnected,
+                isConnecting: isConnecting,
+                hasPendingReconnect: deepgramReconnectTask != nil)
+            action = health.action
+            gapReason = health.reason
+            if let reason = health.reason {
+                evidence = transcriptGapEvidence.details(at: now, reason: reason, socketSilence: socketSilence,
+                    speech: speech, empty: empty, audio: audio)
+            }
+        }
 
         if action != .none {
             lastTranscriptStarvationRecoveryAt = now
             consecutiveTranscriptRecoveries += 1
+            transcriptGapEvidence.forcedReconnect()
             let reason = action == .reconnectStarvation
                 ? "transcript starvation"
                 : "transcript still dead after reconnect gave up"
             DebugLogger.shared.log(
                 .app,
-                "Transcript stall detected (\(String(format: "%.1f", transcriptGap))s gap with active audio, dg=\(deepgramService.connectionState)) — reconnecting Deepgram: \(reason)"
+                "Transcript stall detected (\(String(format: "%.1f", transcriptGap))s gap, class=\(gapReason?.rawValue ?? "on_device"), dg=\(deepgramService.connectionState)) — reconnecting Deepgram: \(reason)"
             )
+            var details = [
+                "gap_seconds": String(Self.boundedDiagnosticGap(transcriptGap)),
+                "audio_gap_seconds": String(Self.boundedDiagnosticGap(audioGap))
+            ]
+            details.merge(evidence) { _, new in new }
             enqueueDiagnosticEvent(
                 action == .reconnectStarvation
                     ? "transcript_starvation_detected"
                     : "transcript_reconnect_reattempt",
                 category: .deepgram,
                 level: .warning,
-                details: [
-                    "gap_seconds": String(Self.boundedDiagnosticGap(transcriptGap)),
-                    "audio_gap_seconds": String(Self.boundedDiagnosticGap(audioGap))
-                ]
+                details: details
             )
-            scheduleDeepgramReconnect(reason: reason)
+            // A socket that is alive may be holding a sentence it has not finished. Ask it to finish
+            // before dropping it. A dead socket has nothing to give.
+            scheduleDeepgramReconnect(reason: reason,
+                finishPendingFirst: isConnected && gapReason != nil && gapReason != .deadSocket)
         }
         
         updateAudioRecoveryState()
@@ -4102,7 +4331,10 @@ final class AppState: ObservableObject {
                    self.audioCaptureService?.hasRecentCaptureBuffers(microphone: attempt.microphone, systemAudio: attempt.system) == true,
                    attempt.sentPCM, !self.recordingRecoveryEvidence.awaitingTranscript {
                     attempt.degraded = false; self.recordingDiagnosticAttempt = attempt
-                    self.enqueueDiagnosticEvent("recording_recovered", category: .audio, details: attempt.details)
+                    var recovered = attempt.details
+                    // The whole gap, measured from the last words to the words that ended it.
+                    if let gap = self.transcriptGapEvidence.takeClosedGap() { recovered["gap_seconds"] = String(Self.boundedDiagnosticGap(gap)) }
+                    self.enqueueDiagnosticEvent("recording_recovered", category: .audio, details: recovered)
                 }
             }
             self.audioRecoveryState = nextState
@@ -4473,6 +4705,7 @@ final class AppState: ObservableObject {
         // carried no text of its own and so never stamped the timestamp.
         if receivedTranscriptContent {
             lastTranscriptReceivedAt = CFAbsoluteTimeGetCurrent()
+            noteTranscriptWordsForGapEvidence()
             noteSmartMeetingActivity(source: .transcript)
         }
         
@@ -8889,6 +9122,8 @@ final class AppState: ObservableObject {
         lastTranscriptReceivedAt = CFAbsoluteTimeGetCurrent()
         lastTranscriptStarvationRecoveryAt = 0
         consecutiveTranscriptRecoveries = 0
+        transcriptGapEvidence.begin(at: lastTranscriptReceivedAt, speech: deepgramService.speechStartedEventCount,
+            empty: deepgramService.emptyResultCount, audio: deepgramService.socketAudioSecondsSent)
         lastTranscriptHealthDebugLogAt = 0
         lastAudioActivityAt = 0
         lastSpeechDetectedAt = 0
@@ -10568,7 +10803,12 @@ final class AppState: ObservableObject {
         guard let attempt = recordingDiagnosticAttempt else { return }
         // Receipt callbacks also mark late words during the bounded final drain. Earlier
         // saved/resumed words cannot make this recording attempt look transcribed.
-        let details = attempt.finalDetails(failed: failed, duration: recordingDuration)
+        var details = attempt.finalDetails(failed: failed, duration: recordingDuration)
+        // Totals for the recording (TG1.2). Only the Deepgram socket has these; on-device has no socket.
+        if attempt.route != "local" {
+            details.merge(transcriptGapEvidence.finalDetails) { old, _ in old }
+            details["transcription_engine"] = details["transcription_engine"] ?? "deepgram"
+        }
         enqueueDiagnosticEvent(failed ? "recording_failed" : "recording_final", category: .audio,
             level: failed ? .error : .info, details: details)
         if appMode == .managed, shareDiagnostics, !privateModeEnabled {

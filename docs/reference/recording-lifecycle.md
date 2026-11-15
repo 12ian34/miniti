@@ -71,3 +71,21 @@ Second review, 2026-11-05: unused managed journals close without unobserved idle
 3.8.0 calendar boundary decision (confirmed 2026-11-06): continuing recordings never receive an automatic next-calendar handoff countdown. The prompt requires an explicit action. Existing independently detected call-end and user-configured silence policies remain separate; calendar timing alone does not prove a call ended.
 
 Hardware quarantine also disables Resume and clears/suppresses automatic-start prompts. Managed start rechecks after enrollment before requesting credentials; a request already in flight at timeout is closed without capturing.
+
+## Transcript health on the Deepgram socket (3.10.0 TG1, local, not released)
+
+Every 4 seconds while recording, `checkTranscriptHealth` decides whether to reconnect to Deepgram. Until 3.9.0 the test was loudness: no words for 20 seconds while audio was loud in the last 60. A fan, typing, hold music or a room before anyone speaks is also loud, so that rule forced reconnects that fixed nothing (146 in 21.5 recorded hours in the field sample of 2026-11-12 and 13, 14 of 33 recordings reconnected in their first 90 seconds), and each one dropped the sentence in progress. The measured facts behind the change are in [scripts/stall-probe](../../scripts/stall-probe/README.md).
+
+On the socket path the decision is `AppState.evaluateSocketTranscriptHealth`, with three reasons to reconnect, in order:
+
+1. Dead socket: no message of any kind for 10 seconds while audio capture is flowing, timed from connect (`DeepgramService.lastSocketMessageAt`). A live socket that is being sent audio answers at least every 1.2 seconds, with empty results for non-speech, so this never fires on silence or noise.
+2. Speech without words: Deepgram's own voice detection reported speech at least twice after the last words (one `SpeechStarted` alone is a known blip) and no words came for 20 seconds.
+3. Slow fallback: loud audio, a live socket, no speech reported and no words, only once words have been seen in the recording, no sooner than 120 seconds and then on the existing doubling. Reported as class "neither". Nothing is timed from Record: before the first words there is no gap to measure.
+
+The backoff between reconnects that bring no words (30, 60, 120 seconds and so on), the retry after the reconnect ladder gave up, and manual retry are unchanged. On-device transcription has no socket and no provider speech events, and keeps `evaluateTranscriptHealth`.
+
+When the socket is alive (reasons 2 and 3), the reconnect first asks Deepgram to finish and waits for the finished lines (`gracefulDisconnect`, under a second) before dropping the socket, so the sentence in progress is saved. A dead socket has nothing to give and is dropped at once.
+
+Evidence (TG1.2). `TranscriptGapEvidence` keeps, per stretch without words and across the forced reconnects inside it: speech events, empty results and seconds of audio sent since the last words, and seconds since any Deepgram message. `transcript_starvation_detected` and `transcript_reconnect_reattempt` carry them with `gap_reason` (`dead_socket`, `speech_without_words`, `neither`), `since_record_seconds` and the engine. `recording_recovered` adds the full gap measured when words return. `recording_final` adds two totals for the recording: `dead_socket_seconds` and `speech_without_words_seconds`. Numbers only: no text and no audio levels. The backend reads them to decide what is worth an email (see the [operations runbook](../runbooks/operations.md)); the field names are mirrored in `RecordingReportingContract`.
+
+Not yet done: hosted lifecycle tests at the start, middle and end of a recording, the probe's reconnect test against the built app, and the 30-recording field check (TG1.3).
