@@ -40,4 +40,4 @@ So the fill makes nothing worse. It stops the repeated uploads at once, and each
 
 The 3.10.0 engine is checked against the same served form in `SyncMergeFormTests.testServedExplicitNullsChangeNothingForACurrentDevice`.
 
-Limits: a fake server, not production; one account shape; 3.8.0 was not run (its merge rule is the same code as 3.9.0, by reading, not by test).
+Limits: a fake server, not production; one account shape; 3.8.0 was not run separately: `CloudSyncEngine.swift` and `MeetingSyncDocument.swift` are identical in v3.8.0 and v3.9.0 (`git diff v3.8.0 v3.9.0` on the two files is empty), so the result covers both.
