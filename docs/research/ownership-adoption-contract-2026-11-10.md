@@ -99,6 +99,15 @@ The first device-record layer was built in `miniti-api` on branch `ao1-device-re
 
 **Stored value.** The canonical `minutesUsed` holds the effective minutes (the larger of two current records). Gross for reporting is that plus `migrationCredit` while `migrationCreditEpoch` equals `usageEpoch`. No existing reader had to change.
 
-**Activation order.** The switch alone does nothing. The store must first be prepared, and preparation refuses while any device has a record under an irregular id spelling (neither all lowercase nor all uppercase; the API accepts such ids, the apps do not send them). Adoption reads only the two regular keys, so such a record needs a reviewed repair first. Once the store is prepared, no request uses an irregular spelling as a key, so none can be created. The switch must never be turned off again once devices have been adopted: uppercase requests would resolve to the fenced key and fail.
+**Activation order.** Four steps, in this order, each one an operator action:
 
-**What the fence does and does not guarantee.** It guarantees that no write reaches the uppercase key of an adopted device. It does not cover a third, irregular spelling. One window remains: a request that began before the store was marked prepared, under an irregular id, can still write its record afterwards. Nothing prevents that; the ops check `device_twins` reports any irregular record it finds while adoption is on. Deploying the code with the switch off, and turning it on only after requests from before the deploy have finished, closes it in practice.
+1. Deploy the code with the switch off. Nothing changes.
+2. Turn the switch on. Nothing is adopted yet, because the store is not prepared. From this moment a request under an irregular id spelling (neither all lowercase nor all uppercase; the API accepts such ids, the apps do not send them) no longer starts a new record: it is routed to the device's uppercase or lowercase record. A record that already exists under an irregular spelling keeps serving.
+3. Wait until every request admitted before step 2 has finished on every serving deployment (longer than the longest request, 60 seconds, and until no older deployment serves traffic). After that no irregular record can come into being. Then repair any that exist by a reviewed repair.
+4. Run the merge pass. It prepares the store, which refuses while any irregular record exists, and only then are devices adopted, by their own writes and by the pass.
+
+Step 3 is the reason for the order: a request admitted before step 2 could otherwise write an irregular record after preparation had looked, and adoption would merge the two regular records around it. The ops check `device_twins` reports any irregular record it finds while the switch is on, but detection does not undo an adoption; the wait is what prevents it.
+
+The switch must never be turned off again once devices have been adopted: uppercase requests would resolve to the fenced key and fail.
+
+**What the fence does and does not guarantee.** It guarantees that no write reaches the uppercase key of an adopted device. It does not cover a third, irregular spelling; the activation order above is what keeps one from appearing.
