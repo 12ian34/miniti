@@ -84,3 +84,45 @@ Static trace at backend `ca8c8c28`: Polar signed webhook subscription fields and
 The current-writer correction compares valid parsed start instants rather than timestamp spelling when deciding whether to reset. It preserves stored provider strings, stale-start rejection, genuine renewal and first-link behavior, Polar priority, CAS retries, exact purchase IDs and response shape. This is an inherited device-accounting fix, not account ownership activation or a complete restore-idempotency rule. Matching unparseable strings retain their prior equality behavior; date validation and canonical provider-start decoding remain separate gates. The comparison uses the existing JavaScript millisecond time representation, not a new sub-millisecond provider contract.
 
 Purchase identity reconciliation belongs to the trusted classifier: preserve authoritative provider spelling, do not apply device UUID lowercase rules to purchase IDs, and never infer an alias or fresh grant from a case-only difference. Before binding/applying, resolve any case-variant candidate against provider-authenticated identity and retained aliases/history, or leave it unresolved. The same requirement covers corrected provider starts. The existing exact-case oracle intentionally remains unchanged; its ability to apply two caller-classified case variants is not proof that either deserves a grant. Provider round-trip and alias guarantees remain unverified.
+
+## Two-rail resolver decision table (AO0.1, 2026-11-15)
+
+Offline reference: backend `scripts/period-resolver-reference.mjs` with `period-resolver-reference.test.mjs` (branch `ao0-period-resolver`, not pushed). It decides every case the tables above leave pending. It is still a model: no storage, no routes, no provider calls. The earlier two references are unchanged; this one supersedes the "pending" rows of the first table and supplies the classifier the receipt layer asked for.
+
+The rule: a paid period is the tuple rail, exact purchase ID, provider start. It is applied to an account at most once, and the stored receipt of that application is what separates a new grant from a restore. Only the selected source (Polar first, then earliest bound) is ever applied; an unselected rail's periods are not looked at until it is selected.
+
+| Observation | Decision | Usage |
+|---|---|---|
+| First window at migration, a paid period is current | Initialize, record that period as covered | The opening balance already contains it; its renewal is the first grant |
+| Free window, a current paid period with no receipt (first purchase, a purchase bound days late, a return after a lapse) | Grant | Reset once. This is the shipped first-paid reset, kept |
+| The same period again (restore, replayed webhook, second device, reactivation inside the period) | Retain | No reset, however often |
+| A second rail is added and the first stays selected | Retain | No second allowance |
+| The selected source changes to a period with no receipt that began after the current allowance opened | Grant | Reset once. The period was paid for and never applied. Decided, see P-A |
+| The selected source changes to a period with no receipt that was already running when the current allowance opened | Retain, record it as covered, schedule from it | One allowance covers both; usage carries to the new boundary |
+| The selected source changes back to a period that has a receipt | Retain, schedule from it | Switching between rails mints nothing |
+| Same source, a later period starting at or after the boundary | Grant (renewal) | Reset once; cycles with no activity may be skipped |
+| Same source, same start, different end | Retain, new boundary | No reset |
+| Same source, a new start inside the current allowance (the billing date moved) | Retain until the boundary, then grant for what is left of the new period | Never two allowances for the same days, never a cycle-long wait |
+| Same source, a start older than the one applied | Hold | Nothing changes |
+| Eligible, but the period on record has ended and it is the window's own period | One provisional window at the boundary, of the same length. See P-B | Reset once, as the shipped code does by date |
+| Evidence then arrives with the expected start | Retain, confirm, correct the end | No second reset |
+| Evidence then arrives with a start in the first half of the provisional window | Retain, adopt the provisional window for it | No second reset |
+| Evidence then arrives with a later start | Grant (renewal) | The assumed cycle passed without evidence |
+| The provisional window ends and there is still no evidence | Hold | No second provisional window. Entitlement, decided elsewhere, ends the plan |
+| Eligible, but the period on record is in the future | Hold | Nothing changes |
+| No eligible subscription, the paid window overlaps this free month | Retain to the end of the free month | Usage carries |
+| No eligible subscription, the paid window ended before this free month | Roll over to the free month | An old balance never becomes a later month |
+| A period longer than 35 days | Refused (`period_too_long`) | The model assumes monthly products |
+
+What the app is told (`client` in the reference, for `/api/usage`): `resets_at` is the window boundary, or null when the boundary has passed and no decision can be made; `refresh` names the rail whose current period the server needs. For Polar the server looks it up; for Apple the app sends its current entitlement again (AO2.6 makes `Transaction.currentEntitlements` do that). A hold never blocks recording by itself: the current window and its usage stay, and the limit applies as before.
+
+Complimentary Pro is not a subscription and is not an input. It changes the limit, not the window: a comp starting or ending changes nothing here, a purchase during a comp is a first paid activation, and a purchase ending during a comp follows the paid-to-free rows.
+
+Two choices in the table change or fix behaviour and are Ian's to confirm before AO2 and AO3 writers are built:
+
+- **P-A: a newly bought period on the rail that becomes selected resets usage at once**, even if another rail's allowance is still running. This is what the shipped per-device code does (a new Polar start resets; a new Apple start resets when Polar does not take precedence), and it removes the chain in which overlapping first-seen periods could suppress grants for several cycles. The alternative, keeping the running allowance until its boundary and granting only the remainder, gives the buyer less than today.
+- **P-B: one provisional window when renewal evidence is late.** The shipped code advances the date without evidence, so recording is never blocked by a late webhook. The first reference refused to do that. The table keeps availability for exactly one cycle per purchase and makes the late evidence adopt that window, so it cannot grant twice. Without it, a subscriber near the limit could be blocked at the boundary until the provider's notice arrives.
+
+Named timelines covered by the tests: first paid activation and restore; a purchase bound late; migration seed and first renewal; a second rail added; the first-seen overlap chain (Polar October, Apple from 10 November, Polar again from 5 December: two grants, none lost, none doubled); a period already running when the allowance opened; a returning rail after renewal; late, confirmed, moved and missing renewal evidence; future, older and too-long periods; a moved billing date; paid to free; complimentary Pro; input order and a lost reply; malformed state.
+
+Still not decided or built here: real storage and concurrency (fenced revisions, atomic receipt and counter writes), receipt retention beyond the model's 128, the App Store path for an Apple refresh when no device is online, provider proof that a billing date can move, annual products, and how legacy per-device period starts become receipts at adoption (a purchase applied on a device before migration but absent from the registry at seed would be granted once more when first seen on a free account).
