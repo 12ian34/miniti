@@ -94,14 +94,17 @@ struct MeetingFolderManager: View {
     /// AI suggestions for meetings the rules left unfiled (3.10.0 FO2.4). They join the
     /// proposals and still need Apply. Each meeting is asked about once per Preview.
     @State private var suggested: [AppState.FolderProposal] = []
-    @State private var suggestionAsked: Set<UUID> = []
+    @State private var asks = FolderSuggestionAsks()
+    /// Unfiled meetings that may be sent at all, worked out when Preview refreshes so the
+    /// button's count costs nothing while the screen redraws.
+    @State private var suggestionEligible: Set<UUID> = []
+    /// Shown when the last request failed; the button stays so it can be tried again.
+    @State private var suggestionIssue: String?
     @State private var suggesting = false
     @State private var suggestionRound = 0
     /// The request in flight. Leaving, clearing or applying Preview cancels it, which stops
     /// before the next batch is sent.
     @State private var suggestionTask: Task<Void, Never>?
-    /// Meetings in the request in flight. If it is cancelled they have not been asked about.
-    @State private var suggestionInFlight: Set<UUID> = []
     private static let unfiledPageSize = 200
 
     private struct PreviewGroup: Identifiable {
@@ -274,24 +277,29 @@ struct MeetingFolderManager: View {
 
     /// Unfiled meetings a suggestion could be asked for and has not been yet.
     private var suggestionCandidates: [Meeting] {
-        appState.folderSuggestionItems(for: unfiled.filter { !suggestionAsked.contains($0.id) && choices[$0.id] == nil }).map(\.meeting)
+        let wanted = Set(asks.candidates(unfiled: unfiled.map(\.id), eligible: suggestionEligible, chosen: Set(choices.keys)))
+        return unfiled.filter { wanted.contains($0.id) }
     }
 
     /// Nothing is sent from Preview until this button is pressed, and it says what goes.
     @ViewBuilder private var suggestionRequest: some View {
-        let count = suggestionCandidates.count
-        if suggesting || count == 0 {
-            EmptyView()
-        } else if appState.folderSuggestionBlock == .privateMode {
+        if appState.folderSuggestionBlock == .privateMode {
             Text("AI folder suggestions are off while private mode is on. Nothing is sent.")
                 .font(.footnote).foregroundStyle(ColorPalette.Text.secondary)
                 .accessibilityIdentifier("folders.suggest.caption")
-        } else if appState.folderSuggestionBlock == nil {
-            Button("Suggest folders with AI") { askForSuggestions() }
-                .accessibilityIdentifier("folders.suggest")
-            Text(FolderSuggestionToggle.requestCaption(count: count))
-                .font(.footnote).foregroundStyle(ColorPalette.Text.secondary)
-                .accessibilityIdentifier("folders.suggest.caption")
+        } else if !suggesting, appState.folderSuggestionBlock == nil {
+            let count = suggestionCandidates.count
+            if let suggestionIssue, count > 0 {
+                Text(suggestionIssue).font(.footnote).foregroundStyle(ColorPalette.Status.warning)
+                    .accessibilityIdentifier("folders.suggest.issue")
+            }
+            if count > 0 {
+                Button(suggestionIssue == nil ? "Suggest folders with AI" : "Try again") { askForSuggestions() }
+                    .accessibilityIdentifier("folders.suggest")
+                Text(FolderSuggestionToggle.requestCaption(count: count))
+                    .font(.footnote).foregroundStyle(ColorPalette.Text.secondary)
+                    .accessibilityIdentifier("folders.suggest.caption")
+            }
         }
     }
 
@@ -374,6 +382,12 @@ struct MeetingFolderManager: View {
         }
         // Back, Close and Apply all leave this screen: stop asking for suggestions.
         .onDisappear { stopSuggesting() }
+        // Private mode on, AI permission withdrawn or the provider gone: stop, and take the
+        // suggestions already shown off the screen at once.
+        .onChange(of: appState.folderSuggestionBlock) { _, block in
+            guard block != nil, suggesting || !suggested.isEmpty else { return }
+            suggested = []; stopSuggesting(); refreshPreview()
+        }
         .alert("New folder", isPresented: Binding(get: { namingFolderFor != nil }, set: { if !$0 { namingFolderFor = nil } })) {
             TextField("Name", text: $newFolderName)
             Button("Cancel", role: .cancel) { namingFolderFor = nil }
@@ -443,38 +457,39 @@ struct MeetingFolderManager: View {
 
     private func clearPreview() {
         proposals = []; unfiled = []; choices = [:]; newFolders = []; applyIssue = nil; unfiledShown = Self.unfiledPageSize
-        suggested = []; suggestionAsked = []; stopSuggesting()
+        suggested = []; suggestionEligible = []; suggestionIssue = nil; stopSuggesting(); asks = .init()
     }
 
     private func stopSuggesting() {
         suggestionTask?.cancel(); suggestionTask = nil
-        suggestionAsked.subtract(suggestionInFlight); suggestionInFlight = []
+        asks.cancel()
         suggesting = false; suggestionRound += 1
     }
 
     /// Ask once about each meeting the rules left unfiled, only when the person presses
     /// "Suggest folders with AI". Opening Preview sends nothing. The answers join the
     /// proposals and wait for Apply. A failed or refused request adds nothing and leaves
-    /// the rules' proposals as they are.
+    /// the rules' proposals as they are; the meetings that got no answer can be asked about
+    /// again with the same button.
     private func askForSuggestions() {
-        guard appState.folderSuggestionBlock == nil else { return }
-        let targets = unfiled.filter { !suggestionAsked.contains($0.id) && choices[$0.id] == nil }
-        guard !appState.folderSuggestionItems(for: targets).isEmpty else { return }
-        suggestionAsked.formUnion(targets.map(\.id))
+        guard appState.folderSuggestionBlock == nil, !suggesting else { return }
+        let targets = suggestionCandidates
+        guard asks.begin(targets.map(\.id)) else { return }
+        suggestionIssue = nil
         suggestionRound += 1
         let round = suggestionRound
         suggesting = true
-        suggestionInFlight = Set(targets.map(\.id))
         suggestionTask?.cancel()
         suggestionTask = Task {
-            let found = await appState.suggestedFolderProposals(for: targets, creatingFolders: true)
+            let outcome = await appState.folderSuggestionRound(for: targets, creatingFolders: true)
             // A cleared or refreshed Preview has moved on; its answers are not for this screen.
             guard round == suggestionRound, !Task.isCancelled else { return }
             suggesting = false
             suggestionTask = nil
-            suggestionInFlight = []
-            guard !found.isEmpty else { return }
-            suggested += found
+            asks.finish(answered: outcome.answered)
+            if outcome.failed { suggestionIssue = "Could not get suggestions for every meeting. Nothing was changed." }
+            guard !outcome.proposals.isEmpty else { return }
+            suggested += outcome.proposals
             refreshPreview()
         }
     }
@@ -604,6 +619,7 @@ struct MeetingFolderManager: View {
             proposals = appState.folderProposals(meetings: source, regroupManual: regroupManual, preview: true)
                 .filter { choices[$0.id] == nil }
             unfiled = appState.meetingsLeftUnfiled(in: source, after: proposals)
+            suggestionEligible = Set(appState.folderSuggestionItems(for: unfiled).map(\.meeting.id))
             // AI suggestions apply only where the rules still have nothing and the user has
             // not picked a folder; a meeting that changed since is dropped by Apply itself.
             let open = Set(unfiled.map(\.id))
@@ -638,6 +654,35 @@ struct MeetingFolderManager: View {
             path = [.manage]
         }
     }
+}
+
+/// Which unfiled meetings Preview has asked about (3.10.0 FO2.4). A meeting is asked about
+/// once per Preview, unless its request was cancelled or got no answer: then it can be
+/// asked about again. Kept apart from the view so the rules can be tested.
+struct FolderSuggestionAsks: Equatable {
+    private(set) var asked: Set<UUID> = []
+    private(set) var inFlight: Set<UUID> = []
+
+    /// In the order given: may be sent, not yet asked about, and no folder picked by hand.
+    func candidates(unfiled: [UUID], eligible: Set<UUID>, chosen: Set<UUID>) -> [UUID] {
+        unfiled.filter { eligible.contains($0) && !asked.contains($0) && !chosen.contains($0) }
+    }
+
+    /// Start a request for these meetings. False, and nothing recorded, when there is
+    /// nothing to ask or a request is already on its way.
+    mutating func begin(_ ids: [UUID]) -> Bool {
+        guard !ids.isEmpty, inFlight.isEmpty else { return false }
+        inFlight = Set(ids); asked.formUnion(ids)
+        return true
+    }
+
+    /// The request ended. Only meetings whose batch got an answer stay asked.
+    mutating func finish(answered: Set<UUID>) {
+        asked.subtract(inFlight.subtracting(answered)); inFlight = []
+    }
+
+    /// The request was cancelled: none of its meetings count as asked.
+    mutating func cancel() { finish(answered: []) }
 }
 
 /// "Use AI to file new meetings" (3.10.0 FO2.4), shared by the organise screen and

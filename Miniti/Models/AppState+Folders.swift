@@ -426,6 +426,9 @@ extension AppState {
     /// that are not suggestions always pass.
     func folderSuggestionStillApplies(_ proposal: FolderProposal) -> Bool {
         guard proposal.suggested else { return true }
+        // Private mode, withdrawn AI permission or no provider: a suggestion received
+        // before that is not used after it.
+        guard folderSuggestionBlock == nil else { return false }
         guard let evidence = proposal.suggestionEvidence, let now = currentSuggestionInput(proposal.meeting) else { return false }
         return now.item == evidence.item && now.finished == evidence.finished
     }
@@ -451,11 +454,28 @@ extension AppState {
     /// (Preview, where Apply is still needed); automatic filing passes false and only ever
     /// uses folders that exist.
     func suggestedFolderProposals(for meetings: [Meeting], creatingFolders: Bool, automatic: Bool = false) async -> [FolderProposal] {
+        await folderSuggestionRound(for: meetings, creatingFolders: creatingFolders, automatic: automatic).proposals
+    }
+
+    /// What one round of suggestion requests came to.
+    struct FolderSuggestionRound {
+        var proposals: [FolderProposal] = []
+        /// Meetings whose batch was answered, whether or not the answer placed them.
+        var answered: Set<UUID> = []
+        /// A batch failed or could not be sent to a provider. Stopping because of private
+        /// mode, permission, an account change or cancellation is not a failure.
+        var failed = false
+    }
+
+    /// `suggestedFolderProposals` with the outcome, so Preview can offer the meetings that
+    /// got no answer again.
+    func folderSuggestionRound(for meetings: [Meeting], creatingFolders: Bool, automatic: Bool = false) async -> FolderSuggestionRound {
         let blocked = { [weak self] in
             guard let self else { return true }
             return (automatic ? self.automaticFolderSuggestionBlock : self.folderSuggestionBlock) != nil
         }
-        guard !blocked() else { return [] }
+        guard !blocked() else { return .init() }
+        var failed = false
         let owner = meetingFolders.owner
         let account = clientAuthStatus.accountID
         let generation = clientAuthManager.credentialGeneration
@@ -492,19 +512,21 @@ extension AppState {
                 } else if !managed, let insightsService, !openaiApiKey.isEmpty {
                     answers = try await insightsService.suggestFolders(items: batch.map(\.item), folders: refs, apiKey: openaiApiKey,
                                                                        mayDispatch: mayDispatch)
-                } else { break }
+                } else { failed = true; break }
                 suggestions += answers
                 for entry in batch { sent[entry.meeting.id] = entry }
             } catch {
                 DebugLogger.shared.log(.app, "Folder suggestions not available: \(type(of: error))")
+                // A request held back at the moment of sending is a stop, not a failure.
+                failed = !(error is CancellationError)
                 break
             }
         }
         // The account, folders or meetings may have changed while waiting.
-        guard stillSameOwner(), !Task.isCancelled else { return [] }
+        guard stillSameOwner(), !Task.isCancelled else { return .init() }
         var created: [FolderMatcher.Category: MeetingFolder] = [:]
         var live = meetingFolders.active
-        return suggestions.compactMap { suggestion -> FolderProposal? in
+        let proposals = suggestions.compactMap { suggestion -> FolderProposal? in
             // The answer is for the title and summary that were sent. A meeting that was
             // edited, resumed, filed, marked Local or deleted since gets no proposal.
             guard let was = sent[suggestion.meeting], let now = currentSuggestionInput(was.meeting),
@@ -536,6 +558,7 @@ extension AppState {
                          previousManual: meeting.folderManual, previousLocalOnly: meeting.folderLocalOnly, folder: folder, suggested: true,
                          suggestionEvidence: .init(item: was.item, finished: was.finished))
         }
+        return .init(proposals: proposals, answered: Set(sent.keys), failed: failed)
     }
 
     func cloudSyncFolders() async {

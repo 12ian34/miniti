@@ -1248,8 +1248,10 @@ final class FolderSuggestionTests: XCTestCase {
 
     func testTheSettingIsOffUntilChosenAndPreviewAsksOnlyWhenTold() async throws {
         // A fresh install has the setting off (Ian, 2026-11-15).
+        let stored = UserDefaults.standard.object(forKey: "folderAISuggestions")
         UserDefaults.standard.removeObject(forKey: "folderAISuggestions")
         XCTAssertFalse(AppState().folderAISuggestions, "off when never chosen")
+        UserDefaults.standard.set(stored, forKey: "folderAISuggestions")
 
         // With it off, a new meeting sends nothing, and the button in Preview still works:
         // pressing it is the person asking.
@@ -1306,6 +1308,72 @@ final class FolderSuggestionTests: XCTestCase {
         XCTAssertEqual(proposals.count, 0)
         XCTAssertEqual(requests.count - before, 1, "a failed request is not followed by more")
         XCTAssertTrue(more.allSatisfy { $0.folderID == nil })
+    }
+
+    func testARoundSaysWhichMeetingsWereAnsweredAndWhetherItFailed() async throws {
+        // The second request fails: the first hundred were answered, the other 130 were not.
+        var calls = 0
+        let (state, context) = try makeApp { _ in
+            calls += 1
+            return calls == 2 ? (500, ["error": "internal_error"]) : (200, ["suggestions": []])
+        }
+        let many = (0..<230).map { meeting("Meeting \($0)", in: context) }
+        let partial = await state.folderSuggestionRound(for: many, creatingFolders: true)
+        XCTAssertTrue(partial.failed)
+        XCTAssertEqual(partial.answered, Set(many.prefix(100).map(\.id)))
+        XCTAssertEqual(partial.proposals.count, 0)
+
+        // Asked again, the rest go through: an answer that places nothing is not a failure.
+        let rest = await state.folderSuggestionRound(for: Array(many.dropFirst(100)), creatingFolders: true)
+        XCTAssertFalse(rest.failed)
+        XCTAssertEqual(rest.answered, Set(many.dropFirst(100).map(\.id)))
+
+        // Stopped by private mode: nothing answered, and not reported as a failure.
+        state.privateModeEnabled = true
+        let stopped = await state.folderSuggestionRound(for: many, creatingFolders: true)
+        XCTAssertFalse(stopped.failed)
+        XCTAssertTrue(stopped.answered.isEmpty)
+    }
+
+    func testPreviewAsksOncePerMeetingAndOffersUnansweredOnesAgain() {
+        let ids = (0..<5).map { _ in UUID() }
+        var asks = FolderSuggestionAsks()
+        // Only meetings that may be sent and have no folder picked by hand are offered.
+        XCTAssertEqual(asks.candidates(unfiled: ids, eligible: Set(ids.prefix(4)), chosen: [ids[0]]), [ids[1], ids[2], ids[3]])
+        XCTAssertFalse(asks.begin([]), "nothing to ask")
+        XCTAssertTrue(asks.begin([ids[1], ids[2], ids[3]]))
+        XCTAssertFalse(asks.begin([ids[4]]), "pressing again while a request is on its way starts nothing")
+        XCTAssertEqual(asks.candidates(unfiled: ids, eligible: Set(ids), chosen: []), [ids[0], ids[4]])
+        // The batch holding the third meeting failed: only that one is offered again.
+        asks.finish(answered: [ids[1], ids[2]])
+        XCTAssertEqual(asks.candidates(unfiled: ids, eligible: Set(ids.prefix(4)), chosen: []), [ids[0], ids[3]])
+        // A cancelled request leaves its meetings unasked.
+        XCTAssertTrue(asks.begin([ids[3]]))
+        asks.cancel()
+        XCTAssertEqual(asks.candidates(unfiled: [ids[3]], eligible: Set(ids), chosen: []), [ids[3]])
+        // Answered meetings are never offered twice in one Preview.
+        XCTAssertEqual(asks.candidates(unfiled: [ids[1], ids[2]], eligible: Set(ids), chosen: []), [])
+    }
+
+    func testAShownSuggestionIsNotUsedOncePrivateModeOrPermissionChanges() async throws {
+        var acmeID = ""
+        let (state, context) = try makeApp { body in
+            (200, ["suggestions": [["id": (body["meetings"] as! [[String: String]])[0]["id"]!, "folder_id": acmeID]]])
+        }
+        let acme = MeetingFolder(id: UUID(), name: "Acme")
+        XCTAssertTrue(state.meetingFolders.edit(acme))
+        acmeID = acme.id.uuidString
+        for change in ["private mode", "permission"] {
+            let unclear = meeting("Quarterly check-in", in: context)
+            let proposals = await state.suggestedFolderProposals(for: [unclear], creatingFolders: true)
+            XCTAssertEqual(proposals.count, 1, change)
+            XCTAssertTrue(state.folderSuggestionStillApplies(proposals[0]))
+            if change == "private mode" { state.privateModeEnabled = true } else { state.hasAcceptedTerms = false }
+            XCTAssertFalse(state.folderSuggestionStillApplies(proposals[0]), change)
+            XCTAssertTrue(state.applyFolderProposals(proposals).isEmpty, "\(change): Apply does not use it")
+            XCTAssertNil(unclear.folderID, change)
+            state.privateModeEnabled = false; state.hasAcceptedTerms = true
+        }
     }
 
     func testAutomaticFilingAsksOnceOnlyWhenTheRulesFoundNothing() async throws {
