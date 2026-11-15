@@ -76,3 +76,27 @@ All rows below are **pending**, including tests against disposable Redis. The or
 Run from `miniti-api`: `node --test scripts/ownership-reference.test.mjs`. The suite uses synthetic names and explicit clocks. It checks D10 and boundary eligibility, 441 small counter pairs, old-client effective arithmetic, malformed input rejection, lost-response replay, immutable receipts, absolute replacement, resets, late-period arithmetic, one-time seed claims and correction deltas. It also compares corrected histories with histories built from the corrected baseline first, across seed/reset/replacement orderings. No environment file, credentials, database, provider or network is used. Tests of a “late charge” validate arithmetic only; they do not authorize that charge.
 
 Still open: deterministic two-rail period selection and period switching, exact raw Redis decoding/precision, all production journal/adoption adapters, concurrency/fencing and resource bounds, late-settlement authorization, provider first-bind correlation, D6 notice outbox/deduplication, exhaustive indirect callers, private collision/orphan inventory and D9 disposition, correction commands and rehearsal. B0/B2 and AO0 are not accepted by this model. The 48-hour transition budget, 24 green reconciliation hours, compatible public clients and separate release authorization remain unchanged.
+
+## As built for AO1, 2026-11-15: what replaces the typed journal
+
+The first device-record layer was built in `miniti-api` on branch `ao1-device-records` (not deployed, switch off by default) and reviewed four times. It keeps the arithmetic above and departs from this contract in the ways below. Where this section and the text above disagree, this section describes the code.
+
+**No journal entry per charge.** The journal holds the adoption baseline and each correction, for audit. Three stored facts do the work the typed replay was meant to do:
+
+- **The originals.** Adoption keeps both original hashes unchanged for 90 days (`device_adoption:{id}`) and archives the uppercase twin (`device:merged:{ID}`).
+- **`usageEpoch`.** A counter on the device record that moves, in the same write, every time the current minutes are cleared (passive reset, a new Polar or App Store period) or set by the operator, and never for a charge or for a boundary that moves while the minutes stay (a downgrade). "Same epoch as at adoption" means the minutes still continue from the opening. Reset dates cannot say this: a downgrade moves the date and keeps the minutes, and a first subscription can clear the minutes and keep the date.
+- **A fence on the old key.** Adoption leaves a text value at the uppercase key. Redis refuses any hash command on it, so a write still aimed at the old spelling fails when it commits and no record can appear beside an adopted one. A failed accounting write is retried by the client; best-effort telemetry writers that swallow errors lose that one increment.
+
+**What a correction can do.** It recomputes the opening from the stored originals at the adoption instant and applies the difference in one script. If the epoch is unchanged, the difference is added to the current minutes, which keeps every later charge. If the epoch has moved, the current minutes are left alone and only lifetime changes. The same correction id applies once.
+
+**What a correction cannot do, by decision.**
+
+- It does not replay operations, and it cannot reconstruct period history that was lost.
+- A corrected rule that changes the period itself is refused. If a wrong boundary has already reset the minutes, the repair is the operator setting the minutes with the admin edit. That starts a new balance (the epoch moves) and does not change `resetDate`; a wrong period field needs its own repair.
+- After account seeding (B2) a correction must also revise the device's seed component on its source account, or refuse a seeded device. Neither exists yet. This layer must not be described as meeting that part of the contract.
+
+**Operator minutes edit.** The admin edit sets the effective minutes and moves the epoch in one compare-and-set. The adoption credit ends with it, so gross equals effective afterwards. The table above said gross keeps the retained credit; the code does not, because the credit describes the opening the edit has just replaced.
+
+**Stored value.** The canonical `minutesUsed` holds the effective minutes (the larger of two current records). Gross for reporting is that plus `migrationCredit` while `migrationCreditEpoch` equals `usageEpoch`. No existing reader had to change.
+
+**Activation order.** The switch alone does nothing. The store must first be prepared: every device with a record under an irregular spelling (neither all lowercase nor all uppercase) is found and permanently excluded, and only then are devices adopted. The switch must never be turned off again once devices have been adopted: uppercase requests would resolve to the fenced key and fail.
