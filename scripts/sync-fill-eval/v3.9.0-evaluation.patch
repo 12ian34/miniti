@@ -1,0 +1,213 @@
+diff --git a/MinitiTests/CloudSyncEngineTests.swift b/MinitiTests/CloudSyncEngineTests.swift
+index 9a5aed14..760631a5 100644
+--- a/MinitiTests/CloudSyncEngineTests.swift
++++ b/MinitiTests/CloudSyncEngineTests.swift
+@@ -82,8 +82,17 @@ final class FakeCloudTransport: CloudSyncTransport, @unchecked Sendable {
+         return id
+     }
+ 
++    // SM1.5 evaluation only (scratch, never committed).
++    var dropsNullExternalKeys = false
++    var servesFilledNulls = false
++    private func served(_ document: [String: Any]) -> [String: Any] {
++        guard servesFilledNulls else { return document }
++        var d = document
++        for key in ["external_source", "external_id"] where d[key] == nil { d[key] = NSNull() }
++        return d
++    }
+     private func state(_ id: UUID, _ row: Row) -> CloudMeetingState {
+-        CloudMeetingState(id: id, revision: row.revision, deleted: row.deleted, updatedAt: row.updatedAt, document: row.deleted ? nil : row.document)
++        CloudMeetingState(id: id, revision: row.revision, deleted: row.deleted, updatedAt: row.updatedAt, document: row.deleted ? nil : served(row.document))
+     }
+ 
+     func manifest() async throws -> CloudManifest {
+@@ -102,7 +111,7 @@ final class FakeCloudTransport: CloudSyncTransport, @unchecked Sendable {
+         for c in slice { last[c.id] = c.seq }
+         let out = last.compactMap { id, s -> CloudChange? in
+             guard let row = rows[id] else { return nil }
+-            return CloudChange(seq: s, id: id, revision: row.revision, deleted: row.deleted, updatedAt: row.updatedAt, document: row.deleted ? nil : row.document)
++            return CloudChange(seq: s, id: id, revision: row.revision, deleted: row.deleted, updatedAt: row.updatedAt, document: row.deleted ? nil : served(row.document))
+         }.sorted { $0.seq < $1.seq }
+         return CloudChangesPage(changes: out, nextSince: slice.last?.seq ?? since, hasMore: hasMore, latestSeq: seq)
+     }
+@@ -119,7 +128,8 @@ final class FakeCloudTransport: CloudSyncTransport, @unchecked Sendable {
+ 
+     func putMeeting(id: UUID, baseRevision: Int, document data: Data, restoreDeleted: Bool = false) async throws -> CloudPutResult {
+         calls.append("put"); await gate.wait("put"); try throwIfArmed()
+-        let document = (try? JSONSerialization.jsonObject(with: data) as? [String: Any]) ?? [:]
++        var document = (try? JSONSerialization.jsonObject(with: data) as? [String: Any]) ?? [:]
++        if dropsNullExternalKeys { for key in ["external_source", "external_id"] where document[key] is NSNull { document.removeValue(forKey: key) } }
+         if tier != "pro" { throw CloudSyncError.proRequired }
+         if let title = document["title"] as? String, tooLargeTitles.contains(title) { return .tooLarge }
+         let updatedAt = MeetingSyncDocument.date(document["updated_at"]) ?? Date()
+@@ -1864,3 +1874,170 @@ final class CloudPrivacyAvailabilityTests: XCTestCase {
+         XCTAssertEqual(MeetingCloudPrivacyPresentation.uploadStatus(pause: nil), "Waiting to put on the cloud")
+     }
+ }
++
++
++/// SM1.5 evaluation (scratch, never committed): the real 3.9.0 engine against a server that
++/// drops null external keys when storing (as production does) and, optionally, serves them
++/// back as explicit nulls.
++@MainActor final class Sm15Evaluation: XCTestCase {
++    @MainActor private final class Device {
++        let host: TestCloudHost
++        let engine = CloudSyncEngine()
++        init(_ transport: FakeCloudTransport, clock: @escaping () -> Date) throws {
++            host = try TestCloudHost()
++            engine.host = host; engine.transport = transport
++            engine.defaults = UserDefaults(suiteName: "Sm15-\(UUID().uuidString)")!
++            engine.sleep = { _ in }
++            engine.now = clock
++        }
++    }
++    private var transport: FakeCloudTransport!
++    private var clock = Date(timeIntervalSince1970: 1_790_100_000)
++    private var puts: Int { transport.calls.filter { $0 == "put" }.count }
++    private func fresh(filled: Bool) { transport = FakeCloudTransport(); transport.dropsNullExternalKeys = true; transport.servesFilledNulls = filled }
++    private func device() throws -> Device { try Device(transport, clock: { [unowned self] in self.clock }) }
++    private func sync(_ device: Device, passes: Int = 2) async {
++        for _ in 0..<passes {
++            clock = clock.addingTimeInterval(10)
++            for _ in 0..<400 where device.engine.isRunning { try? await Task.sleep(nanoseconds: 5_000_000) }
++            await device.engine.sync(reason: "test")
++        }
++    }
++    private func record(on device: Device, title: String = "Planning call") -> UUID {
++        let meeting = Meeting(title: title, startTime: Date(timeIntervalSince1970: 1_790_000_000), endTime: Date(timeIntervalSince1970: 1_790_000_600))
++        meeting.segments.append(TranscriptSegment(text: "Hello", speaker: 0, timestamp: 0, isFinal: true))
++        device.host.context.insert(meeting)
++        try? device.host.context.save()
++        return meeting.id
++    }
++    private func move(_ id: UUID, on device: Device, to folder: UUID) {
++        guard let meeting = device.host.meeting(id) else { return XCTFail("missing meeting") }
++        MeetingSyncDocument.prepareFolderEdit(meeting)
++        meeting.folderID = folder; meeting.folderManual = true
++        try? device.host.context.save()
++    }
++    private func pairWithOneMerge() async throws -> (a: Device, b: Device, id: UUID) {
++        let a = try device(), b = try device()
++        let id = record(on: a)
++        await sync(a); await sync(b)
++        move(id, on: a, to: UUID())
++        await sync(a); await sync(b)
++        return (a, b, id)
++    }
++    private func settle(_ devices: [Device], cap: Int = 20) async -> (rounds: Int, settled: Bool) {
++        var rounds = 0, last = puts
++        repeat { rounds += 1; last = puts; for d in devices { await sync(d, passes: 1) } } while puts != last && rounds < cap
++        return (rounds, puts == last)
++    }
++    private func out(_ line: String) { print("SM15RESULT " + line) }
++
++    func testEvaluate() async throws {
++        for filled in [false, true] {
++            let tag = filled ? "filled" : "today"
++            // (a) B downloads two folder-only changes in a row.
++            fresh(filled: filled)
++            var (a, b, id) = try await pairWithOneMerge()
++            var before = puts
++            var folder = UUID()
++            move(id, on: a, to: folder)
++            await sync(a); await sync(b); await sync(b); await sync(a); await sync(b)
++            let s1 = await settle([a, b])
++            out("\(tag) a: uploads after one folder change = \(puts - before) (1 is the change itself), settled=\(s1.settled), folder ok=\(b.host.meeting(id)?.folderID == folder && a.host.meeting(id)?.folderID == folder)")
++
++            // (b) three devices.
++            fresh(filled: filled)
++            (a, b, id) = try await pairWithOneMerge()
++            let c = try device(); await sync(c)
++            before = puts; folder = UUID()
++            move(id, on: a, to: folder)
++            await sync(a, passes: 1)
++            let s2 = await settle([b, c, a])
++            out("\(tag) b: three devices, uploads = \(puts - before), rounds=\(s2.rounds), settled=\(s2.settled)")
++
++            // (c) A edits content; B, merged before, makes a later folder move before downloading.
++            fresh(filled: filled)
++            (a, b, id) = try await pairWithOneMerge()
++            a.host.meeting(id)?.notes = "A's new notes"; try a.host.context.save()
++            await sync(a)
++            folder = UUID(); move(id, on: b, to: folder)
++            await sync(b); await sync(a); await sync(b)
++            _ = await settle([a, b])
++            out("\(tag) c: A notes kept on A=\(a.host.meeting(id)?.notes == "A's new notes") on B=\(b.host.meeting(id)?.notes == "A's new notes") folder ok=\(a.host.meeting(id)?.folderID == folder && b.host.meeting(id)?.folderID == folder)")
++
++            // (d) A edits but cannot upload; B uploads a later folder-only change first.
++            fresh(filled: filled)
++            a = try device(); b = try device()
++            id = record(on: a)
++            await sync(a); await sync(b)
++            a.host.meeting(id)?.notes = "A's new notes"; try a.host.context.save()
++            transport.failNext = .offline
++            await sync(a, passes: 1)
++            folder = UUID(); move(id, on: b, to: folder)
++            await sync(b); await sync(a); await sync(b); await sync(a)
++            _ = await settle([a, b])
++            out("\(tag) d: A notes kept on A=\(a.host.meeting(id)?.notes == "A's new notes") on B=\(b.host.meeting(id)?.notes == "A's new notes") folder ok=\(a.host.meeting(id)?.folderID == folder && b.host.meeting(id)?.folderID == folder)")
++        }
++
++        // (e) Turning the fill on for devices whose baselines were made without it: 10 meetings,
++        // A recorded them (baseline from its own upload), B merged each once (baseline from the server copy).
++        fresh(filled: false)
++        let a = try device(), b = try device()
++        var ids: [UUID] = []
++        for i in 0..<10 { ids.append(record(on: a, title: "Meeting \(i)")) }
++        await sync(a); await sync(b)
++        for id in ids { move(id, on: a, to: UUID()) }
++        await sync(a); await sync(b)
++        _ = await settle([a, b])
++        let atSwitch = puts
++        transport.servesFilledNulls = true
++        let idle = await settle([a, b])
++        out("switch e1: uploads from turning the fill on with nothing changed = \(puts - atSwitch), settled=\(idle.settled)")
++        // Then one folder change per meeting from A.
++        var before = puts
++        for id in ids { move(id, on: a, to: UUID()) }
++        await sync(a)
++        let s = await settle([b, a])
++        out("switch e2: first folder change per meeting after the fill, 10 meetings: uploads = \(puts - before) (10 are the changes), rounds=\(s.rounds), settled=\(s.settled)")
++        before = puts
++        for id in ids { move(id, on: a, to: UUID()) }
++        await sync(a)
++        let s3 = await settle([b, a])
++        out("switch e3: second folder change per meeting: uploads = \(puts - before) (10 are the changes), settled=\(s3.settled)")
++        // Content safety at the switch: A edits notes after the fill is on, B moves folder later before downloading.
++        let id = ids[0]
++        a.host.meeting(id)?.notes = "A after fill"; try a.host.context.save()
++        await sync(a)
++        let folder = UUID(); move(id, on: b, to: folder)
++        await sync(b); await sync(a); await sync(b)
++        _ = await settle([a, b])
++        out("switch e4: edit kept on A=\(a.host.meeting(id)?.notes == "A after fill") on B=\(b.host.meeting(id)?.notes == "A after fill") folder ok=\(a.host.meeting(id)?.folderID == folder && b.host.meeting(id)?.folderID == folder)")
++        // The one remaining hazard at the switch: B's baseline for a meeting was made from the unfilled
++        // server copy, A edits content, and B makes a later folder move before downloading.
++        for (n, label) in [(1, "e5 first time for that meeting"), (1, "e6 same meeting again")] {
++            let id = ids[n]
++            let text = "A edit \(label)"
++            a.host.meeting(id)?.notes = text; try a.host.context.save()
++            await sync(a)
++            let folder = UUID(); move(id, on: b, to: folder)
++            await sync(b); await sync(a); await sync(b)
++            _ = await settle([a, b])
++            out("switch \(label): edit kept on A=\(a.host.meeting(id)?.notes == text) on B=\(b.host.meeting(id)?.notes == text) folder ok=\(a.host.meeting(id)?.folderID == folder && b.host.meeting(id)?.folderID == folder)")
++        }
++        // And with B never having merged since before the switch (fresh pair, baselines made unfilled, no folder change in between).
++        fresh(filled: false)
++        let (a2, b2, id2) = try await pairWithOneMerge()
++        transport.servesFilledNulls = true
++        a2.host.meeting(id2)?.notes = "A edit at switch"; try a2.host.context.save()
++        await sync(a2)
++        let folder2 = UUID(); move(id2, on: b2, to: folder2)
++        await sync(b2); await sync(a2); await sync(b2)
++        _ = await settle([a2, b2])
++        out("switch e7 untouched-since-switch meeting: edit kept on A=\(a2.host.meeting(id2)?.notes == "A edit at switch") on B=\(b2.host.meeting(id2)?.notes == "A edit at switch") folder ok=\(a2.host.meeting(id2)?.folderID == folder2 && b2.host.meeting(id2)?.folderID == folder2)")
++        a2.host.meeting(id2)?.notes = "A edit again"; try a2.host.context.save()
++        await sync(a2)
++        let folder3 = UUID(); move(id2, on: b2, to: folder3)
++        await sync(b2); await sync(a2); await sync(b2)
++        _ = await settle([a2, b2])
++        out("switch e8 same meeting, second time: edit kept on A=\(a2.host.meeting(id2)?.notes == "A edit again") on B=\(b2.host.meeting(id2)?.notes == "A edit again") folder ok=\(a2.host.meeting(id2)?.folderID == folder3 && b2.host.meeting(id2)?.folderID == folder3)")
++    }
++}

@@ -100,8 +100,17 @@ final class FakeCloudTransport: CloudSyncTransport, @unchecked Sendable {
         return id
     }
 
+    /// SM1.5: the proposed backend change. Stored documents are unchanged; served documents
+    /// carry explicit nulls for the two external keys the server drops when storing.
+    var servesExplicitExternalNulls = false
+    private func served(_ document: [String: Any]) -> [String: Any] {
+        guard servesExplicitExternalNulls else { return document }
+        var filled = document
+        for key in ["external_source", "external_id"] where filled[key] == nil { filled[key] = NSNull() }
+        return filled
+    }
     private func state(_ id: UUID, _ row: Row) -> CloudMeetingState {
-        CloudMeetingState(id: id, revision: row.revision, deleted: row.deleted, updatedAt: row.updatedAt, document: row.deleted ? nil : row.document)
+        CloudMeetingState(id: id, revision: row.revision, deleted: row.deleted, updatedAt: row.updatedAt, document: row.deleted ? nil : served(row.document))
     }
 
     func manifest() async throws -> CloudManifest {
@@ -120,7 +129,7 @@ final class FakeCloudTransport: CloudSyncTransport, @unchecked Sendable {
         for c in slice { last[c.id] = c.seq }
         let out = last.compactMap { id, s -> CloudChange? in
             guard let row = rows[id] else { return nil }
-            return CloudChange(seq: s, id: id, revision: row.revision, deleted: row.deleted, updatedAt: row.updatedAt, document: row.deleted ? nil : row.document)
+            return CloudChange(seq: s, id: id, revision: row.revision, deleted: row.deleted, updatedAt: row.updatedAt, document: row.deleted ? nil : served(row.document))
         }.sorted { $0.seq < $1.seq }
         return CloudChangesPage(changes: out, nextSince: slice.last?.seq ?? since, hasMore: hasMore, latestSeq: seq)
     }
@@ -2081,6 +2090,61 @@ final class SyncMergeFormTests: XCTestCase {
             XCTAssertEqual(device.host.meeting(id)?.notes, "A's new notes")
             XCTAssertEqual(device.host.meeting(id)?.folderID, folder)
         }
+    }
+
+    // MARK: Server-side fill (SM1.5)
+
+    /// The backend may start serving explicit nulls for the two external keys so that 3.8.0 and
+    /// 3.9.0 devices stop re-uploading (measured on the real 3.9.0 engine, see the 3.10.0 plan).
+    /// A 3.10.0 device must behave the same with or without it, including when the fill is turned
+    /// on between two syncs and when an imported meeting keeps real values.
+    func testServedExplicitNullsChangeNothingForACurrentDevice() async throws {
+        // Turned on after the baselines were made without it.
+        let (a, b, id) = try await pairWithOneMerge()
+        let c = try device(); await sync(c)
+        transport.servesExplicitExternalNulls = true
+        var before = puts
+        for device in [a, b, c] { await sync(device) }
+        XCTAssertEqual(puts, before, "turning it on uploads nothing")
+        let folder = UUID()
+        move(id, on: a, to: folder)
+        await sync(a, passes: 1)
+        var rounds = 0, last = puts
+        repeat { rounds += 1; last = puts; for device in [b, c, a] { await sync(device, passes: 1) } } while puts != last && rounds < 20
+        XCTAssertEqual(puts - before, 1, "one upload, the change itself")
+        // Consequence 2 and consequence 3 with the fill on.
+        a.host.meeting(id)?.notes = "A's new notes"
+        try a.host.context.save()
+        await sync(a)
+        let later = UUID()
+        move(id, on: b, to: later)
+        await sync(b); await sync(a); await sync(b); await sync(c)
+        for device in [a, b, c] {
+            XCTAssertEqual(device.host.meeting(id)?.notes, "A's new notes")
+            XCTAssertEqual(device.host.meeting(id)?.folderID, later)
+        }
+        c.host.meeting(id)?.notes = "C's newer notes"
+        try c.host.context.save()
+        transport.failNext = .offline
+        await sync(c, passes: 1)
+        let last2 = UUID()
+        move(id, on: a, to: last2)
+        await sync(a); await sync(c); await sync(a); await sync(b)
+        for device in [a, b, c] {
+            XCTAssertEqual(device.host.meeting(id)?.notes, "C's newer notes")
+            XCTAssertEqual(device.host.meeting(id)?.folderID, last2)
+        }
+        // Turned off again (a rollback): still nothing.
+        transport.servesExplicitExternalNulls = false
+        before = puts
+        for device in [a, b, c] { await sync(device) }
+        XCTAssertEqual(puts, before)
+        for device in [a, b, c] { XCTAssertEqual(device.engine.unchangedUploadCount, 0) }
+        // The filled form has the same content identity as both existing forms.
+        guard let stored = transport.rows[id]?.document else { return XCTFail("missing row") }
+        var filled = stored
+        filled["external_source"] = NSNull(); filled["external_id"] = NSNull()
+        XCTAssertEqual(MeetingSyncDocument.contentFingerprint(document: filled), MeetingSyncDocument.contentFingerprint(document: stored))
     }
 
     // MARK: Mixed versions (SM1.4)
