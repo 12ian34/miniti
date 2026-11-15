@@ -2189,7 +2189,8 @@ final class SyncMergeFormTests: XCTestCase {
         for _ in 0..<5 { await sync(new) }
         XCTAssertEqual(puts, before, "the 3.10.0 device does not answer")
         XCTAssertEqual(new.host.meeting(id)?.folderID, folder)
-        XCTAssertNotEqual(new.host.meeting(id)?.notes, "newer notes from the 3.10.0 device", "the permitted loss: the older device's copy wins")
+        XCTAssertEqual(new.host.meeting(id)?.notes ?? "", stale as? String ?? "", "the permitted loss: the older device's copy wins")
+        XCTAssertEqual(transport.rows[id]?.document["notes"] as? String ?? "", stale as? String ?? "")
         XCTAssertEqual(new.engine.unchangedUploadCount, 0)
         // The older device echoes once more, as it does after any change it downloads. Still nothing.
         try await olderDeviceReuploads(id) { $0["notes"] = stale }

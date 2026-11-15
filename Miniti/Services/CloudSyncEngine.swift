@@ -805,9 +805,13 @@ final class CloudSyncEngine: ObservableObject {
 
     private var inFlightUploadIDs: Set<UUID> = []
     /// Accepted uploads, since launch, of a meeting whose content and folder both still equalled
-    /// the copy this device last agreed with the cloud, by upload or by merge (3.10.0 SM1.4). Such an upload changes
-    /// nothing but the timestamp and makes other devices download it; between two 3.10.0 devices
-    /// the count stays 0. Observation only: it never changes what is uploaded.
+    /// the copy this device last agreed with the cloud, by upload or by merge (3.10.0 SM1.4).
+    /// Such an upload changes nothing in the cloud but the timestamp and makes other devices
+    /// download it. Ordinary folder and content edits between two 3.10.0 devices leave it at 0.
+    /// A few legitimate actions do count: hiding a meeting in a device-only folder, editing only
+    /// the part of a title beyond the server's length limit, and undoing an edit while its upload
+    /// is already queued. So a count above 0 is something to look at, not proof of a sync loop.
+    /// Observation only: it never changes what is uploaded.
     private(set) var unchangedUploadCount = 0
     private var unchangedUploadsThisPass = 0
     func isUploading(_ id: UUID) -> Bool { inFlightUploadIDs.contains(id) }
