@@ -26,6 +26,31 @@ enum AccountUITestHarness {
         #endif
     }
 
+    #if os(macOS)
+    /// UI journeys only. XCTest cannot take a window screenshot on a second display ("Image
+    /// creation failed"), and new windows open on whichever display was last in use. Every
+    /// window that becomes key or main is moved to the display with the menu bar, so the
+    /// journeys give the same result with an external monitor attached. Measured on
+    /// 2026-11-15: 25 journeys failed at their screenshot with the window on the external
+    /// display and the one tried passed once the window was moved.
+    @MainActor
+    static func keepWindowsOnPrimaryDisplay() {
+        guard isActive else { return }
+        for name in [NSWindow.didBecomeKeyNotification, NSWindow.didBecomeMainNotification] {
+            NotificationCenter.default.addObserver(forName: name, object: nil, queue: .main) { note in
+                MainActor.assumeIsolated {
+                    guard let window = note.object as? NSWindow, let primary = NSScreen.screens.first,
+                          window.screen !== primary else { return }
+                    let area = primary.visibleFrame
+                    let size = window.frame.size
+                    window.setFrameOrigin(NSPoint(x: area.midX - min(size.width, area.width) / 2,
+                                                  y: area.midY - min(size.height, area.height) / 2))
+                }
+            }
+        }
+    }
+    #endif
+
     /// Inject the effective environment size for rendered tests. Launch arguments
     /// alone do not reliably change SwiftUI's App-level environment on this runner.
     static func dynamicTypeSize(_ systemSize: DynamicTypeSize) -> DynamicTypeSize {

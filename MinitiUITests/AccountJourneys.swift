@@ -3905,6 +3905,12 @@ final class AccountJourneys: XCTestCase {
         XCTAssertTrue(app.descendants(matching: .any).matching(NSPredicate(format: "label CONTAINS 'Fixture final words' OR value CONTAINS 'Fixture final words'")).firstMatch.waitForExistence(timeout: 15), app.debugDescription)
         openHistory()
         #if os(macOS)
+        // Right after Stop the only history control is the meeting's own "history, ⌘S",
+        // which saves and opens it. The saved meeting is then listed in the sidebar's recent
+        // meetings, which start collapsed: open them here, so this journey does not depend
+        // on another test having left them open.
+        let showRecent = app.buttons["Show recent meetings in the sidebar"]
+        if showRecent.waitForExistence(timeout: 5) { showRecent.click() }
         // Mac History rows read "untitled, <date>, •, <duration>"; the segment count is checked
         // in the meeting header below.
         let saved = app.buttons.matching(NSPredicate(format: "label BEGINSWITH 'untitled, '"))
