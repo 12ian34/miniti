@@ -495,10 +495,18 @@ enum FolderSuggestions {
         let destination: Destination
     }
 
-    /// One line, whitespace collapsed, capped. The same rule the server applies.
+    /// One line, whitespace collapsed, capped. The same rule the server applies: the cap
+    /// counts UTF-16 units, as the server does, and never cuts a character in half.
     static func text(_ value: String?, max: Int) -> String {
         let collapsed = (value ?? "").split(whereSeparator: \.isWhitespace).joined(separator: " ")
-        return String(collapsed.prefix(max))
+        guard collapsed.utf16.count > max else { return collapsed }
+        var out = "", units = 0
+        for character in collapsed {
+            let size = character.utf16.count
+            if units + size > max { break }
+            out.append(character); units += size
+        }
+        return out
     }
 
     /// A meeting as it is sent, or nil when it has no summary: a title alone is not enough.
@@ -597,14 +605,19 @@ enum FolderSuggestions {
         var placed = Set<Int>()
         var out: [Suggestion] = []
         for case let row as [String: Any] in ((json as? [String: Any])?["placements"] as? [Any]) ?? [] {
+            // One contract with the server: a whole JSON number, or a string of one to three
+            // digits with optional space around it. The destination is trimmed of all space.
             let number: Int?
             if let value = row["meeting"] as? NSNumber, !(value === kCFBooleanTrue || value === kCFBooleanFalse), value.doubleValue == Double(value.intValue) {
                 number = value.intValue
-            } else if let value = row["meeting"] as? String { number = Int(value) } else { number = nil }
+            } else if let value = (row["meeting"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines),
+                      (1...3).contains(value.count), value.allSatisfy({ $0.isASCII && $0.isNumber }) {
+                number = Int(value)
+            } else { number = nil }
             guard let number, number >= 1, number <= items.count, !placed.contains(number),
-                  let to = (row["to"] as? String)?.trimmingCharacters(in: .whitespaces) else { continue }
+                  let to = (row["to"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) else { continue }
             let meeting = items[number - 1].id
-            if to.hasPrefix("F"), let index = Int(to.dropFirst()), to.dropFirst().allSatisfy(\.isNumber), to.count <= 4 {
+            if to.hasPrefix("F"), let index = Int(to.dropFirst()), to.dropFirst().allSatisfy({ $0.isASCII && $0.isNumber }), to.count <= 4 {
                 guard index >= 1, index <= folders.count else { continue }
                 placed.insert(number); out.append(.init(meeting: meeting, destination: .folder(folders[index - 1].id)))
             } else if let category = FolderMatcher.Category(rawValue: to.lowercased()) {

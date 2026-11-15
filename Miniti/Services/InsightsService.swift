@@ -2140,6 +2140,7 @@ final class InsightsService: Sendable {
         apiKey: String
     ) async throws -> [FolderSuggestions.Suggestion] {
         guard !items.isEmpty else { return [] }
+        try Task.checkCancellation()
         let requestBody = OpenAIRequest(
             model: model.rawValue,
             reasoningEffort: model.reasoningEffort,

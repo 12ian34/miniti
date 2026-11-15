@@ -322,26 +322,38 @@ extension AppState {
         return undo
     }
 
-    func automaticallyFileMeeting(_ meeting: Meeting) {
-        guard automaticFolderFiling, meeting.folderManual != true, meeting.endTime != nil,
-              let modelContext else { return }
-        var query = FetchDescriptor<Meeting>(sortBy: [SortDescriptor(\.startTime, order: .reverse)])
-        query.fetchLimit = 1000
-        guard let recent = try? modelContext.fetch(query) else { return }
-        let proposals = folderProposals(meetings: recent, onlyMeetingID: meeting.id)
+    /// `suggesting` is true only where a meeting has just completed and its summary has
+    /// settled. Launch recovery and stale-meeting repair file by the local rules alone: they
+    /// run without the person doing anything, including right after an upgrade, and must
+    /// never send content.
+    func automaticallyFileMeeting(_ meeting: Meeting, suggesting: Bool = false) {
+        guard automaticFolderFiling, meeting.folderManual != true, meeting.endTime != nil else { return }
+        let proposals = localFolderProposals(for: meeting)
         _ = applyFolderProposals(proposals)
         // Only when the local rules found nothing, and at most once per meeting: ask for a
         // suggestion among the folders that already exist.
-        guard proposals.isEmpty, meetingFolders.folder(meeting.folderID) == nil,
+        guard suggesting, proposals.isEmpty, meeting.automaticCompletionSuspended != true,
+              meetingFolders.folder(meeting.folderID) == nil,
               folderSuggestionBlock == nil, !folderSuggestionAsked.contains(meeting.id),
               !folderSuggestionItems(for: [meeting]).isEmpty else { return }
         folderSuggestionAsked.insert(meeting.id)
         Task { [weak self] in
             guard let self else { return }
             let suggested = await self.suggestedFolderProposals(for: [meeting], creatingFolders: false)
-            guard self.automaticFolderFiling else { return }
-            _ = self.applyFolderProposals(suggested)
+            guard self.automaticFolderFiling, !suggested.isEmpty else { return }
+            // The rules may be able to place it by now (a folder was added, a series was
+            // filed by hand). They outrank a suggestion.
+            let local = self.localFolderProposals(for: meeting)
+            _ = self.applyFolderProposals(local.isEmpty ? suggested : local)
         }
+    }
+
+    private func localFolderProposals(for meeting: Meeting) -> [FolderProposal] {
+        guard let modelContext else { return [] }
+        var query = FetchDescriptor<Meeting>(sortBy: [SortDescriptor(\.startTime, order: .reverse)])
+        query.fetchLimit = 1000
+        guard let recent = try? modelContext.fetch(query) else { return [] }
+        return folderProposals(meetings: recent, onlyMeetingID: meeting.id)
     }
 
     // MARK: AI folder suggestions (3.10.0 FO2.4)
@@ -362,7 +374,7 @@ extension AppState {
         if privateModeEnabled { return .privateMode }
         if !folderAISuggestions { return .off }
         if !aiContentPermitted { return .permission }
-        if appMode == .managed { return minitiAPIService == nil ? .unavailable : nil }
+        if appMode == .managed { return minitiAPIService == nil || !clientAuthStatus.isEnrolled ? .unavailable : nil }
         return insightsService == nil || openaiApiKey.isEmpty ? .unavailable : nil
     }
 
@@ -379,49 +391,82 @@ extension AppState {
         }
     }
 
-    /// One request per 100 meetings. Throws nothing: a failed or refused request simply adds
+    /// What was sent for one meeting, kept to check the answer still applies to it.
+    private struct SentForSuggestion {
+        let meeting: Meeting
+        let item: FolderSuggestions.Item
+        let title: String
+    }
+
+    private func currentSuggestionInput(_ meeting: Meeting) -> SentForSuggestion? {
+        folderSuggestionItems(for: [meeting]).first.map { .init(meeting: meeting, item: $0.item, title: meeting.title) }
+    }
+
+    /// Proposals from AI suggestions for meetings the local rules left unfiled. Nothing is
+    /// moved here, and nothing is thrown: a failed, refused or cancelled request simply adds
     /// no suggestions, and whatever the local rules proposed stays as it was.
-    func requestFolderSuggestions(items: [FolderSuggestions.Item], folders: [FolderSuggestions.FolderRef]) async -> [FolderSuggestions.Suggestion] {
-        var out: [FolderSuggestions.Suggestion] = []
-        var start = 0
-        while start < items.count {
-            // Checked before every request: private mode or the setting may change meanwhile.
-            guard folderSuggestionBlock == nil else { break }
-            let batch = Array(items[start..<min(start + FolderSuggestions.batchSize, items.count)])
-            start += FolderSuggestions.batchSize
+    ///
+    /// One request per 100 meetings. Each batch is built from the meetings as they are at
+    /// that moment, and checked again at the instant it leaves the device, so a meeting
+    /// marked Local or deleted while an earlier batch was in flight is never sent, and
+    /// nothing is sent once the setting is off, private mode is on, AI permission is
+    /// withdrawn or the account has changed. Cancelling the task stops before the next batch.
+    ///
+    /// `creatingFolders` lets a suggested category that has no folder yet become a new one
+    /// (Preview, where Apply is still needed); automatic filing passes false and only ever
+    /// uses folders that exist.
+    func suggestedFolderProposals(for meetings: [Meeting], creatingFolders: Bool) async -> [FolderProposal] {
+        guard folderSuggestionBlock == nil else { return [] }
+        let owner = meetingFolders.owner
+        let account = clientAuthStatus.accountID
+        let generation = clientAuthManager.credentialGeneration
+        let managed = appMode == .managed
+        let stillSameOwner = { [weak self] in
+            guard let self else { return false }
+            return self.folderSuggestionBlock == nil && self.meetingFolders.owner == owner
+                && self.clientAuthStatus.accountID == account && self.clientAuthManager.credentialGeneration == generation
+                && (self.appMode == .managed) == managed
+        }
+        var pending = meetings.filter { currentSuggestionInput($0) != nil }
+        var sent: [UUID: SentForSuggestion] = [:]
+        var suggestions: [FolderSuggestions.Suggestion] = []
+        while !pending.isEmpty {
+            guard stillSameOwner(), !Task.isCancelled else { break }
+            let batch = Array(pending.prefix(FolderSuggestions.batchSize)).compactMap(currentSuggestionInput)
+            pending.removeFirst(min(FolderSuggestions.batchSize, pending.count))
+            guard !batch.isEmpty else { continue }
+            let refs = FolderSuggestions.folderRefs(meetingFolders.active)
+            // Asked again at the moment of sending: signing in can take a while.
+            let mayDispatch: @MainActor @Sendable () -> Bool = { [weak self] in
+                guard let self, stillSameOwner(), !Task.isCancelled else { return false }
+                return batch.allSatisfy { self.currentSuggestionInput($0.meeting)?.item == $0.item }
+            }
             do {
-                if appMode == .managed, let minitiAPIService {
-                    out += try await minitiAPIService.suggestFolders(deviceId: DeviceIdentifier.getOrCreateDeviceId(), items: batch, folders: folders)
-                } else if let insightsService, !openaiApiKey.isEmpty {
-                    out += try await insightsService.suggestFolders(items: batch, folders: folders, apiKey: openaiApiKey)
+                let answers: [FolderSuggestions.Suggestion]
+                if managed, let minitiAPIService {
+                    answers = try await minitiAPIService.suggestFolders(
+                        deviceId: DeviceIdentifier.getOrCreateDeviceId(), items: batch.map(\.item), folders: refs,
+                        expectedOwner: account.map { ($0, generation) }, mayDispatch: mayDispatch)
+                } else if !managed, let insightsService, !openaiApiKey.isEmpty, mayDispatch() {
+                    answers = try await insightsService.suggestFolders(items: batch.map(\.item), folders: refs, apiKey: openaiApiKey)
                 } else { break }
+                suggestions += answers
+                for entry in batch { sent[entry.meeting.id] = entry }
             } catch {
                 DebugLogger.shared.log(.app, "Folder suggestions not available: \(type(of: error))")
                 break
             }
         }
-        return out
-    }
-
-    /// Proposals from AI suggestions for meetings the local rules left unfiled. Nothing is
-    /// moved here. `creatingFolders` lets a suggested category that has no folder yet become
-    /// a new one (Preview, where Apply is still needed); automatic filing passes false and
-    /// only ever uses folders that exist.
-    func suggestedFolderProposals(for meetings: [Meeting], creatingFolders: Bool) async -> [FolderProposal] {
-        guard folderSuggestionBlock == nil else { return [] }
-        let eligible = folderSuggestionItems(for: meetings)
-        guard !eligible.isEmpty else { return [] }
-        let owner = meetingFolders.owner
-        let refs = FolderSuggestions.folderRefs(meetingFolders.active)
-        let suggestions = await requestFolderSuggestions(items: eligible.map(\.item), folders: refs)
         // The account, folders or meetings may have changed while waiting.
-        guard owner == meetingFolders.owner, folderSuggestionBlock == nil else { return [] }
-        let byID = Dictionary(eligible.map { ($0.meeting.id, $0.meeting) }, uniquingKeysWith: { first, _ in first })
+        guard stillSameOwner(), !Task.isCancelled else { return [] }
         var created: [FolderMatcher.Category: MeetingFolder] = [:]
         var live = meetingFolders.active
         return suggestions.compactMap { suggestion -> FolderProposal? in
-            guard let meeting = byID[suggestion.meeting], !isMeetingDeleted(meeting.id), !meeting.syncExcluded,
-                  meeting.folderManual != true, meetingFolders.folder(meeting.folderID) == nil else { return nil }
+            // The answer is for the title and summary that were sent. A meeting that was
+            // edited, resumed, filed, marked Local or deleted since gets no proposal.
+            guard let was = sent[suggestion.meeting], let now = currentSuggestionInput(was.meeting),
+                  now.item == was.item, now.title == was.title else { return nil }
+            let meeting = was.meeting
             let folder: MeetingFolder
             switch suggestion.destination {
             case .folder(let id):
@@ -444,18 +489,8 @@ extension AppState {
                     folder = new
                 }
             }
-            return .init(owner: owner, meeting: meeting, title: meeting.title, previousFolder: meeting.folderID,
+            return .init(owner: owner, meeting: meeting, title: was.title, previousFolder: meeting.folderID,
                          previousManual: meeting.folderManual, previousLocalOnly: meeting.folderLocalOnly, folder: folder, suggested: true)
         }
-    }
-
-    func cloudSyncFolders() async {
-        guard let api = minitiAPIService, let account = cloudAccountID, cloudPauseReason == nil else { return }
-        meetingFolders.selectOwner(account)
-        let credential = clientAuthManager.credentialGeneration
-        await meetingFolders.sync(allowed: { [weak self] in
-            self?.cloudPauseReason == nil && self?.cloudAccountID == account && self?.clientAuthManager.credentialGeneration == credential
-        }, read: { try await api.readFolders(accountID: account, credentialGeneration: credential) },
-        write: { try await api.writeFolders($0, accountID: account, credentialGeneration: credential) })
     }
 }

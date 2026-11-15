@@ -1029,6 +1029,7 @@ final class FolderSuggestionTests: XCTestCase {
         let manager = TestSupport.enrolledAuthManager(session: session)
         state.clientAuthManager = manager
         state.minitiAPIService = MinitiAPIService(session: session, auth: manager)
+        state.refreshClientAuthStatus()
         let log = requests!
         StubURLProtocol.handler = { request in
             guard request.url?.path.hasSuffix("/insights") == true else { return (200, Data("{}".utf8)) }
@@ -1226,8 +1227,15 @@ final class FolderSuggestionTests: XCTestCase {
         _ = await state.suggestedFolderProposals(for: [unfiled], creatingFolders: true)
 
         state.hasAcceptedTerms = true
+        let service = state.minitiAPIService
         state.minitiAPIService = nil
         XCTAssertEqual(state.folderSuggestionBlock, .unavailable)
+        // Signed out of managed mode: nothing to ask either.
+        state.minitiAPIService = service
+        state.clientAuthManager = TestSupport.unenrolledAuthManager(session: session)
+        state.refreshClientAuthStatus()
+        XCTAssertEqual(state.folderSuggestionBlock, .unavailable)
+        state.minitiAPIService = nil
         _ = await state.suggestedFolderProposals(for: [unfiled], creatingFolders: true)
 
         try await Task.sleep(nanoseconds: 200_000_000)
@@ -1292,12 +1300,163 @@ final class FolderSuggestionTests: XCTestCase {
         // The rules find nothing here: one request, and the suggestion is applied.
         let unclear = meeting("Quarterly check-in", in: context)
         try context.save()
-        state.automaticallyFileMeeting(unclear)
-        state.automaticallyFileMeeting(unclear)
+        state.automaticallyFileMeeting(unclear, suggesting: true)
+        state.automaticallyFileMeeting(unclear, suggesting: true)
         try await TestSupport.waitUntil(timeout: 5) { unclear.folderID != nil }
         XCTAssertEqual(unclear.folderID, acme.id)
         XCTAssertEqual(unclear.folderManual, false)
         XCTAssertEqual(requests.count, 1, "asked once, however often filing runs")
+    }
+
+    // MARK: Things that change while a request is on its way
+
+    /// Holds the first folder request until the test releases it, so the test can change
+    /// things while that request is in flight.
+    private func makeHeldApp(answer: @escaping ([String: Any]) -> (Int, Any) = { _ in (200, ["suggestions": []]) })
+        throws -> (AppState, ModelContext, started: XCTestExpectation, release: DispatchSemaphore) {
+        let started = expectation(description: "the first folder request is held")
+        let release = DispatchSemaphore(value: 0)
+        let first = LockedCounter()
+        let (state, context) = try makeApp { body in
+            if first.next() == 1 {
+                started.fulfill()
+                XCTAssertEqual(release.wait(timeout: .now() + 10), .success, "test did not release the request")
+            }
+            return answer(body)
+        }
+        return (state, context, started, release)
+    }
+
+    func testAMeetingMarkedLocalOrDeletedDuringAnEarlierBatchIsNeverSent() async throws {
+        let (state, context, started, release) = try makeHeldApp()
+        defer { release.signal() }
+        let many = (0..<230).map { meeting("Meeting \($0)", in: context) }
+        try context.save()
+        let task = Task { await state.suggestedFolderProposals(for: many, creatingFolders: true) }
+        await fulfillment(of: [started], timeout: 5)
+        // While batch one is in flight: one later meeting is kept on this device, one loses
+        // its summary, and one is given a folder by hand.
+        many[150].syncExcluded = true
+        many[151].summaryText = nil
+        many[152].folderManual = true
+        release.signal()
+        _ = await task.value
+        let later = requests.bodies.dropFirst().flatMap { ($0["meetings"] as? [[String: String]]) ?? [] }.compactMap { $0["id"] }
+        XCTAssertEqual(requests.count, 3)
+        for changed in [many[150], many[151], many[152]] { XCTAssertFalse(later.contains(changed.id.uuidString), changed.title) }
+        XCTAssertEqual(later.count, 127, "the other later meetings were still sent")
+    }
+
+    func testNothingMoreIsSentOnceTheSettingPrivateModeOrPermissionChangesMidRequest() async throws {
+        for change in ["setting", "private mode", "permission"] {
+            requests = LockedRequestLog()
+            let (state, context, started, release) = try makeHeldApp()
+            let many = (0..<230).map { meeting("Meeting \($0)", in: context) }
+            let task = Task { await state.suggestedFolderProposals(for: many, creatingFolders: true) }
+            await fulfillment(of: [started], timeout: 5)
+            switch change {
+            case "setting": state.folderAISuggestions = false
+            case "private mode": state.privateModeEnabled = true
+            default: state.hasAcceptedTerms = false
+            }
+            release.signal()
+            let proposals = await task.value
+            XCTAssertEqual(requests.count, 1, "\(change): the request already on its way is the last")
+            XCTAssertEqual(proposals.count, 0, "\(change): and its answer is not used")
+        }
+    }
+
+    func testARequestIsNotSentIfPermissionGoesWhileSigningIn() async throws {
+        // The gate is asked at the moment the request would leave the device.
+        let (state, context) = try makeApp()
+        _ = context
+        let api = try XCTUnwrap(state.minitiAPIService)
+        let item = FolderSuggestions.Item(id: UUID(), title: "Quarterly check-in", summary: "Agreed next steps.")
+        do {
+            _ = try await api.suggestFolders(deviceId: UUID().uuidString, items: [item], folders: [], mayDispatch: { false })
+            XCTFail("a refused request must not return an answer")
+        } catch {
+            XCTAssertTrue(error is CancellationError, "\(error)")
+        }
+        XCTAssertEqual(requests.count, 0)
+        _ = try await api.suggestFolders(deviceId: UUID().uuidString, items: [item], folders: [], mayDispatch: { true })
+        XCTAssertEqual(requests.count, 1)
+    }
+
+    func testCancellingStopsBeforeTheNextBatch() async throws {
+        let (state, context, started, release) = try makeHeldApp()
+        let many = (0..<230).map { meeting("Meeting \($0)", in: context) }
+        let task = Task { await state.suggestedFolderProposals(for: many, creatingFolders: true) }
+        await fulfillment(of: [started], timeout: 5)
+        task.cancel()   // what leaving Preview does
+        release.signal()
+        let proposals = await task.value
+        XCTAssertEqual(requests.count, 1)
+        XCTAssertEqual(proposals.count, 0)
+    }
+
+    func testAnAnswerForAMeetingThatChangedMeanwhileIsDropped() async throws {
+        var acmeID = ""
+        let (state, context, started, release) = try makeHeldApp { body in
+            (200, ["suggestions": ((body["meetings"] as? [[String: String]]) ?? []).map { ["id": $0["id"]!, "folder_id": acmeID] }])
+        }
+        defer { release.signal() }
+        let acme = MeetingFolder(id: UUID(), name: "Acme")
+        XCTAssertTrue(state.meetingFolders.edit(acme))
+        acmeID = acme.id.uuidString
+        let same = meeting("Quarterly check-in", in: context)
+        let retitled = meeting("Numbers walkthrough", in: context)
+        let resummarised = meeting("Planning chat", in: context)
+        let resumed = meeting("Resumed later", in: context)
+        let nowLocal = meeting("Marked local", in: context)
+        let task = Task { await state.suggestedFolderProposals(for: [same, retitled, resummarised, resumed, nowLocal], creatingFolders: true) }
+        await fulfillment(of: [started], timeout: 5)
+        retitled.title = "Something else entirely"
+        resummarised.summaryText = "A different summary now."
+        resumed.endTime = nil
+        nowLocal.syncExcluded = true
+        release.signal()
+        let proposals = await task.value
+        XCTAssertEqual(proposals.map(\.id), [same.id], "only the meeting that is still what was sent")
+        XCTAssertEqual(proposals.first?.title, "Quarterly check-in")
+    }
+
+    func testLaunchRecoveryAndSuspendedMeetingsNeverAsk() async throws {
+        let (state, context) = try makeApp()
+        let interrupted = meeting("Quarterly check-in", in: context)
+        try context.save()
+        // Launch recovery and stale-meeting repair call this form: local rules only.
+        state.automaticallyFileMeeting(interrupted)
+        // A meeting whose automatic completion is suspended is never asked about either.
+        let suspended = meeting("Planning chat", in: context)
+        suspended.automaticCompletionSuspended = true
+        try context.save()
+        state.automaticallyFileMeeting(suspended, suggesting: true)
+        try await Task.sleep(nanoseconds: 300_000_000)
+        XCTAssertEqual(requests.count, 0)
+        XCTAssertNil(interrupted.folderID); XCTAssertNil(suspended.folderID)
+    }
+
+    func testTheTextCapAndAnswerRulesMatchTheServer() {
+        // Shared edge cases with miniti-api lib/folderSuggestions.test.ts.
+        XCTAssertEqual(FolderSuggestions.text(String(repeating: "😀", count: 300), max: 500), String(repeating: "😀", count: 250))
+        XCTAssertEqual(FolderSuggestions.text(String(repeating: "a", count: 159) + "😀", max: 160), String(repeating: "a", count: 159))
+        let items = (0..<3).map { FolderSuggestions.Item(id: UUID(), title: "M\($0)", summary: "s") }
+        let folders = [FolderSuggestions.FolderRef(id: UUID(), name: "Acme"), FolderSuggestions.FolderRef(id: UUID(), name: "Team")]
+        let accepted: [String: Any] = ["placements": [["meeting": 1, "to": "F1"], ["meeting": " 2 ", "to": "\nF2\n"], ["meeting": "3", "to": " Investors "]]]
+        XCTAssertEqual(FolderSuggestions.parsePlacements(accepted, items: items, folders: folders), [
+            .init(meeting: items[0].id, destination: .folder(folders[0].id)),
+            .init(meeting: items[1].id, destination: .folder(folders[1].id)),
+            .init(meeting: items[2].id, destination: .category(.investors)),
+        ])
+        for meeting: Any in ["1.0", "1e0", "0x1", "1234", "", " ", "+1", "-1", 1.5, true, NSNull(), [1]] {
+            XCTAssertEqual(FolderSuggestions.parsePlacements(["placements": [["meeting": meeting, "to": "F1"]]], items: items, folders: folders), [], "\(meeting)")
+        }
+        for to in ["f1", "F", "F1.0", "F-1", "F1 2", folders[0].id.uuidString] {
+            XCTAssertEqual(FolderSuggestions.parsePlacements(["placements": [["meeting": 1, "to": to]]], items: items, folders: folders), [], to)
+        }
+        XCTAssertEqual(FolderSuggestions.parsePlacements(["placements": [["meeting": 1, "to": "F01"]]], items: items, folders: folders),
+                       [.init(meeting: items[0].id, destination: .folder(folders[0].id))])
     }
 }
 

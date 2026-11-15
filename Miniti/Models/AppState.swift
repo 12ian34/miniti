@@ -9788,7 +9788,9 @@ final class AppState: ObservableObject {
             // recording's completion. Delivery uses current saved data and its owner.
             if meeting.automaticCompletionOwner == automaticCompletionOwner,
                !isMeetingDeleted(meeting.id), meeting.modelContext != nil {
-                automaticallyFileMeeting(meeting)
+                // The one place a folder suggestion may be asked for: this meeting has just
+                // completed and its summary has settled.
+                automaticallyFileMeeting(meeting, suggesting: valid)
                 completeSavedMeetingExports(meeting)
             }
         }

@@ -97,6 +97,11 @@ struct MeetingFolderManager: View {
     @State private var suggestionAsked: Set<UUID> = []
     @State private var suggesting = false
     @State private var suggestionRound = 0
+    /// The request in flight. Leaving, clearing or applying Preview cancels it, which stops
+    /// before the next batch is sent.
+    @State private var suggestionTask: Task<Void, Never>?
+    /// Meetings in the request in flight. If it is cancelled they have not been asked about.
+    @State private var suggestionInFlight: Set<UUID> = []
     private static let unfiledPageSize = 200
 
     private struct PreviewGroup: Identifiable {
@@ -286,7 +291,7 @@ struct MeetingFolderManager: View {
                     Toggle("Include manually filed meetings", isOn: $regroupManual)
                         .onChange(of: regroupManual) { _, _ in refreshPreview() }
                     FolderSuggestionToggle { on in
-                        if !on { suggested = []; suggestionRound += 1; suggesting = false }
+                        if !on { suggested = []; stopSuggesting() }
                         refreshPreview()
                     }
                 }
@@ -347,6 +352,8 @@ struct MeetingFolderManager: View {
                 .accessibilityIdentifier("folders.apply")
             }
         }
+        // Back, Close and Apply all leave this screen: stop asking for suggestions.
+        .onDisappear { stopSuggesting() }
         .alert("New folder", isPresented: Binding(get: { namingFolderFor != nil }, set: { if !$0 { namingFolderFor = nil } })) {
             TextField("Name", text: $newFolderName)
             Button("Cancel", role: .cancel) { namingFolderFor = nil }
@@ -416,7 +423,13 @@ struct MeetingFolderManager: View {
 
     private func clearPreview() {
         proposals = []; unfiled = []; choices = [:]; newFolders = []; applyIssue = nil; unfiledShown = Self.unfiledPageSize
-        suggested = []; suggestionAsked = []; suggesting = false; suggestionRound += 1
+        suggested = []; suggestionAsked = []; stopSuggesting()
+    }
+
+    private func stopSuggesting() {
+        suggestionTask?.cancel(); suggestionTask = nil
+        suggestionAsked.subtract(suggestionInFlight); suggestionInFlight = []
+        suggesting = false; suggestionRound += 1
     }
 
     /// Ask once about each meeting the rules left unfiled. Opening Preview moves nothing:
@@ -430,11 +443,15 @@ struct MeetingFolderManager: View {
         suggestionRound += 1
         let round = suggestionRound
         suggesting = true
-        Task {
+        suggestionInFlight = Set(targets.map(\.id))
+        suggestionTask?.cancel()
+        suggestionTask = Task {
             let found = await appState.suggestedFolderProposals(for: targets, creatingFolders: true)
             // A cleared or refreshed Preview has moved on; its answers are not for this screen.
-            guard round == suggestionRound else { return }
+            guard round == suggestionRound, !Task.isCancelled else { return }
             suggesting = false
+            suggestionTask = nil
+            suggestionInFlight = []
             guard !found.isEmpty else { return }
             suggested += found
             refreshPreview()

@@ -74,8 +74,14 @@ final class MinitiAPIService: @unchecked Sendable {
     /// is thrown as `ServiceError.serverError`, as every caller has always seen it. Cloud
     /// calls pass `preservingSignInCause` and get a `SignInFailure` with the cause instead,
     /// so sync can say what happened (3.10.0 SE1, E-7).
+    ///
+    /// `mayDispatch` is asked immediately before each time the request leaves the device,
+    /// including the repeat after a token refresh. Signing in can take a while, and a
+    /// permission the request depends on may have been withdrawn in the meantime; when it
+    /// answers false nothing is sent and the call ends as cancelled.
     func send(_ original: URLRequest, requiresAuth: Bool = true, expectedOwner: (account: String, generation: Int)? = nil,
-              preservingSignInCause: Bool = false) async throws -> (Data, URLResponse) {
+              preservingSignInCause: Bool = false,
+              mayDispatch: (@MainActor @Sendable () -> Bool)? = nil) async throws -> (Data, URLResponse) {
         try Task.checkCancellation()
         var correlated = original
         let context = AIRequestDiagnostics.current
@@ -89,7 +95,7 @@ final class MinitiAPIService: @unchecked Sendable {
         }
         let result: (Data, URLResponse)
         do {
-            result = try await sendAuthorized(correlated, requiresAuth: requiresAuth, expectedOwner: expectedOwner)
+            result = try await sendAuthorized(correlated, requiresAuth: requiresAuth, expectedOwner: expectedOwner, mayDispatch: mayDispatch)
         } catch let failure as SignInFailure {
             if preservingSignInCause { throw failure }
             throw ServiceError.serverError(failure.error.localizedDescription)
@@ -127,7 +133,8 @@ final class MinitiAPIService: @unchecked Sendable {
         init(_ error: ClientAuthError) { self.error = error }
     }
 
-    private func sendAuthorized(_ original: URLRequest, requiresAuth: Bool, expectedOwner: (account: String, generation: Int)?) async throws -> (Data, URLResponse) {
+    private func sendAuthorized(_ original: URLRequest, requiresAuth: Bool, expectedOwner: (account: String, generation: Int)?,
+                                mayDispatch: (@MainActor @Sendable () -> Bool)? = nil) async throws -> (Data, URLResponse) {
         if let expectedOwner {
             guard auth.status.accountID == expectedOwner.account,
                   auth.credentialGeneration == expectedOwner.generation else { throw ServiceError.notEnrolled }
@@ -155,6 +162,7 @@ final class MinitiAPIService: @unchecked Sendable {
             guard generation == expectedOwner.generation,
                   auth.status.accountID == expectedOwner.account else { throw ServiceError.notEnrolled }
         }
+        if let mayDispatch, await !mayDispatch() { throw CancellationError() }
         let (data, response) = try await session.data(for: request)
         guard let http = response as? HTTPURLResponse, http.statusCode == 401, auth.isEnrolled else {
             return (data, response)
@@ -174,6 +182,7 @@ final class MinitiAPIService: @unchecked Sendable {
             } catch let error as ClientAuthError {
                 throw SignInFailure(error)
             }
+            if let mayDispatch, await !mayDispatch() { throw CancellationError() }
             return try await session.data(for: retry)
         case "installation_revoked", "device_auth_required":
             guard auth.clearLocal(reason: "revoke", ifGeneration: generation) else { throw ServiceError.notEnrolled }
@@ -1736,14 +1745,16 @@ final class MinitiAPIService: @unchecked Sendable {
     func suggestFolders(
         deviceId: String,
         items: [FolderSuggestions.Item],
-        folders: [FolderSuggestions.FolderRef]
+        folders: [FolderSuggestions.FolderRef],
+        expectedOwner: (account: String, generation: Int)? = nil,
+        mayDispatch: (@MainActor @Sendable () -> Bool)? = nil
     ) async throws -> [FolderSuggestions.Suggestion] {
         guard !items.isEmpty else { return [] }
         let startedAt = CFAbsoluteTimeGetCurrent()
         let request = makeRequest(path: "/insights", method: "POST", deviceId: deviceId,
                                   body: FolderSuggestions.requestBody(items: items, folders: folders))
         DebugLogger.shared.log(.app, "API folder suggestions request: meetings=\(items.count), folders=\(folders.count)")
-        let (data, response) = try await send(request)
+        let (data, response) = try await send(request, expectedOwner: expectedOwner, mayDispatch: mayDispatch)
         try validateResponse(response, data: data)
         let suggestions = FolderSuggestions.parseManaged(try? JSONSerialization.jsonObject(with: data), items: items, folders: folders)
         DebugLogger.shared.log(.app, "API folder suggestions response: duration=\(String(format: "%.2fs", CFAbsoluteTimeGetCurrent() - startedAt)), placed=\(suggestions.count)")
