@@ -236,8 +236,8 @@ struct DataFlowSummary: Equatable {
                 : "Text goes straight to OpenAI with your own key.")
                 + " Catch-up and investigations run when you ask. Saved and watch meetings are processed when they finish, recording or not."
                 + (i.folderAISuggestions
-                    ? " Folder suggestions send the title and summary of each finished meeting the rules cannot place, and of unfiled meetings when you press Suggest folders with AI. Never transcripts."
-                    : " Suggest folders with AI sends the title and summary of unfiled meetings, only when you press it. Never transcripts.")
+                    ? " Folder suggestions send your folder names with the title and summary of each finished meeting the rules cannot place, and of unfiled meetings when you press Suggest folders with AI. Never transcripts, and never folders kept on this device."
+                    : " Suggest folders with AI sends your folder names with the title and summary of unfiled meetings, only when you press it. Never transcripts, and never folders kept on this device.")
             rows.append(Row(id: "openai", group: .transcriptionAndAI, title: openAITitle, status: .usedForRecordings, summary: summary, details: details, configure: Jump(label: "AI", target: "ai.speakerNames"), alwaysVisible: true))
         }
 

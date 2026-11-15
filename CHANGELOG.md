@@ -3,11 +3,11 @@
 ### Unreleased - v3.10.0
 
 - new: (macOS and iOS) folder Preview shows which meetings stay unfiled and lets you pick a folder for each one there
-- new: (macOS and iOS) Suggest folders with AI in Preview, for meetings the rules cannot place. Off until you press it, and it sends titles and summaries only
+- new: (macOS and iOS) Suggest folders with AI in Preview, for meetings the rules cannot place. It runs when you press it, or for each new meeting if you turn on Use AI to file new meetings. It sends titles, summaries and your folder names, never transcripts
 - improvement: (macOS and iOS) folder Preview finds a folder for more meetings, using who was in the meeting
 - improvement: (macOS and iOS) new default folders, one word each: Team, Customers, Product, Hiring, Investors, Partners, Intros, Learning, Planning
 - improvement: (macOS and iOS) turning cloud on or off now applies to every device on your account
-- improvement: (macOS and iOS) moving a meeting to a folder no longer makes your other devices upload it again
+- improvement: (macOS and iOS) moving a meeting to a folder no longer makes your other devices upload it again, once they are on 3.10.0
 - improvement: (macOS and iOS) live transcription reconnects less often during music, noise or silence
 - improvement: (macOS and iOS) buttons and settings use "and", never "&"
 - fix: (macOS) Escape always closes the calendar event card on Home

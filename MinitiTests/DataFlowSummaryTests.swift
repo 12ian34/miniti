@@ -112,11 +112,11 @@ final class DataFlowSummaryTests: XCTestCase {
     func testOpenAIRowSaysWhatFolderSuggestionsSendAndWhen() {
         var inputs = macDefaults
         let onRequest = row(DataFlowSummary.build(inputs), "openai").details ?? ""
-        XCTAssertTrue(onRequest.contains("Suggest folders with AI sends the title and summary of unfiled meetings, only when you press it. Never transcripts."), onRequest)
+        XCTAssertTrue(onRequest.contains("Suggest folders with AI sends your folder names with the title and summary of unfiled meetings, only when you press it. Never transcripts, and never folders kept on this device."), onRequest)
         inputs.folderAISuggestions = true
         let automatic = row(DataFlowSummary.build(inputs), "openai").details ?? ""
-        XCTAssertTrue(automatic.contains("Folder suggestions send the title and summary of each finished meeting the rules cannot place"), automatic)
-        XCTAssertTrue(automatic.contains("Never transcripts."), automatic)
+        XCTAssertTrue(automatic.contains("Folder suggestions send your folder names with the title and summary of each finished meeting the rules cannot place"), automatic)
+        XCTAssertTrue(automatic.contains("Never transcripts, and never folders kept on this device."), automatic)
         for text in [onRequest, automatic] {
             XCTAssertFalse(text.contains("&"))
             XCTAssertFalse(text.contains("\u{2014}"))

@@ -2954,6 +2954,9 @@ final class AppState: ObservableObject {
             defer { if generation == self.deepgramReconnectGeneration { self.deepgramReconnectTask = nil } }
             let backoffSeconds: [UInt64] = [1, 2, 5]
             
+            // The old socket is drained once, before the first attempt that actually replaces it.
+            // An attempt that fails earlier (credentials could not be fetched) leaves it open.
+            var drainedOldSocket = false
             for (idx, delay) in backoffSeconds.enumerated() {
                 try? await Task.sleep(nanoseconds: delay * 1_000_000_000)
                 guard !Task.isCancelled else { return }
@@ -3002,7 +3005,8 @@ final class AppState: ObservableObject {
                 // moved. If Stop arrives mid-drain it cancels this task and takes the socket for its
                 // own drain. Cancelled by anything else, nobody would finish or close a socket that
                 // has already stopped sending, so this task closes it.
-                if finishPendingFirst, idx == 0, !self.sessionTranscribesOnDevice, deepgramService.connectionState == .connected {
+                if finishPendingFirst, !drainedOldSocket, !self.sessionTranscribesOnDevice, deepgramService.connectionState == .connected {
+                    drainedOldSocket = true
                     let draining = deepgramService.diagnosticConnectionGeneration
                     await deepgramService.gracefulDisconnect(leaveOpenIfCancelled: true)
                     guard !Task.isCancelled, self.isRecording, generation == self.deepgramReconnectGeneration else {
@@ -4274,7 +4278,7 @@ final class AppState: ObservableObject {
                 : "transcript still dead after reconnect gave up"
             DebugLogger.shared.log(
                 .app,
-                "Transcript stall detected (\(String(format: "%.1f", transcriptGap))s gap, class=\(gapReason?.rawValue ?? "on_device"), dg=\(deepgramService.connectionState)) — reconnecting Deepgram: \(reason)"
+                "Transcript stall detected (\(String(format: "%.1f", transcriptGap))s gap, class=\(gapReason?.rawValue ?? "on_device"), dg=\(deepgramService.connectionState)), reconnecting Deepgram: \(reason)"
             )
             var details = [
                 "gap_seconds": String(Self.boundedDiagnosticGap(transcriptGap)),

@@ -1127,6 +1127,10 @@ final class FolderSuggestionTests: XCTestCase {
         let sent = (body["meetings"] as? [[String: String]])?.first
         XCTAssertEqual(sent.map { Set($0.keys) }, ["id", "title", "summary"])
         XCTAssertEqual(FolderSuggestions.folderRefs((0..<80).map { MeetingFolder(id: UUID(), name: "F\($0)") }).count, 60)
+        // A folder kept on this device is never offered to the model, so its name is never sent.
+        let shared = MeetingFolder(id: UUID(), name: "Customers")
+        let deviceOnly = MeetingFolder(id: UUID(), name: "Private", localOnly: true)
+        XCTAssertEqual(FolderSuggestions.folderRefs([deviceOnly, shared]).map(\.name), ["Customers"])
     }
 
     // MARK: What an answer may do
@@ -1265,7 +1269,7 @@ final class FolderSuggestionTests: XCTestCase {
         _ = await state.suggestedFolderProposals(for: [unfiled], creatingFolders: true)
         XCTAssertEqual(requests.count, 1, "the Preview request goes when asked for")
 
-        XCTAssertEqual(FolderSuggestionToggle.requestCaption(count: 1), "Sends the title and summary of 1 unfiled meeting. Never transcripts. Nothing moves until you apply.")
+        XCTAssertEqual(FolderSuggestionToggle.requestCaption(count: 1), "Sends the title and summary of 1 unfiled meeting, and your folder names. Never transcripts. Nothing moves until you apply.")
         XCTAssertTrue(FolderSuggestionToggle.requestCaption(count: 12).contains("12 unfiled meetings"))
     }
 

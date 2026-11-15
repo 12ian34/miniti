@@ -954,7 +954,9 @@ final class CloudSyncEngine: ObservableObject {
                     throw CloudSyncError.server(code: "local_save_failed", status: 0)
                 }
                 host.cloudDidChangeMeetings(before == MeetingSyncDocument.markdownFingerprint(of: meeting) ? [] : [meeting])
-                if !retrying && meeting.syncFingerprint != MeetingSyncDocument.fingerprint(of: meeting) { try await push(meeting, id: id, host: host, transport: transport, retrying: true, context: pass) }
+                // Cloud may have been switched off while the first upload was on its way: the
+                // merged edits stay local and dirty, and go up when sync is allowed again.
+                if !retrying && stillAllowed && meeting.syncFingerprint != MeetingSyncDocument.fingerprint(of: meeting) { try await push(meeting, id: id, host: host, transport: transport, retrying: true, context: pass) }
                 return
             }
             if MeetingSyncDocument.hasOnlyPendingFolderEdit(meeting),

@@ -775,11 +775,11 @@ struct FolderSuggestionToggle: View {
     static func caption(privateMode: Bool) -> String {
         privateMode
             ? "Off while private mode is on. Nothing is sent."
-            : "When the rules cannot place a new meeting, its title and summary are sent to suggest one of your folders. Never the transcript, and never a meeting kept off the cloud."
+            : "When the rules cannot place a new meeting, its title and summary are sent with your folder names to suggest a folder. Never the transcript, and never a meeting kept off the cloud."
     }
 
     /// Under the Preview button: what pressing it sends.
     static func requestCaption(count: Int) -> String {
-        "Sends the title and summary of \(count) unfiled \(count == 1 ? "meeting" : "meetings"). Never transcripts. Nothing moves until you apply."
+        "Sends the title and summary of \(count) unfiled \(count == 1 ? "meeting" : "meetings"), and your folder names. Never transcripts. Nothing moves until you apply."
     }
 }

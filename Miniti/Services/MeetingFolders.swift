@@ -537,8 +537,10 @@ enum FolderSuggestions {
         return Item(id: id, title: text(title, max: maxTitleLength), summary: summary)
     }
 
+    /// The folders a suggestion may choose from. A folder kept on this device only is never
+    /// sent: its name stays here, so the model cannot be offered it.
     static func folderRefs(_ folders: [MeetingFolder]) -> [FolderRef] {
-        folders.prefix(maxFolders).compactMap { folder in
+        folders.filter { !$0.localOnly }.prefix(maxFolders).compactMap { folder in
             let name = text(folder.name, max: maxFolderNameLength)
             return name.isEmpty ? nil : FolderRef(id: folder.id, name: name)
         }
