@@ -1,6 +1,6 @@
 # Release Process
 
-Released on Mac, 2026-11-16: 3.10.0 build 166 is public through the verified DMG and Sparkle feed (`MACOS_LATEST_VERSION` 3.10.0, backend `f81d321`); iOS 3.10.0 build 166 is in App Review since 2026-11-16 with automatic release, with 3.9.0 still the App Store release. See the [3.10.0 checklist](docs/releases/3.10.0.md). Before that, on 2026-11-10: 3.9.0 build 165 was public through the verified DMG and Sparkle feed. iOS 3.9.0 build 165 is live on the App Store from 2026-11-11 (confirmed 2026-11-12); `IOS_LATEST_VERSION` 3.9.0 is deployed (backend `196fe8d`). Full Mac/iOS hosted suites, backend suites and signed-package checks pass; the backend, website, public docs and Linux tracking are deployed. Owner device checks of the new Home, History, sidebar and setup changes remain open. See the [3.9.0 checklist](docs/releases/3.9.0.md).
+Released on Mac, 2026-11-16: 3.10.0 build 166 is public through the verified DMG and Sparkle feed (`MACOS_LATEST_VERSION` 3.10.0, backend `f81d321`); iOS 3.10.0 build 166 is public from 2026-11-16 22:43:14 UTC, confirmed through App Store Connect and the public lookup. See the [3.10.0 checklist](docs/releases/3.10.0.md). Before that, on 2026-11-10: 3.9.0 build 165 was public through the verified DMG and Sparkle feed. iOS 3.9.0 build 165 is live on the App Store from 2026-11-11 (confirmed 2026-11-12); `IOS_LATEST_VERSION` 3.9.0 is deployed (backend `196fe8d`). Full Mac/iOS hosted suites, backend suites and signed-package checks pass; the backend, website, public docs and Linux tracking are deployed. Owner device checks of the new Home, History, sidebar and setup changes remain open. See the [3.9.0 checklist](docs/releases/3.9.0.md).
 
 Authoritative 10-step runbook for shipping Miniti. For repo context, start with [AGENTS.md](AGENTS.md). For distribution detail, see [docs/reference/distribution.md](docs/reference/distribution.md). For per-lane detail, see [fastlane/RUNBOOK.md](fastlane/RUNBOOK.md).
 
@@ -15,7 +15,11 @@ Authoritative 10-step runbook for shipping Miniti. For repo context, start with 
   ```
 - `.env` at repo root has `APP_STORE_CONNECT_KEY_ID`, `APP_STORE_CONNECT_ISSUER_ID`, `APP_STORE_CONNECT_API_KEY`.
 
-## Current release: 3.9.0
+## Current preparation: 3.11.0 build 167
+
+Ian approved proceeding on 2026-11-16 after iOS 3.10.0 became available. Mac and iOS 3.10.0 build 166 are public. The [3.11.0 checklist](docs/releases/3.11.0.md) owns signed candidates, owner QA, publication and the later subscription-ownership switch. The app source is versioned 3.11.0 build 167; it is not yet public. Preserve CL-1: store/Sparkle notes describe pre-switch behavior, and the single public changelog entry follows the switch.
+
+## Previous release: 3.9.0
 
 Mac 3.9.0 build 165 is public from 2026-11-10: GitHub release asset, website redirects and Sparkle feed verified byte-for-byte (181,922,423 bytes), `MACOS_LATEST_VERSION` 3.9.0. iOS 3.9.0 build 165 was approved and released automatically on 2026-11-11 (App Store lookup, 18:35 UTC); `IOS_LATEST_VERSION` 3.9.0. The [3.9.0 checklist](docs/releases/3.9.0.md) owns scope, evidence and review dispositions.
 
