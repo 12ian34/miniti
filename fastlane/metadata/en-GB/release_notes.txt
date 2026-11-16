@@ -1,14 +1,15 @@
 NEW
-- Folder Preview shows which meetings stay unfiled and lets you pick a folder for each one there.
-- Suggest folders with AI in Preview, for meetings the rules cannot place. It runs when you press it, or for each new meeting if you turn on Use AI to file new meetings. It sends titles, summaries and your folder names, never transcripts.
+- Folder Preview shows which meetings stay unfiled and lets you pick a folder for each.
+- Suggest folders with AI in Preview, for meetings the rules cannot place. It sends titles, summaries and your folder names, never transcripts.
+- Use AI to file new meetings, a setting that suggests a folder for each new meeting. Off by default.
 
 IMPROVED
-- Folder Preview finds a folder for more meetings, using who was in the meeting.
-- New default folders, one word each: Team, Customers, Product, Hiring, Investors, Partners, Intros, Learning, Planning.
-- Turning cloud on or off now applies to every device on your account.
-- Moving a meeting to a folder no longer makes your other devices upload it again, once they are on this version.
+- Folder Preview places more meetings, using who attended.
+- New default folders: Team, Customers, Product, Hiring, Investors, Partners, Intros, Learning, Planning.
+- Turning cloud on or off applies to every device on your account.
+- Moving a meeting to a folder no longer makes your other devices upload it again, once they update.
 - Live transcription reconnects less often during music, noise or silence.
-- Buttons and settings use "and", never "&".
+- Buttons and settings say "and", never "&".
 
 FIXED
-- Cloud sync says what went wrong in plain words.
+- Cloud sync errors are in plain words.
