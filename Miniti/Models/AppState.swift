@@ -3821,7 +3821,7 @@ final class AppState: ObservableObject {
     }
 
     /// Why a transcript gap is being acted on (3.10.0 TG1). The raw values are the `gap_reason` the
-    /// backend reads: only the first two prove that words were really missing.
+    /// backend reads; provider speech detection alone does not prove intelligible speech was lost.
     enum TranscriptGapReason: String, Equatable {
         /// Deepgram sent nothing at all while audio was being captured.
         case deadSocket = "dead_socket"
@@ -3840,24 +3840,23 @@ final class AppState: ObservableObject {
     /// A socket that is being sent audio answers at least every 1.2 seconds, with empty results
     /// for non-speech (measured 2026-11-14, `scripts/stall-probe`). Ten seconds of nothing is dead.
     nonisolated static let deadSocketSilence: TimeInterval = 10
-    /// How long after Deepgram reports speech with no words following it counts as a stall.
+    /// Minimum gap for suspected speech-without-words diagnostics, not a fast reset trigger.
     nonisolated static let speechWithoutWordsGap: TimeInterval = 20
-    /// One `SpeechStarted` alone is a known blip; two are speech.
+    /// Two provider speech events classify suspected gaps for diagnostics, not proof of an outage.
     nonisolated static let speechEventsForStall = 2
     /// The slow fallback: loud audio and a live socket with nothing else to go on.
     nonisolated static let transcriptFallbackGap: TimeInterval = 120
 
-    /// Transcript health on the Deepgram socket (3.10.0 TG1.4). Three reasons to reconnect, in order:
+    /// Transcript health on the Deepgram socket (3.11.0 FX1). Two recovery paths:
     ///
     /// 1. *Dead socket*: no message of any kind for 10 seconds while audio capture is flowing. Timed
     ///    from connect, so a socket that never answers is caught. This is direct and sooner than the
     ///    old rule, and it never fires on silence or noise, because a live socket keeps answering.
-    /// 2. *Speech without words*: Deepgram itself reported speech after the last words, at least
-    ///    twice, and no words came for 20 seconds.
-    /// 3. *Slow fallback*: loud audio, a live socket, no speech reported and no words, once words
-    ///    have been seen in this recording: no sooner than 120 seconds. Loudness is also a fan, typing
-    ///    or hold music, so it no longer reconnects at 20 seconds, and nothing is timed from Record:
-    ///    before the first words there is no gap to measure.
+    /// 2. *Slow fallback*: recent loud audio and no words on a responding socket, once words have
+    ///    been seen in this recording: no sooner than 120 seconds. SpeechStarted can also fire on
+    ///    noise (reproduced with mono and stereo on 2026-11-16), so it cannot justify a faster reset.
+    ///    Before the first words, a responsive socket is allowed to keep waiting. A real recognition
+    ///    stall on a live socket therefore recovers more slowly than a dead connection.
     ///
     /// The backoff between reconnects that bring no words, and the retry after the reconnect ladder
     /// gave up, are as before. On-device transcription has no socket and keeps
@@ -3890,16 +3889,14 @@ final class AppState: ObservableObject {
         if captureFlowing, socketSilence >= deadSocketSilence {
             return due(base: transcriptStarvationCooldown) ? .init(action: .reconnectStarvation, reason: .deadSocket) : .none
         }
-        if speechEventsSinceWords >= speechEventsForStall {
-            guard sinceFirstSpeechAfterWords >= speechWithoutWordsGap else { return .none }
-            return due(base: transcriptStarvationCooldown) ? .init(action: .reconnectStarvation, reason: .speechWithoutWords) : .none
-        }
         guard wordsSeen,
               audioGap < transcriptHealthAudioActivityWindow,
               transcriptGap > transcriptFallbackGap,
               audioGap + transcriptFinalizeLatencyMargin < transcriptGap,
               due(base: transcriptFallbackGap) else { return .none }
-        return .init(action: .reconnectStarvation, reason: .neither)
+        let reason: TranscriptGapReason = speechEventsSinceWords >= speechEventsForStall
+            && sinceFirstSpeechAfterWords >= speechWithoutWordsGap ? .speechWithoutWords : .neither
+        return .init(action: .reconnectStarvation, reason: reason)
     }
 
     /// What the app saw during one stretch without words, and the recording's running totals

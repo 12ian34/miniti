@@ -3808,16 +3808,48 @@ final class SocketTranscriptHealthTests: XCTestCase {
         XCTAssertEqual(health(socketSilence: 600, captureFlowing: false), .none)
     }
 
-    func testSpeechWithoutWordsNeedsTwoSpeechEventsAndTwentySeconds() {
-        XCTAssertEqual(health(speechEvents: 2, sinceFirstSpeech: 19, transcriptGap: 25), .none)
-        XCTAssertEqual(health(speechEvents: 2, sinceFirstSpeech: 20, transcriptGap: 25), Health(action: .reconnectStarvation, reason: .speechWithoutWords))
-        XCTAssertEqual(health(speechEvents: 9, sinceFirstSpeech: 45, transcriptGap: 60).reason, .speechWithoutWords)
-        // Before any words in the recording too: Deepgram hearing speech needs no earlier words.
-        XCTAssertEqual(health(speechEvents: 3, sinceFirstSpeech: 25, wordsSeen: false, transcriptGap: 25).reason, .speechWithoutWords)
-        // A single speech blip is not speech, however long ago.
-        XCTAssertEqual(health(speechEvents: 1, sinceFirstSpeech: 100, transcriptGap: 100, audioGap: .infinity), .none)
-        // A dead socket outranks it: there is nothing to finish on a dead socket.
-        XCTAssertEqual(health(socketSilence: 11, speechEvents: 4, sinceFirstSpeech: 30).reason, .deadSocket)
+    func testProviderSpeechEventsDoNotByThemselvesProveAStalledRecognizer() {
+        // The 2026-11-16 live-provider probe produced five SpeechStarted events on generated
+        // noise, with no words. Both mono and stereo kept answering and later transcribed speech.
+        for events in [2, 5, 105] {
+            XCTAssertEqual(health(speechEvents: events, sinceFirstSpeech: 60, transcriptGap: 80), .none)
+            XCTAssertEqual(health(speechEvents: events, sinceFirstSpeech: 600,
+                                  wordsSeen: false, transcriptGap: 600), .none)
+            XCTAssertEqual(health(speechEvents: events, sinceFirstSpeech: 600,
+                                  transcriptGap: 600, audioGap: .infinity), .none)
+        }
+        // A dead socket still recovers promptly, independently of VAD or prior words.
+        XCTAssertEqual(health(socketSilence: 11, speechEvents: 4, sinceFirstSpeech: 30,
+                              wordsSeen: false).reason, .deadSocket)
+    }
+
+    func testObservedNoiseTraceDoesNotReconnectBeforeTheControlSpeechStarts() {
+        // Content-free timings from the synthetic provider probe. On the shipped rule this
+        // selects a reconnect at 32s, although real speech begins at 40s and is then transcribed
+        // by the same uninterrupted socket. The stereo trace rounds to the same health ticks.
+        let speechEvents = [10.43, 14.13, 19.04, 23.03, 26.63]
+        var evidence = AppState.TranscriptGapEvidence()
+        evidence.begin(at: 1000, speech: 0, empty: 0, audio: 0)
+        for tick in stride(from: 4.0, through: 36, by: 4) {
+            let count = speechEvents.filter { $0 <= tick }.count
+            let now = 1000 + tick
+            let silence = evidence.socketSilence(at: now, lastMessageAt: now - 1,
+                isConnected: true, captureFlowing: true)
+            evidence.sample(at: now, speech: count, socketSilence: silence,
+                isConnected: true, captureFlowing: true)
+            XCTAssertEqual(health(socketSilence: silence, speechEvents: evidence.speechEvents(count),
+                sinceFirstSpeech: evidence.sinceFirstSpeech(at: now), wordsSeen: evidence.wordsSeen,
+                transcriptGap: tick, audioGap: 0), .none, "noise at \(tick)s")
+        }
+    }
+
+    func testLiveWordlessRecognizerRetainsSlowRecoveryAndBackoff() {
+        XCTAssertEqual(health(speechEvents: 5, sinceFirstSpeech: 110, transcriptGap: 120), .none)
+        XCTAssertEqual(health(speechEvents: 5, sinceFirstSpeech: 114, transcriptGap: 124).reason, .speechWithoutWords)
+        XCTAssertEqual(health(speechEvents: 5, sinceFirstSpeech: 300, transcriptGap: 310,
+                              sinceLastRecovery: 200, consecutive: 1), .none)
+        XCTAssertEqual(health(speechEvents: 5, sinceFirstSpeech: 400, transcriptGap: 410,
+                              sinceLastRecovery: 241, consecutive: 1).reason, .speechWithoutWords)
     }
 
     func testNothingHappensWhileAReconnectIsUnderWay() {

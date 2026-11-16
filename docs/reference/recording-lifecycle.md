@@ -72,6 +72,14 @@ Second review, 2026-11-05: unused managed journals close without unobserved idle
 
 Hardware quarantine also disables Resume and clears/suppresses automatic-start prompts. Managed start rechecks after enrollment before requesting credentials; a request already in flight at timeout is closed without capturing.
 
+## 3.11.0 FX1 correction (local, not released)
+
+A generated-noise experiment on 2026-11-16 disproved the assumption that two provider `SpeechStarted` events establish a transcription outage. Both mono and stereo traces selected the old fast reset at 32 seconds despite a healthy connection that transcribed later control speech. The [release record](../releases/3.11.0.md#fx1-confirmed-noise-reproduction) retains the evidence and limitations.
+
+The local correction preserves ten-second dead-socket detection and its existing cooldown. A responding socket uses only the existing slow fallback: words must previously have arrived, recent loud audio must follow them, the gap must exceed 120 seconds, and the doubling cooldown must be due. Provider speech events still classify diagnostic gaps but cannot accelerate a reset. Before the first words, a responding connection keeps waiting. This deliberately trades slower recovery of a genuinely stalled but responding recognizer for avoiding the reproduced fast resets on noise. The fallback can still reconnect during long background noise after earlier words; this does not claim to eliminate every unnecessary reconnect.
+
+The diagnostic `speech_without_words_seconds` field retains its wire meaning and sampling rules, but is evidence of provider speech detections without text, not proof of intelligible human speech lost. The backend alert policy is unchanged by this client correction. The following section records the publicly shipped 3.10.0 behavior.
+
 ## Transcript health on the Deepgram socket (3.10.0 TG1, released on Mac 2026-11-16, iOS in App Review)
 
 Every 4 seconds while recording, `checkTranscriptHealth` decides whether to reconnect to Deepgram. Until 3.9.0 the test was loudness: no words for 20 seconds while audio was loud in the last 60. A fan, typing, hold music or a room before anyone speaks is also loud, so that rule forced many reconnects with no sign that words were missing (146 in 21.5 recorded hours in the field sample of 2026-11-12 and 13, 14 of 33 recordings reconnected in their first 90 seconds). A forced reconnect dropped the socket at once, so a sentence in progress at that moment could be lost. The measured facts behind the change are in [scripts/stall-probe](../../scripts/stall-probe/README.md).
