@@ -23,6 +23,161 @@ struct PurchaseReturnStatusView: View {
 // recovery key as a backup (B6a). The key is shown only here: the one-time "save it" sheet,
 // Show and Replace in Settings, Account, and the sign-in field for adding a device.
 
+// MARK: Account ownership wording (3.11.0)
+
+/// What `account_owns` on the usage answer means for changing accounts.
+enum AccountOwnership: Equatable {
+    /// The field is absent: the wording stays exactly as it was in 3.10.0.
+    case device
+    /// 1: Pro and minutes used belong to the account.
+    case account
+    /// Any other number: a rule this version does not know. Changing accounts needs an update.
+    case unknown
+
+    init(accountOwns: Int?) {
+        switch accountOwns {
+        case nil: self = .device
+        case 1?: self = .account
+        default: self = .unknown
+        }
+    }
+}
+
+/// The four account-change texts, by what the server says the account owns. Only `.account`
+/// has new wording; `.device` and `.unknown` keep the 3.10.0 text (with `.unknown` the switch
+/// and join sheets show the update-required state instead of their text).
+enum AccountChangeCopy {
+    static let updateRequired = ClientAuthError.updateRequiredMessage
+
+    static func switchByRecoveryKey(_ ownership: AccountOwnership) -> String {
+        ownership == .account
+            ? "Enter the recovery key of the account to switch to. This device keeps its meetings and its calendar and CRM connections. Pro and minutes used stay with the account you are leaving, and you can sign back in to it. If the other account has Pro, this device gets it too."
+            : "Enter the recovery key of the account to switch to. This device keeps its meetings, usage, calendar and CRM connections. If that account has a Pro plan, this device gets it too. It leaves its current account; if that account is then empty, it is closed."
+    }
+
+    static func switchSummary(_ ownership: AccountOwnership) -> String {
+        ownership == .account
+            ? "Switch account signs this device in to another account by email or recovery key. It keeps its meetings. Pro and minutes used stay with the account you leave."
+            : "Switch account signs this device in to another account by email or recovery key. It keeps its meetings; if that account has Pro, this device gets it too."
+    }
+
+    static func joinByEmail(_ ownership: AccountOwnership) -> String {
+        ownership == .account
+            ? "Enter the email on the account to join. miniti sends it a link; open it anywhere and press Approve. This device keeps its meetings and connections and joins that account. Pro and minutes used stay with the account you leave."
+            : "Enter the email on the account to join. miniti sends it a link; open it anywhere and press Approve. This device keeps its meetings, usage and connections and joins that account."
+    }
+
+    static func signOut(_ ownership: AccountOwnership) -> String {
+        ownership == .account
+            ? "This device can sign back in with the account's email or recovery key. Meetings stored on this device are not affected. Pro and minutes used stay with the account."
+            : "This device can sign back in with the account's email or recovery key. Meetings stored on this device are not affected."
+    }
+}
+
+extension AppState {
+    /// What the last usage answer says the account owns. Absent until an answer arrives.
+    var accountOwnership: AccountOwnership { AccountOwnership(accountOwns: usageInfo?.accountOwns) }
+}
+
+// MARK: Update required (3.11.0)
+
+/// Opens the way to a newer version: Sparkle on Mac, the App Store page on iOS.
+enum AccountUpdate {
+    /// miniti's App Store page, the listing Settings, About links to.
+    static let appStorePage = URL(string: "itms-apps://apps.apple.com/app/id6759067308")!
+
+    @MainActor
+    static func open(appState: AppState, openURL: OpenURLAction) {
+        #if os(macOS)
+        #if canImport(Sparkle)
+        UpdateService.shared.checkForUpdates()
+        #else
+        if let url = appState.availableUpdate.flatMap({ URL(string: $0.downloadUrl) }) { openURL(url) }
+        #endif
+        #else
+        // The force-update gate opens the address the version answer carries; without one,
+        // the App Store page itself.
+        openURL(appState.availableUpdate.flatMap { URL(string: $0.downloadUrl) } ?? appStorePage)
+        #endif
+    }
+}
+
+/// The Update action beside "Update miniti to change accounts.".
+struct AccountUpdateButton: View {
+    @EnvironmentObject var appState: AppState
+    @Environment(\.openURL) private var openURL
+
+    var body: some View {
+        Button { AccountUpdate.open(appState: appState, openURL: openURL) } label: {
+            Text("Update")
+                #if os(iOS)
+                .fixedSize(horizontal: false, vertical: true)
+                .minitiMinimumControlTarget()
+                #endif
+        }
+        .keyboardShortcut(.defaultAction)
+        .buttonStyle(.borderedProminent)
+        .accessibilityIdentifier("account.updateRequired.update")
+    }
+}
+
+/// Shown in place of the switch and join sheets when the server's ownership rule is one this
+/// version does not know: nothing to type, only the way to update.
+struct AccountUpdateRequiredSheet: View {
+    @Environment(\.dismiss) private var dismiss
+    @Environment(\.readingMetrics) private var readingMetrics
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    let title: String
+
+    private var stacksActions: Bool {
+        #if os(iOS)
+        dynamicTypeSize.isAccessibilitySize
+        #else
+        false
+        #endif
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: MinitiDesignSystem.Spacing.section) {
+            Text(title)
+                .accessibilityIdentifier("account.updateRequired.heading")
+                .font(.system(size: readingMetrics.dialogHeadingSize, weight: .semibold))
+                .foregroundStyle(ColorPalette.Text.primary)
+                .fixedSize(horizontal: false, vertical: true)
+            Text(AccountChangeCopy.updateRequired)
+                .accessibilityIdentifier("account.updateRequired.message")
+                .font(.system(size: readingMetrics.dialogBodySize))
+                .foregroundStyle(ColorPalette.Text.muted)
+                .fixedSize(horizontal: false, vertical: true)
+            #if os(iOS)
+            Spacer(minLength: 0)
+            #endif
+            let layout = stacksActions
+                ? AnyLayout(VStackLayout(alignment: .leading, spacing: MinitiDesignSystem.Spacing.control))
+                : AnyLayout(HStackLayout())
+            layout {
+                Button { dismiss() } label: {
+                    Text("Cancel")
+                        #if os(iOS)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .minitiMinimumControlTarget()
+                        #endif
+                }
+                .keyboardShortcut(.cancelAction)
+                .accessibilityIdentifier("account.updateRequired.cancel")
+                if !stacksActions { Spacer() }
+                AccountUpdateButton()
+            }
+        }
+        .padding(MinitiDesignSystem.Spacing.page)
+        #if os(macOS)
+        .frame(width: 460)
+        #else
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        #endif
+    }
+}
+
 // MARK: Recovery key sheet
 
 /// Shows the recovery key once and asks the person to confirm they saved it.
@@ -176,9 +331,13 @@ struct RestoreRecoveryKeySheet: View {
         case .restore:
             return "Enter the key from your other device. It starts with M1 and has eight groups of four characters. This signs the device in to that account. A Pro purchase made on a Mac is restored separately with its license key."
         case .move:
-            return "Enter the recovery key of the account to switch to. This device keeps its meetings, usage, calendar and CRM connections. If that account has a Pro plan, this device gets it too. It leaves its current account; if that account is then empty, it is closed."
+            return AccountChangeCopy.switchByRecoveryKey(appState.accountOwnership)
         }
     }
+
+    /// The server refused this version (426): the error is the update text and the action
+    /// beside it is Update.
+    private var updateRequired: Bool { error == AccountChangeCopy.updateRequired }
 
     private var canRestore: Bool {
         !isRestoring && ClientAuthCrypto.normalizeRecoveryKey(input) != nil
@@ -193,6 +352,14 @@ struct RestoreRecoveryKeySheet: View {
     }
 
     var body: some View {
+        if mode == .move, appState.accountOwnership == .unknown {
+            AccountUpdateRequiredSheet(title: title)
+        } else {
+            sheet
+        }
+    }
+
+    private var sheet: some View {
         VStack(alignment: .leading, spacing: MinitiDesignSystem.Spacing.section) {
             #if os(iOS)
             ScrollViewReader { proxy in
@@ -239,7 +406,7 @@ struct RestoreRecoveryKeySheet: View {
                 .textInputAutocapitalization(.characters)
                 .autocorrectionDisabled()
                 #endif
-                .onSubmit { if canRestore { restore() } }
+                .onSubmit { if canRestore, !updateRequired { restore() } }
 
             if let error {
                 Text(error)
@@ -261,12 +428,16 @@ struct RestoreRecoveryKeySheet: View {
                 .accessibilityIdentifier("account.restore.cancel")
                 .keyboardShortcut(.cancelAction)
             if !stacksActions { Spacer() }
-            Button { restore() } label: {
-                actionLabel(isRestoring ? (mode == .move ? "Switching…" : "Signing in…") : (mode == .move ? "Switch" : "Sign in"))
+            if updateRequired {
+                AccountUpdateButton()
+            } else {
+                Button { restore() } label: {
+                    actionLabel(isRestoring ? (mode == .move ? "Switching…" : "Signing in…") : (mode == .move ? "Switch" : "Sign in"))
+                }
+                .accessibilityIdentifier("account.restore.submit")
+                .keyboardShortcut(.defaultAction)
+                .disabled(!canRestore)
             }
-            .accessibilityIdentifier("account.restore.submit")
-            .keyboardShortcut(.defaultAction)
-            .disabled(!canRestore)
         }
     }
 
@@ -329,6 +500,8 @@ struct AccountSectionModel: Equatable {
         var keyState: KeyState = .usable
         var isPro = false
         var isMac = true
+        /// `account_owns` from the last usage answer; nil keeps the 3.10.0 wording.
+        var accountOwns: Int?
     }
 
     /// First line under Your account.
@@ -352,6 +525,8 @@ struct AccountSectionModel: Equatable {
     let restoreCaption: String
     let deviceRemovalMessage: String
     let signOutMessage: String
+    /// The caption under Switch account.
+    let switchAccountSummary: String
 
     static let temporarilyUnavailable = "Temporarily unavailable. Try again."
 
@@ -436,7 +611,8 @@ struct AccountSectionModel: Equatable {
             restoreTitle: restoreTitle,
             restoreCaption: restoreCaption,
             deviceRemovalMessage: "It can sign back in with the account's email or recovery key. Its meetings stay on it.",
-            signOutMessage: "This device can sign back in with the account's email or recovery key. Meetings stored on this device are not affected."
+            signOutMessage: AccountChangeCopy.signOut(AccountOwnership(accountOwns: i.accountOwns)),
+            switchAccountSummary: AccountChangeCopy.switchSummary(AccountOwnership(accountOwns: i.accountOwns))
         )
     }
 
@@ -465,6 +641,7 @@ extension AppState {
             inputs.keyState = .temporarilyUnavailable
         }
         inputs.isPro = isPro
+        inputs.accountOwns = usageInfo?.accountOwns
         #if os(macOS)
         inputs.isMac = true
         #else
@@ -499,6 +676,15 @@ struct ManagedAccessChoiceCard: View {
                 .fixedSize(horizontal: false, vertical: true)
                 .accessibilityIdentifier("account.setupMessage")
             }
+            #if os(iOS)
+            if appState.appleEntitlementNotice == .ownedElsewhere {
+                SubscriptionElsewhereCard(
+                    onEmail: { recovery = false; signIn = true },
+                    onRecoveryKey: { recovery = true; signIn = true },
+                    onManage: { Task { await appState.openManageSubscriptionPage() } }
+                )
+            }
+            #endif
             VStack(spacing: MinitiDesignSystem.Spacing.standard) { choices }
             .disabled(isContinuing || appState.isEnrollingManagedDevice)
             if isContinuing || appState.isEnrollingManagedDevice {
@@ -601,6 +787,130 @@ struct ManagedAccessChoiceCard: View {
         }
     }
 }
+
+// MARK: App Store subscription on another account (3.11.0)
+
+#if os(iOS)
+/// The server answered `409 subscription_owned_elsewhere`: this Apple ID's subscription is
+/// recorded on another miniti account. No alert and nothing retried; the card says so where
+/// the plan is shown and offers the ways to that account. Recording on the free plan is
+/// untouched.
+struct SubscriptionElsewhereCard: View {
+    static let title = "This App Store subscription belongs to another miniti account"
+    static let message = "Sign in to that account to use Pro here. You can keep recording on the free plan."
+    static let emailAction = "Sign in with email"
+    static let recoveryKeyAction = "Use recovery key"
+    static let manageAction = "Manage subscription"
+
+    let onEmail: () -> Void
+    let onRecoveryKey: () -> Void
+    let onManage: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: MinitiDesignSystem.Spacing.comfortable) {
+            VStack(alignment: .leading, spacing: MinitiDesignSystem.Spacing.small) {
+                Text(Self.title)
+                    .font(.headline)
+                    .foregroundStyle(ColorPalette.Text.primary)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .accessibilityAddTraits(.isHeader)
+                    .accessibilityIdentifier("subscription.elsewhere.title")
+                Text(Self.message)
+                    .font(.callout)
+                    .foregroundStyle(ColorPalette.Text.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .accessibilityIdentifier("subscription.elsewhere.message")
+            }
+            VStack(spacing: MinitiDesignSystem.Spacing.standard) {
+                action(Self.emailAction, identifier: "subscription.elsewhere.email", perform: onEmail)
+                action(Self.recoveryKeyAction, identifier: "subscription.elsewhere.recoveryKey", perform: onRecoveryKey)
+                action(Self.manageAction, identifier: "subscription.elsewhere.manage", perform: onManage)
+            }
+        }
+        .multilineTextAlignment(.leading)
+        .padding(MinitiDesignSystem.Spacing.section)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(MinitiCardBackground(style: .standard))
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("subscription.elsewhere")
+    }
+
+    private func action(_ title: String, identifier: String, perform: @escaping () -> Void) -> some View {
+        Button(action: perform) {
+            MinitiControlLabel(role: .secondary, height: nil, horizontalPadding: MinitiDesignSystem.Spacing.section) {
+                Text(title)
+                    .font(.callout.weight(.medium))
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.vertical, MinitiDesignSystem.Spacing.comfortable)
+                    .frame(maxWidth: .infinity, minHeight: MinitiDesignSystem.Control.minimumIconHitSize)
+            }
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(title)
+        .accessibilityIdentifier(identifier)
+    }
+}
+
+/// What the plan section of iOS Settings shows about an App Store subscription the server has
+/// not credited to this account: the confirming line, the card, or the failure text. Nothing
+/// here is Pro; the plan row above it is the server's answer.
+struct AppleEntitlementNoticeRows: View {
+    @EnvironmentObject var appState: AppState
+    @Binding var isPresentingEmail: Bool
+    @Binding var isPresentingRecoveryKey: Bool
+
+    var body: some View {
+        switch appState.appleEntitlementNotice {
+        case .none:
+            EmptyView()
+        case .confirming:
+            HStack(spacing: MinitiDesignSystem.Spacing.standard) {
+                ProgressView()
+                Text(AppleEntitlementSync.confirmingText)
+                    .foregroundStyle(ColorPalette.Text.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .accessibilityElement(children: .combine)
+            .accessibilityIdentifier("billing.confirming")
+        case .ownedElsewhere:
+            SubscriptionElsewhereCard(
+                onEmail: { isPresentingEmail = true },
+                onRecoveryKey: { isPresentingRecoveryKey = true },
+                onManage: { Task { await appState.openManageSubscriptionPage() } }
+            )
+        case .failed:
+            Text(AppleEntitlementSync.failedText)
+                .font(.caption)
+                .foregroundStyle(ColorPalette.Text.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+                .accessibilityIdentifier("billing.verifyFailed")
+        }
+    }
+}
+
+/// The card's two sign-in sheets, attached to something that stays on screen: the card goes
+/// away the moment the account changes, and a sheet presented from it would go with it.
+/// This device is signed in, so they are the Switch account sheets.
+struct SubscriptionElsewhereSheets: ViewModifier {
+    @EnvironmentObject var appState: AppState
+    @Binding var isPresentingEmail: Bool
+    @Binding var isPresentingRecoveryKey: Bool
+
+    func body(content: Content) -> some View {
+        content
+            .minitiSheet(isPresented: $isPresentingEmail) {
+                EmailSignInSheet(mode: .move)
+                    .environmentObject(appState)
+                    .preferredColorScheme(.dark)
+            }
+            .minitiSheet(isPresented: $isPresentingRecoveryKey) {
+                RestoreRecoveryKeySheet(mode: .move)
+                    .environmentObject(appState)
+                    .preferredColorScheme(.dark)
+            }
+    }
+}
+#endif
 
 // MARK: Optional Home setup
 
@@ -1734,7 +2044,7 @@ struct ManagedAccountSettingsSection: View {
             }
             .id("account.move")
             if model.accountActions.contains(.switchAccount) {
-                Text("Switch account signs this device in to another account by email or recovery key. It keeps its meetings; if that account has Pro, this device gets it too.")
+                Text(model.switchAccountSummary)
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
@@ -2442,6 +2752,10 @@ struct EmailSignInSheet: View {
 
     private var canSend: Bool { !isWorking && linkID == nil && email.contains("@") }
 
+    /// The server refused this version (426): the error is the update text and the action
+    /// beside it is Update.
+    private var updateRequired: Bool { error == AccountChangeCopy.updateRequired }
+
     private var stacksActions: Bool {
         #if os(iOS)
         dynamicTypeSize.isAccessibilitySize
@@ -2451,6 +2765,16 @@ struct EmailSignInSheet: View {
     }
 
     var body: some View {
+        if mode == .move, appState.accountOwnership == .unknown {
+            AccountUpdateRequiredSheet(title: heading)
+        } else {
+            sheet
+        }
+    }
+
+    private var heading: String { mode == .move ? "Join another account by email" : "Sign in with email" }
+
+    private var sheet: some View {
         VStack(alignment: .leading, spacing: MinitiDesignSystem.Spacing.section) {
             #if os(iOS)
             ScrollViewReader { proxy in
@@ -2483,13 +2807,13 @@ struct EmailSignInSheet: View {
 
     private var formContent: some View {
         VStack(alignment: .leading, spacing: MinitiDesignSystem.Spacing.section) {
-            Text(mode == .move ? "Join another account by email" : "Sign in with email")
+            Text(heading)
                 .accessibilityIdentifier("account.emailSignIn.heading")
                 .font(.system(size: readingMetrics.dialogHeadingSize, weight: .semibold))
                 .foregroundStyle(ColorPalette.Text.primary)
                 .fixedSize(horizontal: false, vertical: true)
             Text(mode == .move
-                 ? "Enter the email on the account to join. miniti sends it a link; open it anywhere and press Approve. This device keeps its meetings, usage and connections and joins that account."
+                 ? AccountChangeCopy.joinByEmail(appState.accountOwnership)
                  : "Enter the email on your account. miniti sends it a link; open it anywhere and press Approve, and this device joins the account.")
                 .font(.system(size: readingMetrics.dialogBodySize))
                 .foregroundStyle(ColorPalette.Text.muted)
@@ -2536,7 +2860,9 @@ struct EmailSignInSheet: View {
             if !stacksActions { Spacer() }
             Button { pollTask?.cancel(); dismiss() } label: { actionLabel("Cancel") }
                 .keyboardShortcut(.cancelAction)
-            if canRetryLink, let linkID {
+            if updateRequired {
+                AccountUpdateButton()
+            } else if canRetryLink, let linkID {
                 Button { canRetryLink = false; error = nil; poll(linkID) } label: { actionLabel("Try again") }
                     .buttonStyle(.borderedProminent)
                     .disabled(isWorking)

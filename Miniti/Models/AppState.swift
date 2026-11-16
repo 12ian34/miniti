@@ -1295,7 +1295,20 @@ final class AppState: ObservableObject {
     @Published var managedSessionError: String?
     @Published var isDeviceDisabled = false
     #if os(iOS)
+    /// StoreKit reports an active App Store subscription on this Apple ID. It grants nothing
+    /// (3.11.0): Pro, the limit and the plan come from the server alone. Its one job is knowing
+    /// there is a subscription the server may not have credited to this account yet, so it is
+    /// sent again after an account change (`noteAppleSignIn`).
     @Published var hasActiveAppStoreSubscription = false
+    /// Where the App Store subscription stands with the server for this sign-in. Never Pro by
+    /// itself: see `AppleEntitlementSync`.
+    @Published private(set) var appleEntitlementSync = AppleEntitlementSync()
+    private var appleVerifyTasks: [AppleEntitlementSync.Work: Task<AppleEntitlementSync.State?, Never>] = [:]
+    private var appleSignInSeen: AppleEntitlementSync.SignIn?
+    /// The wait between verify attempts. Tests replace it so three attempts take no time.
+    var appleVerifyPause: @MainActor (TimeInterval) async -> Void = { seconds in
+        try? await Task.sleep(nanoseconds: UInt64(seconds * 1_000_000_000))
+    }
     #endif
     private var currentSessionId: String?
     private var managedDeepgramAccessToken: String?
@@ -1324,25 +1337,16 @@ final class AppState: ObservableObject {
         )
     }
     
-    /// Whether managed mode is at its limit.
+    /// Whether managed mode is at its limit. The server's answer only (3.11.0): a local App
+    /// Store subscription does not lift it.
     var isLimitReached: Bool {
         guard appMode == .managed else { return false }
-        #if os(iOS)
-        if hasActiveAppStoreSubscription {
-            return false
-        }
-        #endif
         return usageInfo?.isLimitReached ?? false
     }
     
-    /// Whether the device has an active Pro subscription.
+    /// Whether the server says this device is Pro, on every platform (3.11.0).
     var isPro: Bool {
-        let backendPro = usageInfo?.isPro ?? false
-        #if os(iOS)
-        return backendPro || hasActiveAppStoreSubscription
-        #else
-        return backendPro
-        #endif
+        usageInfo?.isPro ?? false
     }
 
     #if DEBUG
@@ -1553,23 +1557,12 @@ final class AppState: ObservableObject {
 
     /// Whether managed subscription state is still being resolved.
     var shouldShowManagedSubscriptionPlaceholder: Bool {
-        guard appMode == .managed, usageInfo == nil, isLoadingUsage else { return false }
-        #if os(iOS)
-        if hasActiveAppStoreSubscription {
-            return false
-        }
-        #endif
-        return true
+        appMode == .managed && usageInfo == nil && isLoadingUsage
     }
     
     /// Managed mode minutes limit displayed in UI.
     var displayMinutesLimit: Double {
         guard appMode == .managed else { return 0 }
-        #if os(iOS)
-        if hasActiveAppStoreSubscription {
-            return 5000
-        }
-        #endif
         if let serverLimit = usageInfo?.minutesLimit {
             return serverLimit
         }
@@ -2690,6 +2683,13 @@ final class AppState: ObservableObject {
                 }
             }
             .store(in: &cancellables)
+        // A renewal, a revocation or the entitlement read at launch reaches the server too,
+        // not only the local flag (3.11.0).
+        storeKitService.onSignedTransaction = { [weak self] signedTransaction in
+            Task { @MainActor [weak self] in
+                await self?.syncAppleEntitlementToBackend(signedTransaction: signedTransaction)
+            }
+        }
         #endif
         
         // Subscribe to transcript updates (handles both interim and final)
@@ -9614,15 +9614,7 @@ final class AppState: ObservableObject {
             switch error {
             case .limitReached(_, _):
                 await refreshUsage()
-                #if os(iOS)
-                if hasActiveAppStoreSubscription {
-                    managedSessionError = "Pro is active, but usage sync is still catching up. Please try again in a moment."
-                } else {
-                    managedSessionError = error.localizedDescription
-                }
-                #else
                 managedSessionError = error.localizedDescription
-                #endif
             case .deviceDisabled:
                 isDeviceDisabled = true
                 managedSessionError = error.localizedDescription
@@ -12130,7 +12122,8 @@ final class AppState: ObservableObject {
     }
     
     #if os(iOS)
-    /// Purchase the App Store Pro monthly subscription.
+    /// Purchase the App Store Pro monthly subscription. True only when the usage answer that
+    /// follows the server's processing says Pro.
     func purchaseProSubscription() async -> Bool {
         guard let storeKitService else { return false }
         let purchased = await storeKitService.purchaseProMonthly()
@@ -12146,9 +12139,10 @@ final class AppState: ObservableObject {
         return await syncAppleEntitlementToBackend()
     }
     
-    /// Send the current verified App Store entitlement to backend for server-side usage enforcement.
+    /// A purchase or restore the person asked for: send the current App Store entitlement and
+    /// say whether this account is Pro afterwards.
     private func syncAppleEntitlementToBackend() async -> Bool {
-        guard let storeKitService, let minitiAPIService else { return false }
+        guard let storeKitService, minitiAPIService != nil else { return false }
         let signedJWS: String?
         if let cachedJWS = storeKitService.lastVerifiedTransactionJWS {
             signedJWS = cachedJWS
@@ -12161,18 +12155,143 @@ final class AppState: ObservableObject {
             return false
         }
         
-        let deviceId = DeviceIdentifier.getOrCreateDeviceId()
-        do {
-            _ = try await minitiAPIService.verifyAppleSubscription(
-                deviceId: deviceId,
-                signedTransactionJWS: signedJWS
-            )
-            await refreshUsage()
+        switch await syncAppleEntitlementToBackend(signedTransaction: signedJWS) {
+        case .processed where isPro:
             return true
-        } catch {
-            storeKitService.purchaseErrorMessage = "Purchase verified by Apple, but backend sync failed. Please try Restore Purchases."
-            DebugLogger.shared.log(.app, "Apple verify FAILED: \(error.localizedDescription)")
+        case .ownedElsewhere:
+            // `SubscriptionElsewhereCard` says what happened and what to do.
+            storeKitService.purchaseErrorMessage = nil
             return false
+        default:
+            // Refused, unreachable, not signed in, or processed without Pro in the usage
+            // answer: never reported as an active subscription.
+            storeKitService.purchaseErrorMessage = AppleEntitlementSync.failedText
+            return false
+        }
+    }
+
+    /// The App Store reported this signed transaction (a purchase, a renewal, a revocation or
+    /// the entitlement read at launch): send it to `/api/apple/verify` for the account signed
+    /// in now. Three attempts at growing intervals. The same signed text for the same sign-in
+    /// is not sent twice at once; the second caller waits for the first. Nil when nothing was
+    /// sent (not signed in) or the answer belonged to a sign-in that has since changed.
+    ///
+    /// `processed` means only that the server processed it. Pro is what the usage answer says.
+    @discardableResult
+    func syncAppleEntitlementToBackend(signedTransaction: String) async -> AppleEntitlementSync.State? {
+        guard !ScreenshotMode.isActive, let minitiAPIService, clientAuthManager.isEnrolled,
+              let accountID = clientAuthManager.status.accountID else { return nil }
+        let work = AppleEntitlementSync.Work(
+            signedTransaction: signedTransaction,
+            accountID: accountID,
+            signInGeneration: clientAuthManager.credentialGeneration
+        )
+        if let running = appleVerifyTasks[work] { return await running.value }
+        guard appleEntitlementSync.begin(work) else { return nil }
+        let task = Task { @MainActor [weak self] () -> AppleEntitlementSync.State? in
+            guard let self else { return nil }
+            return await self.runAppleVerify(work, api: minitiAPIService)
+        }
+        appleVerifyTasks[work] = task
+        return await task.value
+    }
+
+    private func appleWorkIsCurrent(_ work: AppleEntitlementSync.Work) -> Bool {
+        clientAuthManager.status.accountID == work.accountID
+            && clientAuthManager.credentialGeneration == work.signInGeneration
+    }
+
+    private func runAppleVerify(_ work: AppleEntitlementSync.Work, api: MinitiAPIService) async -> AppleEntitlementSync.State? {
+        // Confirming lasts 30 seconds at most, however slow signing in or the network is.
+        let limit = Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: UInt64(AppleEntitlementSync.confirmingLimit * 1_000_000_000))
+            guard !Task.isCancelled else { return }
+            self?.appleEntitlementSync.expire(work)
+        }
+        defer { limit.cancel() }
+        let deviceId = DeviceIdentifier.getOrCreateDeviceId()
+        var result = await AppleEntitlementSync.run(
+            attempt: { _ in
+                do {
+                    try await api.verifyAppleSubscription(
+                        deviceId: deviceId,
+                        signedTransactionJWS: work.signedTransaction,
+                        expectedOwner: (account: work.accountID, generation: work.signInGeneration),
+                        timeoutInterval: AppleEntitlementSync.attemptTimeout
+                    )
+                    return .success
+                } catch MinitiAPIService.ServiceError.apiError(let code, _, let status) {
+                    return .refused(status: status, code: code)
+                } catch {
+                    DebugLogger.shared.log(.app, "Apple verify FAILED: \(error.localizedDescription)")
+                    return .unreachable
+                }
+            },
+            pause: appleVerifyPause,
+            isCurrent: { [weak self] in self?.appleWorkIsCurrent(work) ?? false },
+            hasExpired: { [weak self] in self?.appleEntitlementSync.expired.contains(work) ?? true }
+        )
+        // The plan is read before the state leaves confirming, so "processed" never shows an
+        // older usage answer.
+        if result == .processed, appleWorkIsCurrent(work) {
+            await refreshUsage()
+        }
+        if !appleWorkIsCurrent(work) { result = nil }
+        appleVerifyTasks[work] = nil
+        let applied = appleEntitlementSync.finish(
+            work, with: result,
+            currentAccountID: clientAuthManager.status.accountID,
+            currentSignInGeneration: clientAuthManager.credentialGeneration
+        )
+        guard applied, let result else {
+            DebugLogger.shared.log(.app, "Apple verify answer for a previous account ignored")
+            return nil
+        }
+        DebugLogger.shared.log(.app, "Apple verify finished: \(result)")
+        return result
+    }
+
+    /// The account or its credential changed: what was known about the App Store subscription
+    /// described the previous sign-in. Forget it, and if StoreKit holds a subscription, read
+    /// it again so it is sent for the account signed in now.
+    private func noteAppleSignIn() {
+        let signIn = AppleEntitlementSync.SignIn(
+            accountID: clientAuthManager.status.accountID,
+            generation: clientAuthManager.credentialGeneration
+        )
+        guard signIn != appleSignInSeen else { return }
+        appleSignInSeen = signIn
+        for (work, task) in appleVerifyTasks where work.accountID != signIn.accountID || work.signInGeneration != signIn.generation {
+            task.cancel()
+            appleVerifyTasks[work] = nil
+        }
+        appleEntitlementSync.signInChanged(accountID: signIn.accountID, signInGeneration: signIn.generation)
+        guard hasActiveAppStoreSubscription, signIn.accountID != nil, clientAuthManager.isEnrolled,
+              let storeKitService else { return }
+        Task { await storeKitService.refreshEntitlementStatus() }
+    }
+
+    /// What Settings and first setup show about an App Store subscription the server has not
+    /// credited to this account. Nothing once the server says Pro.
+    var appleEntitlementNotice: AppleEntitlementSync.Notice {
+        AppleEntitlementSync.notice(state: appleEntitlementSync.state, serverSaysPro: isPro)
+    }
+
+    /// The line under a purchase button after a purchase or restore that did not end in Pro.
+    /// Where the plan section's notice is on screen (`noticeIsVisible`), nil when that notice
+    /// already says it: the card, or the same failure text.
+    func appStorePurchaseFailureMessage(fallback: String, noticeIsVisible: Bool = true) -> String? {
+        let message = storeKitService?.purchaseErrorMessage
+        let notice = noticeIsVisible ? appleEntitlementNotice : .none
+        switch appleEntitlementSync.state {
+        case .ownedElsewhere:
+            // The card is on screen unless the server already says Pro; then its title is
+            // the answer to the purchase or restore just tried.
+            return notice == .ownedElsewhere ? nil : SubscriptionElsewhereCard.title
+        case .failed where notice == .failed && message == AppleEntitlementSync.failedText:
+            return nil
+        default:
+            return message ?? fallback
         }
     }
     #endif
@@ -12247,6 +12366,9 @@ final class AppState: ObservableObject {
             lastSeenCredentialGeneration = credentialGeneration
             cloudSync.invalidatePasses(reason: "credential changed")
         }
+        #if os(iOS)
+        noteAppleSignIn()
+        #endif
         refreshAccessCard()
     }
 
@@ -12481,8 +12603,7 @@ final class AppState: ObservableObject {
     var isProViaAccount: Bool { usageInfo?.isProViaAccount ?? false }
 
     /// Complimentary Pro (3.10.0): miniti's own grant of Pro, while that grant is what makes
-    /// this device Pro and has not reached its end. On iOS a local App Store subscription
-    /// comes first.
+    /// this device Pro and has not reached its end. It follows the server on every platform.
     var compPro: CompProStatus? {
         guard let comp = lastAnsweredCompPro, !comp.hasEnded() else { return nil }
         return comp
@@ -12496,10 +12617,7 @@ final class AppState: ObservableObject {
     }
 
     private var lastAnsweredCompPro: CompProStatus? {
-        #if os(iOS)
-        if hasActiveAppStoreSubscription { return nil }
-        #endif
-        return usageInfo?.compPro
+        usageInfo?.compPro
     }
 
     /// What Settings shows as the plan. Pro, except for a complimentary grant whose end has
@@ -14649,6 +14767,161 @@ final class AppState: ObservableObject {
     }
 }
 
+// MARK: - App Store subscription and the server (3.11.0)
+
+/// Where an App Store subscription stands with miniti's server for the account signed in now.
+/// A value type with no StoreKit and no network in it, so every rule is tested directly.
+///
+/// None of these states is Pro. The plan, the limit and the minutes are only what the usage
+/// answer says; `processed` means the server took the transaction, nothing more.
+struct AppleEntitlementSync: Equatable {
+    enum State: Equatable {
+        /// Nothing has been sent for this sign-in.
+        case idle
+        /// Sent, no final answer yet. At most `confirmingLimit` seconds.
+        case confirming
+        /// The server processed it. What it decided is in the usage answer.
+        case processed
+        /// `409 subscription_owned_elsewhere`: the purchase belongs to another account.
+        case ownedElsewhere
+        /// Anything else after three attempts.
+        case failed
+    }
+
+    /// One transaction for one sign-in. The signed text is compared whole: it changes when a
+    /// subscription renews or is revoked, though the original transaction id stays the same.
+    struct Work: Hashable {
+        let signedTransaction: String
+        let accountID: String
+        let signInGeneration: Int
+    }
+
+    struct SignIn: Equatable {
+        let accountID: String?
+        let generation: Int
+    }
+
+    /// What one request to `/api/apple/verify` came back with.
+    enum Answer: Equatable {
+        case success
+        case refused(status: Int, code: String)
+        /// No answer with a code: offline, timed out, signing in failed, unreadable body.
+        case unreachable
+    }
+
+    /// What the plan section shows beside the server's plan.
+    enum Notice: Equatable {
+        case none, confirming, ownedElsewhere, failed
+    }
+
+    static let maxAttempts = 3
+    /// Seconds waited after the first and after the second failed attempt.
+    static let retryDelays: [TimeInterval] = [2, 6]
+    /// Three attempts of 7 seconds with waits of 2 and 6 fit inside the limit.
+    static let attemptTimeout: TimeInterval = 7
+    static let confirmingLimit: TimeInterval = 30
+    static let ownedElsewhereCode = "subscription_owned_elsewhere"
+    static let confirmingText = "Confirming your subscription…"
+    static let failedText = "Purchase verified by Apple, but backend sync failed. Please try Restore Purchases."
+
+    private(set) var state: State = .idle
+    /// The work `state` describes.
+    private(set) var subject: Work?
+    private(set) var inProgress: Set<Work> = []
+    /// In progress past the confirming limit.
+    private(set) var expired: Set<Work> = []
+
+    /// The state one answer leads to, or nil when another attempt is due. Only success and
+    /// `409 subscription_owned_elsewhere` end early; `409 subscription_not_eligible` and every
+    /// other refusal are tried again and end as `failed`.
+    static func state(after answer: Answer, attempt: Int) -> State? {
+        switch answer {
+        case .success:
+            return .processed
+        case .refused(409, ownedElsewhereCode):
+            return .ownedElsewhere
+        case .refused, .unreachable:
+            return attempt >= maxAttempts ? .failed : nil
+        }
+    }
+
+    /// Up to three attempts at growing intervals. Nil when the sign-in changed on the way: the
+    /// answer belongs to a previous account and is dropped. Not repeated after `failed`.
+    @MainActor
+    static func run(
+        attempt: @MainActor (Int) async -> Answer,
+        pause: @MainActor (TimeInterval) async -> Void,
+        isCurrent: @MainActor () -> Bool,
+        hasExpired: @MainActor () -> Bool = { false }
+    ) async -> State? {
+        for number in 1...maxAttempts {
+            guard isCurrent() else { return nil }
+            let answer = await attempt(number)
+            guard isCurrent() else { return nil }
+            if let state = state(after: answer, attempt: number) { return state }
+            if hasExpired() { return .failed }
+            await pause(retryDelays[min(number - 1, retryDelays.count - 1)])
+        }
+        return .failed
+    }
+
+    /// Start `work`. False when the identical work is already in progress, the only case that
+    /// is skipped: a renewal or a revocation has a different signed text and is sent.
+    mutating func begin(_ work: Work) -> Bool {
+        guard inProgress.insert(work).inserted else { return false }
+        subject = work
+        state = .confirming
+        return true
+    }
+
+    /// The confirming limit passed without a final answer.
+    mutating func expire(_ work: Work) {
+        guard inProgress.contains(work) else { return }
+        expired.insert(work)
+        if subject == work, state == .confirming { state = .failed }
+    }
+
+    /// `work` ended with `result` (nil: abandoned). False when the answer is discarded because
+    /// the account or its credential is no longer the one that asked.
+    mutating func finish(_ work: Work, with result: State?, currentAccountID: String?, currentSignInGeneration: Int) -> Bool {
+        inProgress.remove(work)
+        expired.remove(work)
+        guard let result, work.accountID == currentAccountID, work.signInGeneration == currentSignInGeneration else {
+            if subject == work {
+                subject = nil
+                state = .idle
+            }
+            return false
+        }
+        // An older transaction answering while a newer one is in progress does not speak for it.
+        if subject == work { state = result }
+        return true
+    }
+
+    /// The account changed, went away, or signed in again: nothing known about the previous
+    /// sign-in carries over.
+    mutating func signInChanged(accountID: String?, signInGeneration: Int) {
+        let belongs: (Work) -> Bool = { $0.accountID == accountID && $0.signInGeneration == signInGeneration }
+        inProgress = inProgress.filter(belongs)
+        expired = expired.filter(belongs)
+        if let subject, belongs(subject) { return }
+        subject = nil
+        state = .idle
+    }
+
+    /// A pending or refused state never reads as Pro, and once the server says Pro there is
+    /// nothing left to say.
+    static func notice(state: State, serverSaysPro: Bool) -> Notice {
+        guard !serverSaysPro else { return .none }
+        switch state {
+        case .idle, .processed: return .none
+        case .confirming: return .confirming
+        case .ownedElsewhere: return .ownedElsewhere
+        case .failed: return .failed
+        }
+    }
+}
+
 #if os(iOS)
 @MainActor
 final class AppStoreSubscriptionService: ObservableObject {
@@ -14667,6 +14940,10 @@ final class AppStoreSubscriptionService: ObservableObject {
     @Published private(set) var lastVerifiedTransactionJWS: String?
     @Published private(set) var purchaseState: PurchaseState = .idle
     @Published var purchaseErrorMessage: String?
+    /// Called with the whole signed transaction each time the App Store reports one for Pro:
+    /// an update (a renewal or a revocation) and the active entitlement. The receiver sends
+    /// it to the server; this service only knows StoreKit.
+    var onSignedTransaction: (@MainActor (String) -> Void)?
     
     private var updatesTask: Task<Void, Never>?
     
@@ -14785,6 +15062,7 @@ final class AppStoreSubscriptionService: ObservableObject {
         
         hasActiveSubscription = active
         lastVerifiedTransactionJWS = activeJWS
+        if let activeJWS { onSignedTransaction?(activeJWS) }
     }
     
     /// Returns the active verified App Store entitlement JWS for Pro, if present.
@@ -14797,6 +15075,11 @@ final class AppStoreSubscriptionService: ObservableObject {
         for await result in Transaction.updates {
             guard case .verified(let transaction) = result else { continue }
             await transaction.finish()
+            // The update itself goes to the server, active or not: a revocation or an expiry
+            // is no longer among the current entitlements read below.
+            if transaction.productID == Self.proMonthlyProductID {
+                onSignedTransaction?(result.jwsRepresentation)
+            }
             await refreshEntitlementStatus()
         }
     }

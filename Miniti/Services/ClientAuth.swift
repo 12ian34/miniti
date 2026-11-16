@@ -626,6 +626,10 @@ enum ClientAuthError: LocalizedError, Equatable {
     case keyUnusable
     /// The stored key could not be used right now (locked, denied, unknown); nothing replaced.
     case keyUnavailable(String)
+    /// The server no longer lets this version change accounts (any HTTP 426, 3.11.0).
+    case updateRequired
+
+    static let updateRequiredMessage = "Update miniti to change accounts."
 
     var errorDescription: String? {
         switch self {
@@ -650,6 +654,7 @@ enum ClientAuthError: LocalizedError, Equatable {
             return "This device can no longer sign in with its saved key. Sign in by email or with your recovery key to keep it on its account."
             #endif
         case .keyUnavailable: return "miniti could not use its saved sign-in right now. Try again, or sign in again from Settings, Account."
+        case .updateRequired: return Self.updateRequiredMessage
         }
     }
 }
@@ -1408,6 +1413,7 @@ final class ClientAuthManager: @unchecked Sendable {
         case .recoveryKeyUnknown: return "recovery_key_unknown"
         case .notEligibleForMigration: return "device_not_eligible"
         case .rateLimited: return "rate_limited"
+        case .updateRequired: return "update_required"
         default: return "unknown"
         }
     }
@@ -1426,6 +1432,8 @@ final class ClientAuthManager: @unchecked Sendable {
         case (401, "installation_revoked"), (401, "device_auth_required"): return .revoked
         case (429, _): return .rateLimited
         case (503, _): return .unavailable
+        // An old app asked to change accounts after the ownership switch (3.11.0).
+        case (426, _): return .updateRequired
         default: return .server(code: code.isEmpty ? "http_\(status)" : code, status: status)
         }
     }

@@ -924,10 +924,10 @@ final class AccountJourneys: XCTestCase {
         assertMacSettingsSignIn(move: true, recovery: true)
     }
 
-    private func openMacAccountSettings(scale: Int, usableKey: Bool = true) -> XCUIElement {
+    private func openMacAccountSettings(scale: Int, usableKey: Bool = true, ownership: Bool = false) -> XCUIElement {
         if app != nil { resetAccountMatrixFixture() }
         app?.terminate()
-        launch(usableKey ? "first" : "accountKeyUnavailable", interfaceScale: scale)
+        launch(usableKey ? (ownership ? "accountOwnership" : "first") : "accountKeyUnavailable", interfaceScale: scale)
         app.activate()
         if usableKey {
             let guest = app.buttons["account.continueAnonymous"]
@@ -961,7 +961,7 @@ final class AccountJourneys: XCTestCase {
     private func assertMacSettingsSignIn(move: Bool, recovery: Bool) {
         executionTimeAllowance = 240
         for scale in [0, 2] {
-            let window = openMacAccountSettings(scale: scale, usableKey: move)
+            let window = openMacAccountSettings(scale: scale, usableKey: move, ownership: move)
             let menu = window.menuButtons[move ? "Switch account…" : "Sign in again…"]
             revealMacAccountControl(menu, in: window)
             menu.click()
@@ -972,6 +972,9 @@ final class AccountJourneys: XCTestCase {
             XCTAssertTrue(probe.waitForExistence(timeout: 5), window.debugDescription)
             XCTAssertTrue(probe.label.contains("scale \(scale);"))
             probe.click(); XCTAssertTrue(probe.waitForNonExistence(timeout: 5))
+            if move {
+                XCTAssertTrue(window.staticTexts.matching(NSPredicate(format: "value CONTAINS %@ OR label CONTAINS %@", "Pro and minutes used stay", "Pro and minutes used stay")).firstMatch.waitForExistence(timeout: 5))
+            }
             let prefix = recovery ? "account.restore" : "account.emailSignIn"
             let heading = window.staticTexts["\(prefix).heading"]
             let input = window.textFields[recovery ? "account.restore.key" : "account.emailSignIn.field"]
@@ -1806,6 +1809,35 @@ final class AccountJourneys: XCTestCase {
         XCTAssertEqual(result, .completed)
     }
 
+    func testSubscriptionElsewhereCardOpensBothSignInSheetsAndCancels() {
+        executionTimeAllowance = 150
+        launch("subscriptionElsewhere")
+        let settings = app.buttons["Settings"]
+        XCTAssertTrue(settings.waitForExistence(timeout: 10)); settings.tap()
+        let account = app.staticTexts["Account"].firstMatch
+        XCTAssertTrue(account.waitForExistence(timeout: 5)); account.tap()
+        let form = app.collectionViews.firstMatch
+        XCTAssertTrue(form.waitForExistence(timeout: 5))
+        for (identifier, field) in [("email", "account.emailSignIn.field"), ("recoveryKey", "account.restore.key")] {
+            let button = app.buttons["subscription.elsewhere.\(identifier)"]
+            for _ in 0..<18 {
+                if button.exists && button.isHittable && form.frame.contains(button.frame) { break }
+                form.swipeUp(velocity: .slow)
+            }
+            XCTAssertTrue(button.isHittable)
+            XCTAssertGreaterThanOrEqual(button.frame.height, 44)
+            captureAppScreen("Subscription belongs elsewhere: \(identifier)")
+            button.tap()
+            let input = app.textFields[field]
+            XCTAssertTrue(input.waitForExistence(timeout: 5), app.debugDescription)
+            let cancel = app.buttons["Cancel"].firstMatch
+            XCTAssertTrue(cancel.waitForExistence(timeout: 5)); cancel.tap()
+            XCTAssertTrue(input.waitForNonExistence(timeout: 5))
+            XCTAssertTrue(app.navigationBars["Account"].exists)
+        }
+        XCTAssertTrue(app.buttons["subscription.elsewhere.manage"].exists)
+    }
+
     func testSettingsEmailRestoreInheritsInterfaceSize() {
         assertSettingsAccountPresentation(move: false, recovery: false, largeText: false)
     }
@@ -1840,7 +1872,7 @@ final class AccountJourneys: XCTestCase {
 
     private func assertSettingsAccountPresentation(move: Bool, recovery: Bool, largeText: Bool) {
         executionTimeAllowance = 150
-        launch(move ? "first" : "accountKeyUnavailable", largeText: largeText, interfaceScale: 2)
+        launch(move ? "accountOwnership" : "accountKeyUnavailable", largeText: largeText, interfaceScale: 2)
         if move {
             let guest = app.buttons["account.continueAnonymous"]
             XCTAssertTrue(guest.waitForExistence(timeout: 5))
@@ -1907,6 +1939,9 @@ final class AccountJourneys: XCTestCase {
             : app.buttons[recovery ? "Switch" : "Send link"]
         XCTAssertTrue(submit.waitForExistence(timeout: 5))
         XCTAssertFalse(submit.isEnabled)
+        if move {
+            XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "Pro and minutes used stay")).firstMatch.waitForExistence(timeout: 5))
+        }
         if recovery { assertRecoveryReadingAndTyping(largeText: largeText) }
         else { assertEmailReadingAndTyping(largeText: largeText) }
         captureAppScreen("\(name) \(largeText ? "largest" : "normal") scale 2")

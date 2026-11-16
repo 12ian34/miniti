@@ -136,6 +136,17 @@ enum AccountUITestHarness {
         state.privateModeEnabled = false
         state.onDeviceSpeakerSeparationEnabled = false
         state.refreshClientAuthStatus()
+        #if os(iOS)
+        if scenario == "subscriptionElsewhere", !ProcessInfo.processInfo.arguments.contains("-MinitiUITestCleanup") {
+            // Exercise the real verify controller through the closed fixture transport.
+            // No StoreKit purchase, provider, real account or keychain is involved.
+            Task { @MainActor in
+                guard await state.continueWithoutSigningIn() else { return }
+                await state.refreshUsage()
+                await state.syncAppleEntitlementToBackend(signedTransaction: "fixture-signed-transaction")
+            }
+        }
+        #endif
         // Test-host preferences outlive a process. Keep the calendar fixture from
         // making later setup scenarios wait for an unhandled connection check.
         state.googleCalendarEnabled = scenario == "calendar"
@@ -279,6 +290,9 @@ enum AccountUITestHarness {
             case "/api/session/end": body = ["accounting_version": 2, "accepted_duration_ms": 0, "minutes_used": 0,
                 "minutes_remaining": 500, "minutes_limit": 500, "tier": "free"]
             case "/api/usage": body = ["minutes_used": 0, "minutes_limit": 500, "resets_at": "2026-12-01T00:00:00Z", "tier": "free"]
+                if ["accountOwnership", "subscriptionElsewhere"].contains(scenario ?? "") { body["account_owns"] = 1 }
+            case "/api/apple/verify" where scenario == "subscriptionElsewhere":
+                status = 409; body = ["error": "subscription_owned_elsewhere"]
             case "/api/auth/account/devices/550e8400-e29b-41d4-a716-446655440000":
                 body = ["installation_id": "550e8400-e29b-41d4-a716-446655440000", "label": "Studio device"]
             case "/api/auth/account/devices":

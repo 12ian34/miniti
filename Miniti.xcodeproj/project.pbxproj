@@ -86,6 +86,8 @@
 		AE0000010000000000000033 /* ClientAuth.swift in Sources */ = {isa = PBXBuildFile; fileRef = AE0000010000000000000031 /* ClientAuth.swift */; };
 		AE0000010000000000000042 /* ClientAuthTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AE0000010000000000000041 /* ClientAuthTests.swift */; };
 		AE0000010000000000000043 /* ClientAuthTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AE0000010000000000000041 /* ClientAuthTests.swift */; };
+		AE00000100000000000000A2 /* AccountOwnershipTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AE00000100000000000000A1 /* AccountOwnershipTests.swift */; };
+		AE00000100000000000000A3 /* AccountOwnershipTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AE00000100000000000000A1 /* AccountOwnershipTests.swift */; };
 		DF00000100000000000000B1 /* DataFlowSummaryTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = DF00000100000000000000B0 /* DataFlowSummaryTests.swift */; };
 		DF00000100000000000000B2 /* DataFlowSummaryTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = DF00000100000000000000B0 /* DataFlowSummaryTests.swift */; };
 		AE0000010000000000000023 /* InsightTemplates.swift in Sources */ = {isa = PBXBuildFile; fileRef = AE0000010000000000000021 /* InsightTemplates.swift */; };
@@ -372,6 +374,7 @@
 		AE0000010000000000000031 /* ClientAuth.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ClientAuth.swift; sourceTree = "<group>"; };
 		AE0000010000000000000051 /* ManagedAccountViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ManagedAccountViews.swift; sourceTree = "<group>"; };
 		AE0000010000000000000041 /* ClientAuthTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ClientAuthTests.swift; sourceTree = "<group>"; };
+		AE00000100000000000000A1 /* AccountOwnershipTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AccountOwnershipTests.swift; sourceTree = "<group>"; };
 		DF00000100000000000000B0 /* DataFlowSummaryTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DataFlowSummaryTests.swift; sourceTree = "<group>"; };
 		AF0000010000000000000003 /* SelectableTextView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SelectableTextView.swift; sourceTree = "<group>"; };
 		B70000010000000000000001 /* LiveTranscriptTextPaneMac.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LiveTranscriptTextPaneMac.swift; sourceTree = "<group>"; };
@@ -808,6 +811,7 @@
 				T20000010000000000000003 /* MeetingModelTests.swift */,
 				T20000010000000000000004 /* WebhookPayloadTests.swift */,
 				AE0000010000000000000041 /* ClientAuthTests.swift */,
+				AE00000100000000000000A1 /* AccountOwnershipTests.swift */,
 				DF00000100000000000000B0 /* DataFlowSummaryTests.swift */,
 				T20000010000000000000005 /* AppStateComputationTests.swift */,
 				T20000010000000000000006 /* DeepgramParsingTests.swift */,
@@ -1368,6 +1372,7 @@
 				T10000010000000000000003 /* MeetingModelTests.swift in Sources */,
 				T10000010000000000000004 /* WebhookPayloadTests.swift in Sources */,
 				AE0000010000000000000042 /* ClientAuthTests.swift in Sources */,
+				AE00000100000000000000A2 /* AccountOwnershipTests.swift in Sources */,
 				DF00000100000000000000B1 /* DataFlowSummaryTests.swift in Sources */,
 				T10000010000000000000005 /* AppStateComputationTests.swift in Sources */,
 				T10000010000000000000006 /* DeepgramParsingTests.swift in Sources */,
@@ -1414,6 +1419,7 @@
 				U10000010000000000000003 /* MeetingModelTests.swift in Sources */,
 				U10000010000000000000004 /* WebhookPayloadTests.swift in Sources */,
 				AE0000010000000000000043 /* ClientAuthTests.swift in Sources */,
+				AE00000100000000000000A3 /* AccountOwnershipTests.swift in Sources */,
 				DF00000100000000000000B2 /* DataFlowSummaryTests.swift in Sources */,
 				U10000010000000000000005 /* AppStateComputationTests.swift in Sources */,
 				U10000010000000000000006 /* DeepgramParsingTests.swift in Sources */,

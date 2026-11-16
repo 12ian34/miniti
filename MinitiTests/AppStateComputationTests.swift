@@ -1139,15 +1139,8 @@ final class AppStateComputationTests: XCTestCase {
         XCTAssertEqual(state.displayMinutesLimit, 500)
     }
 
-    #if os(iOS)
-    @MainActor
-    func testDisplayMinutesLimitManagedUsesLocalAppStoreEntitlementWhileUsageLoads() {
-        let state = AppState()
-        state.appMode = .managed
-        state.hasActiveAppStoreSubscription = true
-        XCTAssertEqual(state.displayMinutesLimit, 5000)
-    }
-    #endif
+    // The local App Store flag no longer sets the limit, Pro, the limit refusal or the plan
+    // placeholder (3.11.0): see AppStoreEntitlementSyncTests in AccountOwnershipTests.swift.
 
     @MainActor
     func testDisplayMinutesRemaining() {
@@ -1213,16 +1206,6 @@ final class AppStateComputationTests: XCTestCase {
         XCTAssertFalse(state.isPro)
     }
 
-    #if os(iOS)
-    @MainActor
-    func testIsProUsesLocalAppStoreEntitlementWhenBackendStateIsStale() {
-        let state = AppState()
-        state.appMode = .managed
-        state.hasActiveAppStoreSubscription = true
-        XCTAssertTrue(state.isPro)
-    }
-    #endif
-
     // MARK: - isLimitReached
 
     @MainActor
@@ -1239,26 +1222,6 @@ final class AppStateComputationTests: XCTestCase {
         state.usageInfo = Self.makeUsageInfo(used: 100, limit: 500)
         XCTAssertFalse(state.isLimitReached)
     }
-
-    #if os(iOS)
-    @MainActor
-    func testIsLimitReachedManagedIgnoresStaleBackendLimitWhenAppStoreSubscriptionIsActive() {
-        let state = AppState()
-        state.appMode = .managed
-        state.hasActiveAppStoreSubscription = true
-        state.usageInfo = Self.makeUsageInfo(used: 500, limit: 500)
-        XCTAssertFalse(state.isLimitReached)
-    }
-
-    @MainActor
-    func testManagedSubscriptionPlaceholderHiddenWhenLocalAppStoreEntitlementIsAlreadyActive() {
-        let state = AppState()
-        state.appMode = .managed
-        state.isLoadingUsage = true
-        state.hasActiveAppStoreSubscription = true
-        XCTAssertFalse(state.shouldShowManagedSubscriptionPlaceholder)
-    }
-    #endif
 
     @MainActor
     func testIsLimitReachedManagedAtLimit() {

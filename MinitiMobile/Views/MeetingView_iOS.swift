@@ -878,7 +878,7 @@ struct ReadyStateView_iOS: View {
                             if success {
                                 subscriptionMessage = "Pro subscription is now active."
                             } else {
-                                subscriptionMessage = appState.storeKitService?.purchaseErrorMessage ?? "Purchase not completed."
+                                subscriptionMessage = appState.appStorePurchaseFailureMessage(fallback: "Purchase not completed.", noticeIsVisible: false)
                             }
                         }
                     } label: {

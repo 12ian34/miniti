@@ -218,8 +218,14 @@ final class MinitiAPIService: @unchecked Sendable {
         /// When that grant ends (`comp_until`). Nil when the date was missing or unreadable;
         /// the source above still stands, so a comp never looks like a subscription.
         let compUntil: Date?
+        /// Account ownership (3.11.0): sent only once Pro and minutes belong to the account.
+        /// Nil when absent or unreadable, which keeps the 3.10.0 account-change wording; 1 is
+        /// the ownership this version knows; any other number needs a newer app
+        /// (`AccountOwnership`).
+        let accountOwns: Int?
 
         enum CodingKeys: String, CodingKey {
+            case accountOwns = "account_owns"
             case entitlementViaAccount = "entitlement_via_account"
             case entitlementSource = "entitlement_source"
             case compUntil = "comp_until"
@@ -282,6 +288,7 @@ final class MinitiAPIService: @unchecked Sendable {
             let source = (try? container.decodeIfPresent(String.self, forKey: .entitlementSource)) ?? nil
             entitlementIsComp = source == "comp"
             compUntil = entitlementIsComp ? ((try? container.decodeIfPresent(Date.self, forKey: .compUntil)) ?? nil) : nil
+            accountOwns = MinitiAPIService.decodeTolerantWholeNumber(container, .accountOwns)
         }
 
         var isPro: Bool { tier == "pro" }
@@ -1364,6 +1371,25 @@ final class MinitiAPIService: @unchecked Sendable {
         return nil
     }
     
+    /// A whole number that may arrive as a number or as a string of digits (Vercel KV). Absent,
+    /// null, a fraction, a non-numeric string, a boolean or a container all read as nil;
+    /// nothing throws and no size of number can trap.
+    fileprivate static func decodeTolerantWholeNumber<K: CodingKey>(
+        _ container: KeyedDecodingContainer<K>,
+        _ key: K
+    ) -> Int? {
+        if let value = try? container.decode(Int.self, forKey: key) { return value }
+        if let value = try? container.decode(Double.self, forKey: key), value.isFinite, value == value.rounded() {
+            if value >= Double(Int.max) { return Int.max }
+            if value <= Double(Int.min) { return Int.min }
+            return Int(value)
+        }
+        if let text = try? container.decode(String.self, forKey: key) {
+            return Int(text.trimmingCharacters(in: .whitespaces))
+        }
+        return nil
+    }
+
     // MARK: - Version Check
     
     struct VersionInfo: Decodable {
@@ -1979,17 +2005,35 @@ final class MinitiAPIService: @unchecked Sendable {
         return try decode(RestoreResponse.self, from: data, endpoint: "/restore")
     }
     
-    /// Verify an iOS App Store subscription transaction and link it to this device.
-    func verifyAppleSubscription(deviceId: String, signedTransactionJWS: String) async throws -> AppleVerifyResponse {
+    /// Send an App Store subscription transaction to the server (`POST /api/apple/verify`).
+    /// Returning means the server processed it, whatever it then decided about Pro: the plan
+    /// is read from `/api/usage`, so the body is decoded only when it has the known shape.
+    ///
+    /// A refusal that carries a code reaches the caller as `ServiceError.apiError`, so
+    /// `409 subscription_owned_elsewhere` can be told from every other failure (3.11.0).
+    /// `expectedOwner` keeps a transaction from being sent under another sign-in.
+    @discardableResult
+    func verifyAppleSubscription(
+        deviceId: String,
+        signedTransactionJWS: String,
+        expectedOwner: (account: String, generation: Int)? = nil,
+        timeoutInterval: TimeInterval? = nil
+    ) async throws -> AppleVerifyResponse? {
         let request = makeRequest(
             path: "/apple/verify",
             method: "POST",
             deviceId: deviceId,
-            body: ["signed_transaction_jws": signedTransactionJWS]
+            body: ["signed_transaction_jws": signedTransactionJWS],
+            timeoutInterval: timeoutInterval
         )
-        let (data, response) = try await send(request)
+        let (data, response) = try await send(request, expectedOwner: expectedOwner)
+        if let http = response as? HTTPURLResponse, !(200...299).contains(http.statusCode), http.statusCode != 401,
+           let body = try? JSONSerialization.jsonObject(with: data) as? [String: Any], let code = body["error"] as? String {
+            DebugLogger.shared.log(.app, "Apple verify refused: status=\(http.statusCode), code=\(code)")
+            throw ServiceError.apiError(code: code, message: body["message"] as? String ?? code, status: http.statusCode)
+        }
         try validateResponse(response, data: data)
-        return try decode(AppleVerifyResponse.self, from: data, endpoint: "/apple/verify")
+        return try? Self.decoder.decode(AppleVerifyResponse.self, from: data)
     }
     
     // MARK: - Google Calendar

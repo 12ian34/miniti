@@ -326,6 +326,8 @@ private struct SettingsDetailView_iOS: View {
     @State private var isPurchasing = false
     @State private var isRestoringPurchases = false
     @State private var subscriptionMessage: String?
+    @State private var isPresentingElsewhereEmail = false
+    @State private var isPresentingElsewhereRecoveryKey = false
     @State private var isGranolaImporterPresented = false
     @State private var isImportingGranola = false
     @State private var granolaImportMessage: String?
@@ -409,7 +411,7 @@ private struct SettingsDetailView_iOS: View {
                 if appState.appMode == .managed {
                     ManagedAccountSettingsSection()
 
-                    Section("Plan and billing") {
+                    Section {
                         let planLayout = dynamicTypeSize.isAccessibilitySize
                             ? AnyLayout(VStackLayout(alignment: .leading, spacing: MinitiDesignSystem.Spacing.standard))
                             : AnyLayout(HStackLayout())
@@ -439,6 +441,13 @@ private struct SettingsDetailView_iOS: View {
                                 .accessibilityIdentifier("billing.plan.compEnded")
                         }
 
+                        // An App Store subscription the server has not credited to this account
+                        // (3.11.0). The plan row above stays the server's answer.
+                        AppleEntitlementNoticeRows(
+                            isPresentingEmail: $isPresentingElsewhereEmail,
+                            isPresentingRecoveryKey: $isPresentingElsewhereRecoveryKey
+                        )
+
                         if appState.shouldShowManagedSubscriptionPlaceholder {
                             HStack(spacing: 8) {
                                 ProgressView()
@@ -462,7 +471,8 @@ private struct SettingsDetailView_iOS: View {
                                     Task { await appState.openManageSubscriptionPage() }
                                 }
                             }
-                        } else {
+                        } else if appState.appleEntitlementNotice != .confirming || isPurchasing {
+                            // While a subscription is being confirmed there is nothing to buy.
                             Button {
                                 guard !isPurchasing else { return }
                                 isPurchasing = true
@@ -473,7 +483,7 @@ private struct SettingsDetailView_iOS: View {
                                     if success {
                                         subscriptionMessage = "Pro subscription is now active."
                                     } else {
-                                        subscriptionMessage = appState.storeKitService?.purchaseErrorMessage ?? "Purchase not completed."
+                                        subscriptionMessage = appState.appStorePurchaseFailureMessage(fallback: "Purchase not completed.")
                                     }
                                 }
                             } label: {
@@ -524,7 +534,7 @@ private struct SettingsDetailView_iOS: View {
                                 if restored {
                                     subscriptionMessage = "Purchases restored."
                                 } else {
-                                    subscriptionMessage = appState.storeKitService?.purchaseErrorMessage ?? "No active App Store subscription found."
+                                    subscriptionMessage = appState.appStorePurchaseFailureMessage(fallback: "No active App Store subscription found.")
                                 }
                             }
                         } label: {
@@ -549,6 +559,8 @@ private struct SettingsDetailView_iOS: View {
                                 .foregroundStyle(.secondary)
                         }
                         
+                    } header: {
+                        Text("Plan and billing")
                     }
                     .id("account.subscription")
                     
@@ -1128,6 +1140,12 @@ private struct SettingsDetailView_iOS: View {
                 }
                 }
             }
+            // Section headers can be recycled after scrolling. Keep these presenters on the
+            // persistent Form so either card action still opens its sheet below the fold.
+            .modifier(SubscriptionElsewhereSheets(
+                isPresentingEmail: $isPresentingElsewhereEmail,
+                isPresentingRecoveryKey: $isPresentingElsewhereRecoveryKey
+            ))
             .settingsSearchScrolling_iOS(for: category)
             .task {
                 if category == .recording { appState.refreshHomeSetupMicrophonePermission() }
