@@ -72,7 +72,7 @@ Second review, 2026-11-05: unused managed journals close without unobserved idle
 
 Hardware quarantine also disables Resume and clears/suppresses automatic-start prompts. Managed start rechecks after enrollment before requesting credentials; a request already in flight at timeout is closed without capturing.
 
-## Transcript health on the Deepgram socket (3.10.0 TG1, local, not released)
+## Transcript health on the Deepgram socket (3.10.0 TG1, released on Mac 2026-11-16, iOS in App Review)
 
 Every 4 seconds while recording, `checkTranscriptHealth` decides whether to reconnect to Deepgram. Until 3.9.0 the test was loudness: no words for 20 seconds while audio was loud in the last 60. A fan, typing, hold music or a room before anyone speaks is also loud, so that rule forced many reconnects with no sign that words were missing (146 in 21.5 recorded hours in the field sample of 2026-11-12 and 13, 14 of 33 recordings reconnected in their first 90 seconds). A forced reconnect dropped the socket at once, so a sentence in progress at that moment could be lost. The measured facts behind the change are in [scripts/stall-probe](../../scripts/stall-probe/README.md).
 
