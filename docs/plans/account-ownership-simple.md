@@ -238,6 +238,8 @@ The first version of this note carried minutes between devices and accounts ("le
 
 The answer is `426` with the error code `update_miniti_to_change_account`. An old app shows `Server error (426): update_miniti_to_change_account` for these operations, because `mapError` in `ClientAuth.swift` prints the code.
 
+Rehearsal correction, 2026-11-16 (I13): an old iOS app with its local StoreKit flag set turns a session-start 402 into a temporary Pro-sync message. In `account` mode, when a free account reaches its limit, `/api/session` therefore returns `426 update_miniti_for_account_usage` to an iOS client below 3.11.0 (including a missing or malformed version), with “This account has used its free minutes. Update miniti from the App Store to check your plan.” The old recording API displays that message. Current iOS, Mac and `device` mode retain the existing quota response; below-limit old iOS recording remains allowed. This does not alter recording-finish charging. Native evidence is in the [audit](../releases/3.11.0-planning-audit.md#old-native-client-quota-guidance-2026-11-16).
+
 ## Backend: what the apps are told
 
 | Where | Field or answer | Meaning |
@@ -245,6 +247,7 @@ The answer is `426` with the error code `update_miniti_to_change_account`. An ol
 | `GET /api/usage` | `account_owns: 1` | Present only in `account` mode. The app uses the new wording when it is 1 and shows update required for a number it does not know |
 | `GET /api/usage` | `docs_lookups_scope`, `docs_lookups_resets_at` | With the lookups change |
 | Attach, restore, create, migrate | `426 update_miniti_to_change_account` | Old app, in `account` mode |
+| Session start at the free-account limit | `426 update_miniti_for_account_usage` | Old iOS only, in `account` mode; explicit App Store update guidance |
 | Frozen routes during the pause | `503 maintenance`, with `Retry-After: 600` | Apps already show "temporarily unavailable, try again shortly" for a 503 |
 | Apple verify, licence restore | `409 subscription_owned_elsewhere` | The purchase belongs to another account |
 | Apple verify, licence restore | `409 subscription_not_eligible` | The purchase is recorded as one that never counts (a sandbox purchase excluded in the table). The app shows its existing failure text |
