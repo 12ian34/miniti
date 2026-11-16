@@ -6,7 +6,8 @@
 
 | Item | State |
 |---|---|
-| Release split | Decided (Ian, 2026-11-15): 3.10.0 ships the non-ownership work; account ownership moves to 3.11.0 |
+| Release split | Decided (Ian, 2026-11-15): 3.10.0 ships the non-ownership work; account ownership moves to 3.11.0. 3.10.0 shipped on Mac on 2026-11-16 |
+| 3.11.0 scope | Ownership plus CK1, HP1 and RG1 (Ian, 2026-11-16). No release checklist yet |
 | Production inventory, counts only | Done 2026-11-15, read-only, nothing stored |
 | This plan | Draft, not reviewed |
 | Code | Not started. Backend branch `ao2-account-subscriptions` (head `f66ace8`) holds the earlier attempt; what to keep and delete is listed below |
@@ -76,7 +77,7 @@ Lookups per account and dormant accounts do not depend on any of this and can go
 
 ## Open points
 
-- Whether the App Store Server API key is configured, which decides how the five App Store rows get their state (step 3).
+- App Store Server API credentials: `APPLE_ISSUER_ID`, `APPLE_KEY_ID` and `APPLE_PRIVATE_KEY` are set in production (checked 2026-11-16, names only), but no backend code uses them and they have never been exercised. Whether the key is an in-app purchase key that the App Store Server API accepts is unverified. Step 3 starts with one read-only call for a known transaction; if it fails, the fallback in step 3 applies.
 - The admin device list is the source of the counts above. The export script must read the same thing the apply script re-checks, and must look for subscriptions that no device names any more (a cancelled Polar subscription clears its id from the device, so none is visible today; a reactivation of one is then a new purchase by the rules above).
 - Row counts will have changed by R7. The procedure does not depend on the number, only on a person reviewing it.
 

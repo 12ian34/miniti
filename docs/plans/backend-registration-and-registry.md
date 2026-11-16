@@ -2,7 +2,7 @@
 
 Status: scoped future work, not implemented; version unassigned. Reconciled 2026-10-27. Priority is in [the roadmap](../roadmap.md). This is a bounded deliverable, not an ongoing maintenance programme. Confirm design and release scope before implementation.
 
-Not in 3.10.0 (Ian, 2026-11-15, decision S-1); proposed for 3.11.0, not started. Original proposal, 2026-11-11: after AO1 creates the canonical writer and S5 has been stable for 7 days, admission in `observe` only. Slices: [3.10.0 checklist](../releases/3.10.0.md#rg1-atomic-registration-and-registry-proposed-post-s5).
+Not in 3.10.0 (Ian, 2026-11-15, decision S-1); confirmed for 3.11.0 by Ian on 2026-11-16, not started. Original proposal, 2026-11-11: after AO1 creates the canonical writer and S5 has been stable for 7 days, admission in `observe` only. Slices: [3.10.0 checklist](../releases/3.10.0.md#rg1-atomic-registration-and-registry-proposed-post-s5).
 
 ## Scope and prerequisites
 
