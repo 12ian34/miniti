@@ -163,6 +163,8 @@ A renewal, a resubscription or a plan change keeps the same id and so keeps its 
 
 For every `sub:*` that is not excluded: note the record's `rev`, read the purchase from its provider, and write the state only if `rev` is still the same. If a webhook landed in between, this run leaves the record alone and the next run looks again. A failed provider read changes nothing and is counted.
 
+The operator export verifies the signed identity of a Sandbox transaction even when it uses a retired sandbox product, but that row can only be excluded. Ordinary verify and hourly reconciliation retain strict current-product validation.
+
 Provider reads: Polar `GET /subscriptions/{id}` through a new `getSubscriptionById` in `lib/polar.ts`; Apple's App Store Server API status read, sandbox host for a sandbox record (the key was verified on 2026-11-16). Apple's numbers map to today's words: 1 active, 2 expired, 3 billing_retry, 4 grace, 5 revoked.
 
 **It never touches device records.** The first version of this note had it "make the owner's devices agree" by calling the link functions. Those functions clear a device's minutes when they see a period for the first time, so the first run would have wiped the minutes of every device that had been Pro through another device. In `account` mode the record is what decides Pro; device fields are only what the admin report shows, and events keep those current as they do today.
@@ -277,9 +279,9 @@ Before the day: code deployed in `device` mode; Mac and iOS 3.11.0 public; the w
 On the day, at a quiet hour, with Ian present:
 
 1. `maintenance on`. Wait 3 minutes.
-2. `export`. Ian reviews the table: who owns each purchase. Each row is bind, exclude (the sandbox purchase), or leave for the first account that shows it (only for a purchase no account holds). This review is what makes ownership right; the comparison below cannot tell two accounts with each other's purchases apart, because both would still be Pro.
+2. `export`. Ian reviews the table: who owns each purchase. Each row is bind, exclude (mandatory for a Sandbox purchase), or leave for the first account that shows it (only for a purchase no account holds). This review is what makes ownership right; the comparison below cannot tell two accounts with each other's purchases apart, because both would still be Pro.
 3. `apply`. Each row is written only if no record exists. The keys it creates are listed in `ownership:state`. A second run changes nothing. The mode is still `device`, and in that mode nothing reads or writes these records.
-4. `compare`, read-only, with the mode still `device`. For every device with a live installation it works out the full answer `/api/usage` would give under the old rule and, by running the new resolver on the records just applied, under the new one: plan, limit, reset date, subscription status, and whether Pro comes through the account. Minutes are left out: they start from zero by decision. Every other difference is listed and reviewed. One kind is expected and intended: a device that is Pro through its account shows the billing period's reset date where today it shows the 1st of the month. It prints the new answers for Ian's own devices, one paid account on each rail and one free account. Any other difference stops here.
+4. `compare`, read-only, with the mode still `device`. For every device with a live installation it works out the full answer `/api/usage` would give under the old rule and, by running the new resolver on the records just applied, under the new one: plan, limit, reset date, subscription status, and whether Pro comes through the account. Minutes are left out: they start from zero by decision. Every other difference is listed and reviewed. One kind is expected and intended: a device that is Pro through its account shows the billing period's reset date where today it shows the 1st of the month. It prints the new answers for Ian's own devices, one paid account on each rail and one free account. The other accepted difference is an expired, explicitly excluded Sandbox Apple purchase disappearing from subscription status on a device which stays free, names no Polar purchase, and has no other changed comparison field. Any other difference stops here.
 5. `switch`. Mode becomes `account`. This is the point of no return.
 6. Spot check on real devices: Ian's own, one paid account on each rail, one free account.
 7. `maintenance off`.
@@ -317,7 +319,7 @@ The flag itself stays, with one job: knowing there is an App Store subscription 
 | `409 subscription_owned_elsewhere` | `ownedElsewhere` | The card below |
 | Anything else after three attempts | `failed` | Today's message with Restore Purchases |
 
-**The card.** A new `SubscriptionElsewhereCard` in `Miniti/Views/ManagedAccountViews.swift`, built from `MinitiCardBackground`, `MinitiControlLabel` and `ColorPalette` text roles, shown in the plan section of iOS Settings and in `ManagedAccessChoiceCard` during first setup:
+**The card.** A new `SubscriptionElsewhereCard` in `Miniti/Views/ManagedAccountViews.swift`, built from `MinitiCardBackground`, `MinitiControlLabel` and `ColorPalette` text roles, shown in the plan section of iOS Settings (Ian confirmed Settings-only placement on 2026-11-16):
 
 - Title: "This App Store subscription belongs to another miniti account"
 - Body: "Sign in to that account to use Pro here. You can keep recording on the free plan."
@@ -325,7 +327,7 @@ The flag itself stays, with one job: knowing there is an App Store subscription 
 
 No alert at launch, no automatic retry beyond the three attempts.
 
-Implementation note, 2026-11-16: the card is currently in Settings. The first-setup access choice appears only without an account, whereas verify requires one. Adding it to the signed-in setup plan step remains a final-review question, not claimed first-setup coverage. Every account change re-reads a locally held StoreKit entitlement so signing in after launch can receive the correct server answer.
+Placement decision, Ian, 2026-11-16: keep the card in Settings for 3.11.0. The first-setup access choice appears only without an account, whereas verify requires one. No card is required in either setup branch. Every account change re-reads a locally held StoreKit entitlement so signing in after launch can receive the correct server answer.
 
 **Wording.** `UsageInfo` in `Miniti/Services/MinitiAPIService.swift` gains `accountOwns` (from `account_owns`), decoded as tolerantly as its other fields. When it is absent the strings below stay as they are. When it is 1:
 
@@ -344,7 +346,7 @@ When `accountOwns` is any number other than 1 (including 0), the app shows the u
 
 **Work sent later.** Nothing. The session journal and the on-device usage queue already store the account, send only for the current account and block an account change while usage is waiting.
 
-**Screens to check by eye:** iOS Settings with the card; first setup with the card; the confirming state; the switch and join sheets with the new wording at the largest text size; the update-required state on Mac and iPhone.
+**Screens to check by eye:** iOS Settings with the card; the confirming state; the switch and join sheets with the new wording at the largest text size; the update-required state on Mac and iPhone.
 
 ## Tests
 
