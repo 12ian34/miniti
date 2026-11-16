@@ -2,6 +2,10 @@
 
 Status: selected for 3.9.0 by Ian on 2026-11-09, moved to 3.10.0 by Ian on 2026-11-10, not implemented. Original scope reconciled 2026-10-27; release assignment and integration updated 2026-11-09. [Roadmap](../roadmap.md) owns priority; this file owns completion. One release may include several completed plans. Ordered backend deployments inside a plan are not separate unfinished product releases.
 
+Update 2026-11-15 (Ian): moved to 3.11.0. 3.10.0 ships without ownership. Existing subscriptions get their owner from a reviewed table, per the [cutover re-plan](account-ownership-cutover.md) (draft); release references to 3.10.0 below mean 3.11.0.
+
+3.10.0 planning, 2026-11-11: the [3.10.0 checklist](../releases/3.10.0.md) is now the canonical stage table, slice list and resume point for this plan (AO6). It corrects the S2 compatible threshold to Mac/iOS 3.10.0 and Linux's first compatible release, and records current source line numbers in its [audit](../releases/3.10.0-planning-audit.md) (finding N2); line numbers below are historical, symbol names are authoritative.
+
 ## Deliverable and boundary
 
 B4: preserve each account’s meetings and allow an explicit authorized copy before a device changes accounts. Includes legacy provenance, copy grants, origin index and compatible enforcement. No account merging or selective calendar filtering.
@@ -10,7 +14,7 @@ B4: preserve each account’s meetings and allow an explicit authorized copy bef
 
 Account ownership/lifecycle plan complete; keep shipped R3 generation fences. Define per-platform client versions before server refusal enforcement. Copy permission must be obtained while still authorized on the source account.
 
-Apply the [release stage/capability matrix](../releases/3.9.0.md#backend-stages-and-client-publication) and [B3 entry-point matrix](account-ownership.md#account-change-entry-points) to every review/transfer/reset path. AO4's blanket old-client transition gate starts at S2 before changed ownership semantics; B4's origin-refusal gate is a separate S6 switch after compatible readers are available per platform. New copy/review UI requires `account_v1` and current server revision, never app version alone. Restore/new enrollment, remote removal, Cloud on/off and Delete cloud copy must preserve provenance; they are not all equivalent to attach. A missing/paused post-migration capability cannot justify returning to the old promise that everything follows the device.
+Apply the [release stage/capability matrix](../releases/3.10.0.md#backend-stages-and-client-publication) and [B3 entry-point matrix](account-ownership.md#account-change-entry-points) to every review/transfer/reset path. AO4's blanket old-client transition gate starts at S2 before changed ownership semantics; B4's origin-refusal gate is a separate S6 switch after compatible readers are available per platform. New copy/review UI requires `account_v1` and current server revision, never app version alone. Restore/new enrollment, remote removal, Cloud on/off and Delete cloud copy must preserve provenance; they are not all equivalent to attach. A missing/paused post-migration capability cannot justify returning to the old promise that everything follows the device.
 
 Compatible binaries publish under legacy behavior before S2, after testing every staged capability. Reused-ID create after sign-out/removal also preserves B4 provenance and invalidates old credential-bound grants; it cannot turn old local/downloaded rows into newly recorded rows on Y. Genuine rotated IDs do not erase local provenance either. Proven same-account repair remains available during preparing/paused on old/new clients, subject to source authorization, generation invalidation and cap/deletion checks; do not show a cross-account review for that repair. Add separate create/rekey/lost-response journeys and verify the legacy-to-account_v1 local-store transition against the early-publication sequence.
 

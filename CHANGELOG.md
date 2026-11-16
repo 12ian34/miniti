@@ -1,6 +1,6 @@
 # Changelog
 
-### Unreleased - v3.10.0
+### 2026-11-16 - v3.10.0
 
 - new: (macOS and iOS) folder Preview shows which meetings stay unfiled and lets you pick a folder for each
 - new: (macOS and iOS) Suggest folders with AI in Preview, for meetings the rules cannot place. It sends titles, summaries and your folder names, never transcripts

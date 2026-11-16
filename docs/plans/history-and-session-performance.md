@@ -2,6 +2,8 @@
 
 Status: scoped future work, not implemented; version unassigned. Reconciled 2026-10-27. Priority is in [the roadmap](../roadmap.md). This is a bounded deliverable, not an ongoing maintenance programme. Confirm design and release scope before implementation.
 
+Proposed split on 2026-11-11 (decision S-2): HP1, budgets, History search snapshot, long-session baseline and measured fixes, for 3.10.0; HP2, the design-system consolidation below, stays later. Update 2026-11-15 (Ian): the split stands, HP1 is not in 3.10.0 and is proposed for 3.11.0, not started. Slices: [3.10.0 checklist](../releases/3.10.0.md#hp1-history-and-long-session-budgets-proposed).
+
 ## Scope
 
 Original P0.7, P1.1 and P1.5; T15 performance evidence and relevant T09/T11/T12 journeys. Establish a 60+ minute recording baseline on Mac/iPhone and make History search/grouping and Coaching responsive on 10/100/1,000-meeting fixtures. Existing query grammar is shipped; do not redesign it or introduce semantic search.

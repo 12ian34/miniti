@@ -2,6 +2,8 @@
 
 Status: scoped future work, not implemented; version unassigned. Reconciled 2026-10-27. Priority is in [the roadmap](../roadmap.md). This is a bounded deliverable, not an ongoing maintenance programme. Confirm design and release scope before implementation.
 
+Not in 3.10.0 (Ian, 2026-11-15, decision S-1); proposed for 3.11.0, not started. Originally proposed for 3.10.0 as CK1 on 2026-11-11. It runs on the store B4 migrates, so it shares B4's released-store fixture and joins B4's schema step only if it ever needs a persistence change (E-5). Slices and acceptance: [3.10.0 checklist](../releases/3.10.0.md#ck1-durable-finalized-transcript-checkpoints-proposed).
+
 ## Scope
 
 Original P0.4: measure and shorten the durable checkpoint interval for finalized transcript changes, targeting a coalesced 5–10 second experiment. Unfinalized interim speech remains best effort. No new backup/cloud product or save-queue rewrite.
