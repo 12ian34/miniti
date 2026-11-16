@@ -290,7 +290,8 @@ enum AccountUITestHarness {
             case "/api/session/end": body = ["accounting_version": 2, "accepted_duration_ms": 0, "minutes_used": 0,
                 "minutes_remaining": 500, "minutes_limit": 500, "tier": "free"]
             case "/api/usage": body = ["minutes_used": 0, "minutes_limit": 500, "resets_at": "2026-12-01T00:00:00Z", "tier": "free"]
-                if ["accountOwnership", "subscriptionElsewhere"].contains(scenario ?? "") { body["account_owns"] = 1 }
+                if ["accountOwnership", "subscriptionElsewhere", "appStoreMacPlan"].contains(scenario ?? "") { body["account_owns"] = 1 }
+                if scenario == "appStoreMacPlan" { body["app_store_subscription_ios_only"] = true }
             case "/api/apple/verify" where scenario == "subscriptionElsewhere":
                 status = 409; body = ["error": "subscription_owned_elsewhere"]
             case "/api/auth/account/devices/550e8400-e29b-41d4-a716-446655440000":

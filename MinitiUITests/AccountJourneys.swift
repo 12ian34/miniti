@@ -924,10 +924,25 @@ final class AccountJourneys: XCTestCase {
         assertMacSettingsSignIn(move: true, recovery: true)
     }
 
-    private func openMacAccountSettings(scale: Int, usableKey: Bool = true, ownership: Bool = false) -> XCUIElement {
+    func testMacAppStorePlanExplainsPlatformCoverage() {
+        executionTimeAllowance = 180
+        for scale in [0, 2] {
+            let window = openMacAccountSettings(scale: scale, scenario: "appStoreMacPlan")
+            let caption = window.staticTexts["billing.plan.appStoreIOSOnly"]
+            revealMacAccountControl(caption, in: window)
+            let text = caption.label + " " + (caption.value as? String ?? "")
+            XCTAssertTrue(text.contains("Your App Store subscription covers iPhone and iPad. Pro on this Mac is separate."))
+            XCTAssertTrue(window.buttons["Upgrade to Pro ($5/month, 5,000 min)"].exists)
+            captureAppScreen("App Store platform coverage scale \(scale)")
+        }
+        let window = openMacAccountSettings(scale: 0)
+        XCTAssertFalse(window.staticTexts["billing.plan.appStoreIOSOnly"].exists)
+    }
+
+    private func openMacAccountSettings(scale: Int, usableKey: Bool = true, ownership: Bool = false, scenario: String? = nil) -> XCUIElement {
         if app != nil { resetAccountMatrixFixture() }
         app?.terminate()
-        launch(usableKey ? (ownership ? "accountOwnership" : "first") : "accountKeyUnavailable", interfaceScale: scale)
+        launch(scenario ?? (usableKey ? (ownership ? "accountOwnership" : "first") : "accountKeyUnavailable"), interfaceScale: scale)
         app.activate()
         if usableKey {
             let guest = app.buttons["account.continueAnonymous"]

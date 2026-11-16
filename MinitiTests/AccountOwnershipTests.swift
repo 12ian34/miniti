@@ -408,6 +408,14 @@ final class AccountOwnershipTests: XCTestCase {
         XCTAssertEqual(app.accountOwnership, .unknown, "update required in place of the switch and join sheets")
     }
 
+    func testAppStorePlatformNoticeRequiresAnExplicitServerBoolean() throws {
+        XCTAssertTrue(try Self.usage(["app_store_subscription_ios_only": true]).appStoreSubscriptionIOSOnly)
+        XCTAssertFalse(try Self.usage([:]).appStoreSubscriptionIOSOnly)
+        for value in [false, "true", 1, NSNull(), ["active": true]] as [Any] {
+            XCTAssertFalse(try Self.usage(["app_store_subscription_ios_only": value]).appStoreSubscriptionIOSOnly)
+        }
+    }
+
     // MARK: - UsageInfo decoding
 
     func testUsageDecodesWithAccountOwnsAbsent() throws {

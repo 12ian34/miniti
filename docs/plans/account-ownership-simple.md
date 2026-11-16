@@ -313,6 +313,8 @@ Files are in `Miniti/` and compiled into both the Mac and iOS apps unless marked
 
 The flag itself stays, with one job: knowing there is an App Store subscription the server may not have credited yet.
 
+**Mac App Store coverage (T-6, approved 2026-11-16).** In account mode the usage answer includes `app_store_subscription_ios_only: true` only for a free Mac whose account resolver found an active App Store purchase. It reuses the resolved account view and adds no lookup. Mac Settings shows “Your App Store subscription covers iPhone and iPad. Pro on this Mac is separate.” below the free plan and keeps Upgrade available. Polar or complimentary Mac Pro, inactive/excluded/deleted-owner purchases, other accounts and device mode do not show the caption. Missing or malformed fields decode as false. This explains the existing platform rule; it grants no entitlement.
+
 **App Store changes reach the server (iOS).** Today `Transaction.updates` and `Transaction.currentEntitlements` in `AppStoreSubscriptionService` only refresh the local flag. They now also call `syncAppleEntitlementToBackend()`, with three attempts at growing intervals. Only identical work in progress is skipped: the same signed transaction (the whole signed text, which changes when a transaction is renewed or revoked) for the same account sign-in generation. An answer that arrives after the account has changed is discarded, and the state below is reset on every account change. A successful verify means the server processed it; the app shows Pro only when the usage refresh that follows says so. That function already posts to `/api/apple/verify`; it gains a result:
 
 | Server answer | App state | What the user sees |

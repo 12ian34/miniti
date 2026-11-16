@@ -223,9 +223,12 @@ final class MinitiAPIService: @unchecked Sendable {
         /// the ownership this version knows; any other number needs a newer app
         /// (`AccountOwnership`).
         let accountOwns: Int?
+        /// Display-only explanation for a free Mac on an account with active App Store Pro.
+        let appStoreSubscriptionIOSOnly: Bool
 
         enum CodingKeys: String, CodingKey {
             case accountOwns = "account_owns"
+            case appStoreSubscriptionIOSOnly = "app_store_subscription_ios_only"
             case entitlementViaAccount = "entitlement_via_account"
             case entitlementSource = "entitlement_source"
             case compUntil = "comp_until"
@@ -289,6 +292,7 @@ final class MinitiAPIService: @unchecked Sendable {
             entitlementIsComp = source == "comp"
             compUntil = entitlementIsComp ? ((try? container.decodeIfPresent(Date.self, forKey: .compUntil)) ?? nil) : nil
             accountOwns = MinitiAPIService.decodeTolerantWholeNumber(container, .accountOwns)
+            appStoreSubscriptionIOSOnly = (try? container.decode(Bool.self, forKey: .appStoreSubscriptionIOSOnly)) ?? false
         }
 
         var isPro: Bool { tier == "pro" }

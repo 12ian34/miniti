@@ -301,6 +301,14 @@ struct AccountSettingsView: View {
                                 .foregroundStyle(.secondary)
                         }
 
+                        if appState.usageInfo?.appStoreSubscriptionIOSOnly == true {
+                            Text("Your App Store subscription covers iPhone and iPad. Pro on this Mac is separate.")
+                                .font(.caption)
+                                .foregroundStyle(ColorPalette.Text.secondary)
+                                .fixedSize(horizontal: false, vertical: true)
+                                .accessibilityIdentifier("billing.plan.appStoreIOSOnly")
+                        }
+
                         if let ended = appState.endedCompPro {
                             Text(PlanCopy.compEnded(ended))
                                 .font(.caption)
