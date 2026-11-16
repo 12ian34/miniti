@@ -2,7 +2,11 @@
 
 Status: selected for 3.9.0 by Ian on 2026-11-09, moved to 3.10.0 by Ian on 2026-11-10, not implemented. Original scope reconciled 2026-10-27; release assignment and integration updated 2026-11-09. [Roadmap](../roadmap.md) owns priority; this file owns completion. One release may include several completed plans. Ordered backend deployments inside a plan are not separate unfinished product releases.
 
-Update 2026-11-15 (Ian): moved to 3.11.0. 3.10.0 ships without ownership. Existing subscriptions get their owner from a reviewed table, per the [cutover re-plan](account-ownership-cutover.md) (draft); release references to 3.10.0 below mean 3.11.0.
+Update 2026-11-15 (Ian): moved to 3.11.0. 3.10.0 ships without ownership. Existing subscriptions get their owner from a reviewed table, per the [cutover re-plan](account-ownership-cutover.md); release references to 3.10.0 below mean 3.11.0.
+
+Update 2026-11-16, evening (Ian): B1 to B3 are built to [the simple version](account-ownership-simple.md), which replaces the designs below for subscriptions, usage and lifecycle: a purchase record owned by one account, set from a reviewed table inside a short maintenance pause; minutes as one counter per account per billing period, starting from zero at the switch; attach no longer closing an emptied account. B0 below (one record per device) is unchanged and goes first. Where this file and the simple version differ, the simple version wins.
+
+Update 2026-11-16 (Ian): the [3.11.0 checklist](../releases/3.11.0.md) is now the canonical stage table, slice list and resume point for B0 to B3. B4 and B5 moved to 3.12.0, so the stage table there covers subscriptions, usage and lifecycle only. No Linux build: Linux is refused on account changes when the gate turns on, and the work is filed as Linux issues.
 
 3.10.0 planning, 2026-11-11: the [3.10.0 checklist](../releases/3.10.0.md) is now the canonical stage table, slice list and resume point for this plan (AO0–AO4). It corrects the S2 compatible threshold to Mac/iOS 3.10.0 and Linux's first compatible release, and records current source line numbers in its [audit](../releases/3.10.0-planning-audit.md) (finding N2); line numbers below are historical, symbol names are authoritative.
 

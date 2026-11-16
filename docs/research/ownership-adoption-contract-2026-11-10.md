@@ -99,12 +99,17 @@ The first device-record layer was built in `miniti-api` on branch `ao1-device-re
 
 **Stored value.** The canonical `minutesUsed` holds the effective minutes (the larger of two current records). Gross for reporting is that plus `migrationCredit` while `migrationCreditEpoch` equals `usageEpoch`. No existing reader had to change.
 
-**Activation order.** Four steps, in this order, each one an operator action:
+**Activation order.** A check first, then four steps, in this order, each one an operator action:
 
-1. Deploy the code with the switch off. Nothing changes.
+0. Before anything: confirm the store is clean. The key `migration:device_merge:prepared` must not exist, and there must be no adoption evidence (`device:merged:*`, `device_adoption:*`, `device_journal:*`). The code trusts the prepared mark the moment the switch goes on, so a mark left by an earlier attempt would let requests adopt during step 2, before the wait in step 3. If either exists, stop: this is not a fresh activation and the earlier attempt is reconciled first. Never clear the mark or turn the switch off once any device is adopted. (Added 2026-11-16 from Astra's final review.)
+1. Deploy the code with the switch off. No device is adopted. Runtime does differ from before in small ways that do not move data between keys: resets and operator minutes edits write `usageEpoch`; the `device_twins` check exists and answers off; the merge endpoint exists and answers disabled; admin scans skip archives and markers; readers of both spellings tolerate a marker and read one after the other.
 2. Turn the switch on. Nothing is adopted yet, because the store is not prepared. From this moment a request under an irregular id spelling (neither all lowercase nor all uppercase; the API accepts such ids, the apps do not send them) no longer starts a new record: it is routed to the device's uppercase or lowercase record. A record that already exists under an irregular spelling keeps serving.
 3. Wait until every request admitted before step 2 has finished on every serving deployment (longer than the longest request, 60 seconds, and until no older deployment serves traffic). After that no irregular record can come into being. Then repair any that exist by a reviewed repair.
 4. Run the merge pass. It prepares the store, which refuses while any irregular record exists, and only then are devices adopted, by their own writes and by the pass.
+
+Between steps, check: (1) the deployed revision is the reviewed one, the switch is off, step 0 holds; (2) the switch is on in every serving instance and nothing has been prepared or merged; (3) every earlier deployment and its requests have drained, and there are no irregular records; (4) the pass ran to completion, and its lists of conflicts and unresolved devices are read, not only its `ok`: a healthy check can sit beside listed conflicts. Stop before preparation on any failed check. After preparation, an unexpected twin, an irregular record, an unexplained field difference or a storage error means no further passes until it is understood; stopping the pass does not stop devices adopting by their own requests, and a conflicting pair can stay unadopted without anything being undone.
+
+What the merge pass's lease covers: the pass's own bookkeeping (its progress, its lists, its publication). It does not fence each adoption or reverse-set rewrite; those are protected by the adoption's own compare-and-set, so a runner that lost its lease can still finish one adoption but cannot corrupt the lists or the progress. (Narrowed 2026-11-16 from Astra's final review.)
 
 Step 3 is the reason for the order: a request admitted before step 2 could otherwise write an irregular record after preparation had looked, and adoption would merge the two regular records around it. The ops check `device_twins` reports any irregular record it finds while the switch is on, but detection does not undo an adoption; the wait is what prevents it.
 

@@ -4,6 +4,8 @@ Status: selected for 3.9.0 by Ian on 2026-11-09, moved to 3.10.0 by Ian on 2026-
 
 Update 2026-11-15 (Ian): moved to 3.11.0. 3.10.0 ships without ownership. Existing subscriptions get their owner from a reviewed table, per the [cutover re-plan](account-ownership-cutover.md) (draft); release references to 3.10.0 below mean 3.11.0.
 
+Update 2026-11-16 (Ian): moved to 3.12.0. 3.11.0 is subscriptions, usage and account lifecycle only; see the [3.11.0 checklist](../releases/3.11.0.md#selected-scope). No 3.12.0 checklist exists yet. Until this ships, calendar and CRM connections stay with the device across an account change, and 3.11.0 says so.
+
 3.10.0 planning, 2026-11-11: the [3.10.0 checklist](../releases/3.10.0.md) is now the canonical stage table, slice list and resume point for this plan (AO5). It corrects the S2 compatible threshold to Mac/iOS 3.10.0 and Linux's first compatible release, and records current source line numbers in its [audit](../releases/3.10.0-planning-audit.md) (finding N2); line numbers below are historical, symbol names are authoritative.
 
 Scope direction confirmed by Ian, 2026-11-09: CRM and calendar connections belong to the signed-in account. B5 is selected alongside B0–B4 and UI1–UI3 for [3.9.0](../releases/3.9.0.md). Implementation and migration evidence remain pending. B4 is not a prerequisite for B5 backend work; both integrate into the same account-switching review and release acceptance.

@@ -2,7 +2,7 @@
 
 Status: scoped future work, not implemented; version unassigned. Reconciled 2026-10-27. Priority is in [the roadmap](../roadmap.md). This is a bounded deliverable, not an ongoing maintenance programme. Confirm design and release scope before implementation.
 
-Not in 3.10.0 (Ian, 2026-11-15, decision S-1); confirmed for 3.11.0 by Ian on 2026-11-16, not started. Originally proposed for 3.10.0 as CK1 on 2026-11-11. It runs on the store B4 migrates, so it shares B4's released-store fixture and joins B4's schema step only if it ever needs a persistence change (E-5). Slices and acceptance: [3.10.0 checklist](../releases/3.10.0.md#ck1-durable-finalized-transcript-checkpoints-proposed).
+Not in 3.10.0 (Ian, 2026-11-15, decision S-1); confirmed for 3.11.0 by Ian on 2026-11-16, then moved to 3.12.0 by Ian later the same day when 3.11.0 was cut down to subscriptions, usage and lifecycle; not started. B4 moved with it, so the shared store fixture and schema step (E-5) still apply, in 3.12.0. Originally proposed for 3.10.0 as CK1 on 2026-11-11. It runs on the store B4 migrates, so it shares B4's released-store fixture and joins B4's schema step only if it ever needs a persistence change (E-5). Slices and acceptance: [3.10.0 checklist](../releases/3.10.0.md#ck1-durable-finalized-transcript-checkpoints-proposed).
 
 ## Scope
 
