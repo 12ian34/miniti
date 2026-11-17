@@ -17,7 +17,7 @@ Authoritative 10-step runbook for shipping Miniti. For repo context, start with 
 
 ## Current release: 3.11.0 build 167
 
-Mac 3.11.0 is public and iOS 3.11.0 is Waiting for Review with automatic release. The [3.11.0 checklist](docs/releases/3.11.0.md#publication-2026-11-17) records verified signed bytes, deployment and the accepted manual-QA limits. iOS latest stays 3.10.0 until public availability. Preserve CL-1: the single public changelog entry follows the separately authorized ownership switch.
+Mac 3.11.0 is public and iOS 3.11.0 is Waiting for Review with automatic release. The [3.11.0 checklist](docs/releases/3.11.0.md#publication-2026-11-17) records verified signed bytes, deployment and the accepted manual-QA limits. iOS latest stays 3.10.0 until public availability. Ian requested current public release copy on 2026-11-17: the 3.11.0 changelog now describes available behavior, with iOS marked pending. Ownership claims wait for the separately authorized switch; this supersedes CL-1’s delayed-entry rule.
 
 ## Previous release: 3.9.0
 

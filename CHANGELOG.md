@@ -1,5 +1,10 @@
 # Changelog
 
+### 2026-11-17 - v3.11.0
+
+- improvement: (iOS) clearer messages while your App Store purchase is confirmed
+- fix: (macOS and iOS) fewer interruptions to live transcription during background noise
+
 ### 2026-11-16 - v3.10.0
 
 - new: (macOS and iOS) folder Preview shows which meetings stay unfiled and lets you pick a folder for each
