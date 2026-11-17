@@ -1,5 +1,7 @@
 # Settings, Privacy, Models and consent
 
+3.11.0 account UI status, 2026-11-17: Mac build 167 is public; iOS build 167 is waiting for App Review. On iOS 3.11.0, Settings shows purchase confirmation, failure/retry and the owned-elsewhere card; the card stays in Settings, not setup. Pro is confirmed by the server. Account-owned minutes and account-change wording remain conditional on the backend ownership switch. Mac’s App Store-only coverage explanation also requires the account-mode response, so it is implemented but not yet visible in production. See the [remaining rollout work](../releases/3.11.0.md#remaining-rollout-work).
+
 3.8.0 local candidate: Home and Settings, Account share explicit Sign in / Continue without signing in choices. Account also shows truthful deferred retry time, unreadable-credential recovery and an explicit reset confirmation. Devices offers Rename and Use default name, this-device identification and expandable support IDs; duplicate labels retain a distinguishing ID suffix. Ordinary upgrade keeps its account. These changes are not yet published. See [3.8.0 evidence](../releases/3.8.0-evidence.md#local-implementation-evidence).
 
 3.5.0 reference: Privacy/Models/Help changes shipped on Mac and iOS; 3.4.0 shipped the separate Sending tab. Shared tokens and native controls remain mandatory. Navigation/categories/search come from `SettingsDestination`, `SettingsGroup` and the catalog; root design rules live in [design.md](../../design.md).

@@ -19,14 +19,18 @@ Authoritative 10-step runbook for shipping Miniti. For repo context, start with 
 
 Mac 3.11.0 is public and iOS 3.11.0 is Waiting for Review with automatic release. The [3.11.0 checklist](docs/releases/3.11.0.md#publication-2026-11-17) records verified signed bytes, deployment and the accepted manual-QA limits. iOS latest stays 3.10.0 until public availability. Ian requested current public release copy on 2026-11-17: the 3.11.0 changelog now describes available behavior, with iOS marked pending. Ownership claims wait for the separately authorized switch; this supersedes CL-1’s delayed-entry rule.
 
-## Previous release: 3.9.0
+## Previous release: 3.10.0
+
+Mac and iOS build 166 are public. The iOS availability follow-through, including `IOS_LATEST_VERSION` and public copy, is complete. The [3.10.0 checklist](docs/releases/3.10.0.md) owns its release evidence.
+
+## Historical release: 3.9.0
 
 Mac 3.9.0 build 165 is public from 2026-11-10: GitHub release asset, website redirects and Sparkle feed verified byte-for-byte (181,922,423 bytes), `MACOS_LATEST_VERSION` 3.9.0. iOS 3.9.0 build 165 was approved and released automatically on 2026-11-11 (App Store lookup, 18:35 UTC); `IOS_LATEST_VERSION` 3.9.0. The [3.9.0 checklist](docs/releases/3.9.0.md) owns scope, evidence and review dispositions.
 
 - Final source `2c65b010` (plus release-record docs). Full hosted suites pass: Mac 1440 tests / 9 skipped, iOS 1339 / 5 skipped. Backend 911 / 5 skipped and 46/46 disposable storage, types, lint and production build. UI source guard passes.
 - Scope: UI1–UI3, device count/name fixes and the S0 subscription-conflict guard, 2026-11-10 field fixes, all of Charlie's 3.8.0 feedback (Mac History page, resizable sidebar, series-based filing, setup guide highlight and single audio choice, two-column Coaching), hideable Mac Home stats and a local Coaching row cache. Account ownership B0–B5 moved to 3.10.0.
 - Reviews: Fable 5.2 reviewed the whole candidate, then every later batch; all findings fixed or recorded in the checklist.
-- Remaining after Apple approval: confirm iOS 3.9.0 is on the App Store, then bump `IOS_LATEST_VERSION` to 3.9.0 in `miniti-api`, set `IOS_PENDING_VERSION` handling in the website changelog generator, and mark iOS 3.9.0 available on the roadmap, llms files and public docs.
+- Availability follow-through completed: iOS 3.9.0 reached the App Store and the backend/public copy advanced. Current iOS availability and the pending 3.11.0 follow-through are recorded above.
 - Owner checks still open: Sparkle update from 3.8.0 on a real Mac, Home stats hide/restore, History page, sidebar drag, setup audio choice and wide Coaching.
 
 ## Previous release: 3.8.0
