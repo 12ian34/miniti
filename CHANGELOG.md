@@ -2,6 +2,8 @@
 
 ### 2026-11-17 - v3.11.0
 
+- improvement: (macOS and iOS) free accounts get 100 docs lookups a month, shared across devices
+- improvement: (macOS and iOS) switching accounts no longer closes the account you leave
 - improvement: (iOS) clearer messages while your App Store purchase is confirmed
 - fix: (macOS and iOS) fewer interruptions to live transcription during background noise
 
